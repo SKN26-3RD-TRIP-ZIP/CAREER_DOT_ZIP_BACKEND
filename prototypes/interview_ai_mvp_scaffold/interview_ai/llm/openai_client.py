@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from interview_ai_mvp_scaffold.config import get_llm_settings
+from interview_ai.config import get_llm_settings
 
 
 class OpenAIClientNotConfigured(RuntimeError):

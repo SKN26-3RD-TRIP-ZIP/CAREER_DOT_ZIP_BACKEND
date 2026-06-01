@@ -2,19 +2,19 @@ from __future__ import annotations
 
 from uuid import uuid4
 
-from interview_ai_mvp_scaffold.data.fallback_questions import FALLBACK_QUESTIONS
-from interview_ai_mvp_scaffold.llm.openai_client import call_openai_chat
-from interview_ai_mvp_scaffold.prompts.question_generation_prompt import (
+from interview_ai.data.fallback_questions import FALLBACK_QUESTIONS
+from interview_ai.llm.openai_client import call_openai_chat
+from interview_ai.prompts.question_generation_prompt import (
     QUESTION_GENERATION_SYSTEM_PROMPT,
     render_question_generation_user_prompt,
 )
-from interview_ai_mvp_scaffold.schemas.question_schema import (
+from interview_ai.schemas.question_schema import (
     InterviewQuestion,
     QuestionGenerationRequest,
     QuestionGenerationResult,
 )
-from interview_ai_mvp_scaffold.utils.json_parser import extract_json_object
-from interview_ai_mvp_scaffold.validators.quality_rules import validate_question_quality
+from interview_ai.utils.json_parser import extract_json_object
+from interview_ai.validators.quality_rules import validate_question_quality
 
 
 def generate_questions_mock(request: QuestionGenerationRequest) -> QuestionGenerationResult:

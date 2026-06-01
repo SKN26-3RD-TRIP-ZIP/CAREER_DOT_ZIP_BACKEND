@@ -2,10 +2,10 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from interview_ai_mvp_scaffold.chains.followup_generation_chain import generate_follow_ups
-from interview_ai_mvp_scaffold.chains.question_generation_chain import generate_questions
-from interview_ai_mvp_scaffold.schemas.followup_schema import FollowUpGenerationRequest
-from interview_ai_mvp_scaffold.schemas.question_schema import QuestionGenerationRequest
+from interview_ai.chains.followup_generation_chain import generate_follow_ups
+from interview_ai.chains.question_generation_chain import generate_questions
+from interview_ai.schemas.followup_schema import FollowUpGenerationRequest
+from interview_ai.schemas.question_schema import QuestionGenerationRequest
 
 
 RunMode = Literal["mock", "llm"]

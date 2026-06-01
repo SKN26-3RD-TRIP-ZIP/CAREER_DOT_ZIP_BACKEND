@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from interview_ai_mvp_scaffold.schemas.question_schema import InterviewQuestion
+from interview_ai.schemas.question_schema import InterviewQuestion
 
 
 GENERIC_QUESTIONS = {

@@ -4,7 +4,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from interview_ai_mvp_scaffold.schemas.evaluation_schema import WeaknessTag
+from interview_ai.schemas.evaluation_schema import WeaknessTag
 
 
 PersonaId = Literal["coach", "practical", "critical"]
@@ -20,63 +20,45 @@ FollowUpType = Literal[
 ]
 
 
-def normalize_korean_question_sentence(value: str) -> str:
-    """한국어 면접 질문/요청형 문장을 질문형으로 정리한다.
+def normalize_korean_follow_up_question(value: str) -> str:
+    """한국어 꼬리질문 문장을 자연스럽게 정리한다.
 
-    LLM은 꼬리질문을 만들 때 아래처럼 자연스러운 요청형 문장을 자주 생성한다.
-    - "... 설명해 주세요."
-    - "... 말씀해 주세요."
-    - "... 궁금합니다."
-
-    의미상 질문이면 실패시키지 않고 끝 문장부호를 ?로 보정한다.
+    "설명해 주세요.", "말씀해 주세요.", "궁금합니다." 같은 요청형 문장은
+    실제 면접에서 자연스럽게 쓰일 수 있으므로 강제로 ?를 붙이지 않는다.
     """
 
     cleaned = " ".join(value.strip().split())
 
     if not cleaned:
-        raise ValueError("질문 문장은 비어 있을 수 없습니다.")
+        raise ValueError("follow_up_question은 비어 있을 수 없습니다.")
 
-    question_endings = (
+    natural_endings = (
         "?",
-        "요?",
+        ".",
+        "요",
+        "까",
         "까?",
-    )
-
-    request_like_endings = (
-        "궁금합니다.",
+        "나요",
+        "나요?",
+        "습니까",
+        "습니까?",
+        "주세요",
+        "주세요.",
+        "주실 수 있나요",
+        "주실 수 있나요?",
         "궁금합니다",
-        "설명해 주세요.",
-        "설명해 주세요",
-        "설명해주세요.",
-        "설명해주세요",
-        "설명해주실 수 있나요?",
-        "말씀해 주세요.",
-        "말씀해 주세요",
-        "말씀해주세요.",
-        "말씀해주세요",
-        "말씀해주실 수 있나요?",
-        "알려주세요.",
-        "알려주세요",
-        "공유해 주세요.",
-        "공유해 주세요",
-        "제시해 주세요.",
-        "제시해 주세요",
+        "궁금합니다.",
     )
 
-    if cleaned.endswith(question_endings):
+    if cleaned.endswith(natural_endings):
         return cleaned
 
-    if cleaned.endswith(request_like_endings):
-        return cleaned.rstrip(".") + "?"
-
-    # 질문 의문사가 포함되어 있으면 질문 의도가 있다고 보고 보정한다.
     question_markers = ("무엇", "어떻게", "왜", "어떤", "어느", "얼마나", "누가", "언제")
     if any(marker in cleaned for marker in question_markers):
-        return cleaned.rstrip(".") + "?"
+        return cleaned + "?"
 
-    # 꼬리질문은 대부분 명령형 요청 문장도 질문으로 사용 가능하므로,
-    # schema 단계에서는 문장부호만 보정하고 품질 판단은 별도 rule/prompt에서 처리한다.
-    return cleaned.rstrip(".") + "?"
+    # 꼬리질문은 요청형 문장도 허용하므로 schema에서는 과도하게 실패시키지 않는다.
+    return cleaned + "."
 
 
 class FollowUpGenerationRequest(BaseModel):
@@ -115,7 +97,7 @@ class FollowUpQuestion(BaseModel):
     @field_validator("follow_up_question")
     @classmethod
     def normalize_follow_up_question(cls, value: str) -> str:
-        return normalize_korean_question_sentence(value)
+        return normalize_korean_follow_up_question(value)
 
 
 class FollowUpGenerationResult(BaseModel):

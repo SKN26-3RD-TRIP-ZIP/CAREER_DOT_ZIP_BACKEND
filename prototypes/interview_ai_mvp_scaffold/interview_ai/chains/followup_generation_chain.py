@@ -2,17 +2,17 @@ from __future__ import annotations
 
 from uuid import uuid4
 
-from interview_ai_mvp_scaffold.llm.openai_client import call_openai_chat
-from interview_ai_mvp_scaffold.prompts.followup_generation_prompt import (
+from interview_ai.llm.openai_client import call_openai_chat
+from interview_ai.prompts.followup_generation_prompt import (
     FOLLOWUP_GENERATION_SYSTEM_PROMPT,
     render_followup_generation_user_prompt,
 )
-from interview_ai_mvp_scaffold.schemas.followup_schema import (
+from interview_ai.schemas.followup_schema import (
     FollowUpGenerationRequest,
     FollowUpGenerationResult,
     FollowUpQuestion,
 )
-from interview_ai_mvp_scaffold.utils.json_parser import extract_json_object
+from interview_ai.utils.json_parser import extract_json_object
 
 
 def generate_follow_ups_mock(request: FollowUpGenerationRequest) -> FollowUpGenerationResult:
