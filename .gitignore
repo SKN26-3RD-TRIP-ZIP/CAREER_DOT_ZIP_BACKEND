@@ -3,6 +3,10 @@ __pycache__/
 *.py[codz]
 *$py.class
 
+# LLM test outputs
+outputs/
+**/outputs/
+
 # C extensions
 *.so
 
