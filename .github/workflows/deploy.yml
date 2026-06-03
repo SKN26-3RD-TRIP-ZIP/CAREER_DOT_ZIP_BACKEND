@@ -1,0 +1,69 @@
+# ============================================================
+# [배포 준비 전 — 전체 주석 처리]
+# 배포 워크플로우: main 브랜치 push 또는 수동 실행 시 EC2에 배포
+# 배포 준비 완료 후 아래 주석을 해제하세요.
+# 필요한 사전 작업:
+#   - GitHub Secrets 등록:
+#       DOCKERHUB_USERNAME, DOCKERHUB_TOKEN
+#       EC2_HOST, EC2_USER, EC2_SSH_KEY
+#   - EC2 서버에 Docker, docker compose 설치
+#   - EC2 서버에 프로젝트 디렉토리 및 .env.prod 준비
+# ============================================================
+
+# name: Deploy
+
+# on:
+#   push:
+#     branches:
+#       - main
+#   workflow_dispatch:
+#     inputs:
+#       environment:
+#         description: "배포 환경 선택"
+#         required: true
+#         default: "staging"
+#         type: choice
+#         options:
+#           - staging
+#           - production
+
+# jobs:
+#   deploy:
+#     name: Docker 빌드 & EC2 배포
+#     runs-on: ubuntu-latest
+
+#     steps:
+#       - name: 코드 체크아웃
+#         uses: actions/checkout@v4
+
+#       # Docker Hub 로그인
+#       - name: Docker Hub 로그인
+#         uses: docker/login-action@v3
+#         with:
+#           username: ${{ secrets.DOCKERHUB_USERNAME }}
+#           password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+#       # 백엔드 이미지 빌드 & 푸시
+#       - name: 백엔드 이미지 빌드 & 푸시
+#         run: |
+#           docker build -t ${{ secrets.DOCKERHUB_USERNAME }}/backend:latest ./backend
+#           docker push ${{ secrets.DOCKERHUB_USERNAME }}/backend:latest
+
+#       # 프론트엔드 이미지 빌드 & 푸시 (멀티 스테이지 Dockerfile.prod 사용)
+#       - name: 프론트엔드 이미지 빌드 & 푸시
+#         run: |
+#           docker build -f ./frontend/Dockerfile.prod -t ${{ secrets.DOCKERHUB_USERNAME }}/frontend:latest ./frontend
+#           docker push ${{ secrets.DOCKERHUB_USERNAME }}/frontend:latest
+
+#       # EC2 SSH 접속 후 배포
+#       - name: EC2 배포
+#         uses: appleboy/ssh-action@v1
+#         with:
+#           host: ${{ secrets.EC2_HOST }}
+#           username: ${{ secrets.EC2_USER }}
+#           key: ${{ secrets.EC2_SSH_KEY }}
+#           script: |
+#             cd ~/CAREER_DOT_ZIP
+#             export DOCKERHUB_USERNAME=${{ secrets.DOCKERHUB_USERNAME }}
+#             docker compose -f docker-compose.prod.yml pull
+#             docker compose -f docker-compose.prod.yml up -d

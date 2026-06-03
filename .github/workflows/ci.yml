@@ -1,0 +1,39 @@
+# ============================================================
+# [배포 준비 전 — 전체 주석 처리]
+# CI 워크플로우: develop, main 브랜치로 PR 시 백엔드 테스트 자동 실행
+# 배포 준비 완료 후 아래 주석을 해제하세요.
+# 필요한 사전 작업:
+#   - GitHub Secrets에 DATABASE_URL 등록
+#   - 테스트 코드 작성 완료
+# ============================================================
+
+# name: CI
+
+# on:
+#   pull_request:
+#     branches:
+#       - develop
+#       - main
+
+# jobs:
+#   backend-test:
+#     name: 백엔드 테스트
+#     runs-on: ubuntu-latest
+
+#     steps:
+#       - name: 코드 체크아웃
+#         uses: actions/checkout@v4
+
+#       - name: Docker 이미지 빌드
+#         run: docker build -t backend-test ./backend
+
+#       - name: Django 테스트 실행
+#         run: |
+#           docker run --rm \
+#             -e DJANGO_ENV=local \
+#             -e SECRET_KEY=ci-test-secret-key \
+#             -e DATABASE_URL=${{ secrets.DATABASE_URL }} \
+#             -e REDIS_URL=redis://localhost:6379/0 \
+#             -e OPENAI_API_KEY=dummy \
+#             backend-test \
+#             python manage.py test
