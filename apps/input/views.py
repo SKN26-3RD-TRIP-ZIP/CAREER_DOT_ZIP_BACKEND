@@ -6,6 +6,7 @@ from rest_framework.views import APIView
 from .models import (
     JobDescription,
     ProjectExperience,
+    CoverLetter,
     ResumeMaster,
     UserProfile,
     ResumeEducation,
@@ -19,6 +20,9 @@ from .serializers import (
     JobDescriptionDetailSerializer,
     ProjectExperienceCreateSerializer,
     ProjectExperienceListSerializer,
+    CoverLetterCreateSerializer,
+    CoverLetterListSerializer,
+    CoverLetterDetailSerializer,
     UserProfileCreateSerializer,
     UserProfileDetailSerializer,
     UserProfilePatchSerializer,
@@ -331,6 +335,67 @@ class ProjectExperienceDetailView(generics.RetrieveUpdateDestroyAPIView):
             },
             status=status.HTTP_200_OK,
         )
+
+    def destroy(self, request, *args, **kwargs):
+        instance = self.get_object()
+        self.perform_destroy(instance)
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class CoverLetterListCreateView(generics.ListCreateAPIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        return CoverLetter.objects.filter(user=self.request.user)
+
+    def get_serializer_class(self):
+        if self.request.method == 'POST':
+            return CoverLetterCreateSerializer
+        return CoverLetterListSerializer
+
+    def perform_create(self, serializer):
+        serializer.save(user=self.request.user)
+
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        self.perform_create(serializer)
+        cover_letter = serializer.instance
+        return Response(
+            {
+                'cover_letter_id': str(cover_letter.id),
+                'title': cover_letter.title,
+                'is_active': cover_letter.is_active,
+                'created_at': cover_letter.created_at,
+            },
+            status=status.HTTP_201_CREATED,
+        )
+
+    def list(self, request, *args, **kwargs):
+        queryset = self.get_queryset()
+        serializer = CoverLetterListSerializer(queryset, many=True)
+        return Response(
+            {
+                'total': queryset.count(),
+                'results': serializer.data,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+class CoverLetterDetailView(generics.RetrieveDestroyAPIView):
+    permission_classes = [permissions.IsAuthenticated]
+    serializer_class = CoverLetterDetailSerializer
+    lookup_field = 'id'
+    lookup_url_kwarg = 'cover_letter_id'
+
+    def get_queryset(self):
+        return CoverLetter.objects.filter(user=self.request.user)
+
+    def retrieve(self, request, *args, **kwargs):
+        instance = self.get_object()
+        serializer = self.get_serializer(instance)
+        return Response(serializer.data)
 
     def destroy(self, request, *args, **kwargs):
         instance = self.get_object()

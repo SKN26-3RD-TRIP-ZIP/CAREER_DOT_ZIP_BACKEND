@@ -2,6 +2,8 @@ from rest_framework import serializers
 from .models import (
     JobDescription,
     ProjectExperience,
+    CoverLetter,
+    CoverLetterItem,
     ResumeMaster,
     UserProfile,
     ResumeEducation,
@@ -91,6 +93,100 @@ class ProjectExperienceListSerializer(serializers.ModelSerializer):
 
     def get_project_id(self, obj):
         return str(obj.id)
+
+
+class CoverLetterItemCreateSerializer(serializers.Serializer):
+    question = serializers.CharField()
+    answer_text = serializers.CharField()
+    max_length = serializers.IntegerField(required=False, allow_null=True)
+    order_index = serializers.IntegerField(required=False, default=1)
+
+
+class CoverLetterItemDetailSerializer(serializers.ModelSerializer):
+    cover_letter_item_id = serializers.SerializerMethodField()
+    length = serializers.SerializerMethodField()
+
+    class Meta:
+        model = CoverLetterItem
+        fields = (
+            'cover_letter_item_id',
+            'question',
+            'answer_text',
+            'length',
+            'max_length',
+            'order_index',
+        )
+
+    def get_cover_letter_item_id(self, obj):
+        return str(obj.id)
+
+    def get_length(self, obj):
+        return len(obj.answer_text or '')
+
+
+class CoverLetterCreateSerializer(serializers.ModelSerializer):
+    jd_id = serializers.UUIDField(required=False, allow_null=True, write_only=True)
+    items = CoverLetterItemCreateSerializer(many=True)
+
+    class Meta:
+        model = CoverLetter
+        fields = ('title', 'company_name', 'jd_id', 'items')
+        extra_kwargs = {
+            'company_name': {'required': False, 'allow_blank': True, 'allow_null': True},
+        }
+
+    def validate_jd_id(self, value):
+        if value is None:
+            return None
+
+        user = self.context['request'].user
+        try:
+            return JobDescription.objects.get(id=value, user=user)
+        except JobDescription.DoesNotExist:
+            raise serializers.ValidationError('Job description not found.')
+
+    def create(self, validated_data):
+        items_data = validated_data.pop('items', [])
+        jd = validated_data.pop('jd_id', None)
+        if jd is not None:
+            validated_data['jd'] = jd
+
+        cover_letter = CoverLetter.objects.create(**validated_data)
+
+        for item_data in items_data:
+            CoverLetterItem.objects.create(cover_letter=cover_letter, **item_data)
+
+        return cover_letter
+
+
+class CoverLetterListSerializer(serializers.ModelSerializer):
+    cover_letter_id = serializers.SerializerMethodField()
+
+    class Meta:
+        model = CoverLetter
+        fields = ('cover_letter_id', 'title', 'company_name', 'is_active', 'created_at')
+
+    def get_cover_letter_id(self, obj):
+        return str(obj.id)
+
+
+class CoverLetterDetailSerializer(serializers.ModelSerializer):
+    cover_letter_id = serializers.SerializerMethodField()
+    jd_id = serializers.SerializerMethodField()
+    items = serializers.SerializerMethodField()
+
+    class Meta:
+        model = CoverLetter
+        fields = ('cover_letter_id', 'title', 'jd_id', 'items', 'updated_at')
+
+    def get_cover_letter_id(self, obj):
+        return str(obj.id)
+
+    def get_jd_id(self, obj):
+        return str(obj.jd.id) if obj.jd else None
+
+    def get_items(self, obj):
+        return CoverLetterItemDetailSerializer(obj.items.all().order_by('order_index'), many=True).data
 
 
 class UserProfileCreateSerializer(serializers.ModelSerializer):

@@ -2,6 +2,8 @@ from django.contrib import admin
 from .models import (
     JobDescription,
     ProjectExperience,
+    CoverLetter,
+    CoverLetterItem,
     ResumeMaster,
     UserProfile,
     ResumeEducation,
@@ -40,6 +42,22 @@ class ProjectExperienceAdmin(admin.ModelAdmin):
     list_display = ('id', 'user', 'project_name', 'created_at', 'updated_at')
     list_filter = ('created_at', 'updated_at')
     search_fields = ('project_name', 'description', 'contribution', 'github_url', 'user__email')
+    readonly_fields = ('created_at', 'updated_at')
+
+
+@admin.register(CoverLetter)
+class CoverLetterAdmin(admin.ModelAdmin):
+    list_display = ('id', 'user', 'title', 'company_name', 'is_active', 'created_at')
+    list_filter = ('is_active', 'created_at')
+    search_fields = ('title', 'company_name', 'user__email')
+    readonly_fields = ('created_at', 'updated_at')
+
+
+@admin.register(CoverLetterItem)
+class CoverLetterItemAdmin(admin.ModelAdmin):
+    list_display = ('id', 'cover_letter', 'order_index', 'created_at')
+    list_filter = ('created_at',)
+    search_fields = ('cover_letter__title', 'question', 'answer_text')
     readonly_fields = ('created_at', 'updated_at')
 
 
