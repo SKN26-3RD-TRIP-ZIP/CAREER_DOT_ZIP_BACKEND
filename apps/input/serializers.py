@@ -1,5 +1,13 @@
 from rest_framework import serializers
-from .models import JobDescription, ResumeMaster, UserProfile
+from .models import (
+    JobDescription,
+    ResumeMaster,
+    UserProfile,
+    ResumeEducation,
+    ResumeCareer,
+    ResumeSkill,
+    ResumeCertificate,
+)
 
 
 class JobDescriptionCreateSerializer(serializers.ModelSerializer):
@@ -111,13 +119,89 @@ class ResumeMasterDetailSerializer(serializers.ModelSerializer):
         return str(obj.id)
 
     def get_education(self, obj):
-        return []
+        return ResumeEducationListSerializer(obj.education.all(), many=True).data
 
     def get_careers(self, obj):
-        return []
+        return ResumeCareerListSerializer(obj.careers.all(), many=True).data
 
     def get_skills(self, obj):
-        return []
+        return ResumeSkillListSerializer(obj.skills.all(), many=True).data
 
     def get_certificates(self, obj):
-        return []
+        return ResumeCertificateListSerializer(obj.certificates.all(), many=True).data
+
+
+class ResumeEducationCreateSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ResumeEducation
+        fields = ('school_name', 'major', 'degree', 'start_date', 'end_date', 'status')
+
+
+class ResumeEducationListSerializer(serializers.ModelSerializer):
+    resume_edu_id = serializers.SerializerMethodField()
+
+    class Meta:
+        model = ResumeEducation
+        fields = ('resume_edu_id', 'school_name', 'major', 'degree', 'start_date', 'end_date', 'status', 'created_at')
+
+    def get_resume_edu_id(self, obj):
+        return str(obj.id)
+
+
+class ResumeCareerCreateSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ResumeCareer
+        fields = ('company_name', 'position', 'start_date', 'end_date', 'is_current', 'description')
+
+
+class ResumeCareerListSerializer(serializers.ModelSerializer):
+    resume_career_id = serializers.SerializerMethodField()
+
+    class Meta:
+        model = ResumeCareer
+        fields = ('resume_career_id', 'company_name', 'position', 'start_date', 'end_date', 'is_current', 'description', 'created_at')
+
+    def get_resume_career_id(self, obj):
+        return str(obj.id)
+
+
+class ResumeSkillCreateSerializer(serializers.Serializer):
+    skills = serializers.ListField(child=serializers.CharField(max_length=50))
+
+    def create(self, validated_data):
+        resume_id = self.context.get('resume_id')
+        resume = ResumeMaster.objects.get(id=resume_id)
+        skills = validated_data['skills']
+        created_skills = []
+        for skill_name in skills:
+            skill = ResumeSkill.objects.create(resume=resume, name=skill_name)
+            created_skills.append(skill)
+        return created_skills
+
+
+class ResumeSkillListSerializer(serializers.ModelSerializer):
+    resume_skill_id = serializers.SerializerMethodField()
+
+    class Meta:
+        model = ResumeSkill
+        fields = ('resume_skill_id', 'name', 'created_at')
+
+    def get_resume_skill_id(self, obj):
+        return str(obj.id)
+
+
+class ResumeCertificateCreateSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ResumeCertificate
+        fields = ('name', 'issued_by', 'issued_at')
+
+
+class ResumeCertificateListSerializer(serializers.ModelSerializer):
+    resume_certificate_id = serializers.SerializerMethodField()
+
+    class Meta:
+        model = ResumeCertificate
+        fields = ('resume_certificate_id', 'name', 'issued_by', 'issued_at', 'created_at')
+
+    def get_resume_certificate_id(self, obj):
+        return str(obj.id)
