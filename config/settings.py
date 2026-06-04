@@ -45,6 +45,7 @@ INSTALLED_APPS = [
     'apps.accounts',
     'apps.input',
     'apps.interview',
+    'apps.evaluation',
 ]
 
 MIDDLEWARE = [
