@@ -10,6 +10,9 @@ from .serializers import (
     InterviewSessionDetailSerializer,
     InterviewSessionStatusSerializer,
 )
+from .models import InterviewQuestion
+from .serializers import InterviewQuestionSerializer
+from .services.question_generator import generate_interview_questions
 
 
 class InterviewSessionListCreateView(generics.ListCreateAPIView):
@@ -98,3 +101,60 @@ class InterviewSessionStatusUpdateView(APIView):
             },
             status=status.HTTP_200_OK,
         )
+
+
+class InterviewQuestionGenerateView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_session(self, session_id):
+        try:
+            return InterviewSession.objects.get(id=session_id, user=self.request.user)
+        except InterviewSession.DoesNotExist:
+            return None
+
+    def post(self, request, session_id):
+        session = self.get_session(session_id)
+        if not session:
+            return Response({'detail': 'Session not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        force = request.data.get('force_regenerate', False)
+        existing_qs = session.questions.all()
+        if existing_qs.exists() and not force:
+            serializer = InterviewQuestionSerializer(existing_qs, many=True)
+            return Response({'session_id': str(session.id), 'total': existing_qs.count(), 'questions': serializer.data}, status=status.HTTP_200_OK)
+
+        # delete existing if force
+        if force:
+            existing_qs.delete()
+
+        # generate deterministic questions via service
+        generated = generate_interview_questions(session)
+
+        created = []
+        for q in generated:
+            iq = InterviewQuestion.objects.create(
+                session=session,
+                order_index=q.get('order_index'),
+                question_type=q.get('question_type'),
+                question_text=q.get('question_text'),
+                source_type=q.get('source_type'),
+                source_reference=q.get('source_reference'),
+            )
+            created.append(iq)
+
+        serializer = InterviewQuestionSerializer(created, many=True)
+        return Response({'session_id': str(session.id), 'total': len(created), 'questions': serializer.data}, status=status.HTTP_201_CREATED)
+
+
+class InterviewQuestionListView(generics.ListAPIView):
+    permission_classes = [permissions.IsAuthenticated]
+    serializer_class = InterviewQuestionSerializer
+
+    def get_queryset(self):
+        session_id = self.kwargs.get('session_id')
+        return InterviewQuestion.objects.filter(session__id=session_id, session__user=self.request.user).order_by('order_index')
+
+    def list(self, request, *args, **kwargs):
+        queryset = self.get_queryset()
+        serializer = self.get_serializer(queryset, many=True)
+        return Response({'session_id': kwargs.get('session_id'), 'total': queryset.count(), 'results': serializer.data}, status=status.HTTP_200_OK)

@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from apps.input.models import JobDescription, ResumeMaster, CoverLetter
-from .models import InterviewSession
+from .models import InterviewSession, InterviewQuestion
 
 
 class InterviewSessionCreateSerializer(serializers.ModelSerializer):
@@ -113,3 +113,22 @@ class InterviewSessionStatusSerializer(serializers.ModelSerializer):
     class Meta:
         model = InterviewSession
         fields = ('status',)
+
+
+class InterviewQuestionSerializer(serializers.ModelSerializer):
+    question_id = serializers.SerializerMethodField()
+
+    class Meta:
+        model = InterviewQuestion
+        fields = (
+            'question_id',
+            'order_index',
+            'question_type',
+            'question_text',
+            'source_type',
+            'source_reference',
+            'created_at',
+        )
+
+    def get_question_id(self, obj):
+        return str(obj.id)
