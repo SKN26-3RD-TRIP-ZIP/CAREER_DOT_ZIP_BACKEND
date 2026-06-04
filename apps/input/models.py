@@ -88,3 +88,89 @@ class UserProfile(models.Model):
 
     def __str__(self):
         return f"{self.user} Profile"
+
+
+class ResumeEducation(models.Model):
+    DEGREE_CHOICES = [
+        ('high_school', 'High School'),
+        ('associate', 'Associate'),
+        ('bachelor', 'Bachelor'),
+        ('master', 'Master'),
+        ('doctor', 'Doctor'),
+    ]
+    STATUS_CHOICES = [
+        ('graduated', 'Graduated'),
+        ('enrolled', 'Enrolled'),
+        ('leave_of_absence', 'Leave of Absence'),
+        ('dropped_out', 'Dropped Out'),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    resume = models.ForeignKey(ResumeMaster, on_delete=models.CASCADE, related_name='education')
+    school_name = models.CharField(max_length=100)
+    major = models.CharField(max_length=100, blank=True, null=True)
+    degree = models.CharField(max_length=20, choices=DEGREE_CHOICES)
+    start_date = models.CharField(max_length=7, blank=True, null=True)
+    end_date = models.CharField(max_length=7, blank=True, null=True)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'input_resumeeducation'
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"{self.school_name} ({self.resume.user})"
+
+
+class ResumeCareer(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    resume = models.ForeignKey(ResumeMaster, on_delete=models.CASCADE, related_name='careers')
+    company_name = models.CharField(max_length=100)
+    position = models.CharField(max_length=100)
+    start_date = models.CharField(max_length=7, blank=True, null=True)
+    end_date = models.CharField(max_length=7, blank=True, null=True)
+    is_current = models.BooleanField(default=False)
+    description = models.TextField(blank=True, null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'input_resumecareer'
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"{self.company_name} - {self.position} ({self.resume.user})"
+
+
+class ResumeSkill(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    resume = models.ForeignKey(ResumeMaster, on_delete=models.CASCADE, related_name='skills')
+    name = models.CharField(max_length=50)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'input_resumeskill'
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"{self.name} ({self.resume.user})"
+
+
+class ResumeCertificate(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    resume = models.ForeignKey(ResumeMaster, on_delete=models.CASCADE, related_name='certificates')
+    name = models.CharField(max_length=100)
+    issued_by = models.CharField(max_length=100, blank=True, null=True)
+    issued_at = models.CharField(max_length=7, blank=True, null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'input_resumecertificate'
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"{self.name} ({self.resume.user})"
+

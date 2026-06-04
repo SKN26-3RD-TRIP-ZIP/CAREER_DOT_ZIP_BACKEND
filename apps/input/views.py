@@ -3,7 +3,15 @@ from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.views import APIView
 
-from .models import JobDescription, ResumeMaster, UserProfile
+from .models import (
+    JobDescription,
+    ResumeMaster,
+    UserProfile,
+    ResumeEducation,
+    ResumeCareer,
+    ResumeSkill,
+    ResumeCertificate,
+)
 from .serializers import (
     JobDescriptionCreateSerializer,
     JobDescriptionListSerializer,
@@ -13,6 +21,14 @@ from .serializers import (
     UserProfilePatchSerializer,
     ResumeMasterCreateSerializer,
     ResumeMasterDetailSerializer,
+    ResumeEducationCreateSerializer,
+    ResumeEducationListSerializer,
+    ResumeCareerCreateSerializer,
+    ResumeCareerListSerializer,
+    ResumeSkillCreateSerializer,
+    ResumeSkillListSerializer,
+    ResumeCertificateCreateSerializer,
+    ResumeCertificateListSerializer,
 )
 
 
@@ -160,4 +176,110 @@ class UserProfileView(APIView):
                 'updated_at': profile.updated_at,
             },
             status=status.HTTP_200_OK,
+        )
+
+
+class ResumeEducationCreateView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_resume(self, resume_id):
+        try:
+            return ResumeMaster.objects.get(id=resume_id, user=self.request.user)
+        except ResumeMaster.DoesNotExist:
+            return None
+
+    def post(self, request, resume_id):
+        resume = self.get_resume(resume_id)
+        if not resume:
+            return Response({'detail': 'Resume not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        serializer = ResumeEducationCreateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        education = serializer.save(resume=resume)
+
+        return Response(
+            {
+                'resume_edu_id': str(education.id),
+                'school_name': education.school_name,
+            },
+            status=status.HTTP_201_CREATED,
+        )
+
+
+class ResumeCareerCreateView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_resume(self, resume_id):
+        try:
+            return ResumeMaster.objects.get(id=resume_id, user=self.request.user)
+        except ResumeMaster.DoesNotExist:
+            return None
+
+    def post(self, request, resume_id):
+        resume = self.get_resume(resume_id)
+        if not resume:
+            return Response({'detail': 'Resume not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        serializer = ResumeCareerCreateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        career = serializer.save(resume=resume)
+
+        return Response(
+            {
+                'resume_career_id': str(career.id),
+                'company_name': career.company_name,
+            },
+            status=status.HTTP_201_CREATED,
+        )
+
+
+class ResumeSkillCreateView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_resume(self, resume_id):
+        try:
+            return ResumeMaster.objects.get(id=resume_id, user=self.request.user)
+        except ResumeMaster.DoesNotExist:
+            return None
+
+    def post(self, request, resume_id):
+        resume = self.get_resume(resume_id)
+        if not resume:
+            return Response({'detail': 'Resume not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        serializer = ResumeSkillCreateSerializer(data=request.data, context={'resume_id': resume_id})
+        serializer.is_valid(raise_exception=True)
+        skills = serializer.save()
+
+        skill_ids = [str(skill.id) for skill in skills]
+        return Response(
+            {'resume_skill_ids': skill_ids},
+            status=status.HTTP_201_CREATED,
+        )
+
+
+class ResumeCertificateCreateView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_resume(self, resume_id):
+        try:
+            return ResumeMaster.objects.get(id=resume_id, user=self.request.user)
+        except ResumeMaster.DoesNotExist:
+            return None
+
+    def post(self, request, resume_id):
+        resume = self.get_resume(resume_id)
+        if not resume:
+            return Response({'detail': 'Resume not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        serializer = ResumeCertificateCreateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        certificate = serializer.save(resume=resume)
+
+        return Response(
+            {
+                'resume_certificate_id': str(certificate.id),
+                'name': certificate.name,
+            },
+            status=status.HTTP_201_CREATED,
         )
