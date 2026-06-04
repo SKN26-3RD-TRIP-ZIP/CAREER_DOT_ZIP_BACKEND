@@ -5,6 +5,7 @@ from rest_framework.views import APIView
 
 from .models import (
     JobDescription,
+    ProjectExperience,
     ResumeMaster,
     UserProfile,
     ResumeEducation,
@@ -16,6 +17,8 @@ from .serializers import (
     JobDescriptionCreateSerializer,
     JobDescriptionListSerializer,
     JobDescriptionDetailSerializer,
+    ProjectExperienceCreateSerializer,
+    ProjectExperienceListSerializer,
     UserProfileCreateSerializer,
     UserProfileDetailSerializer,
     UserProfilePatchSerializer,
@@ -256,6 +259,83 @@ class ResumeSkillCreateView(APIView):
             {'resume_skill_ids': skill_ids},
             status=status.HTTP_201_CREATED,
         )
+
+
+class ProjectExperienceListCreateView(generics.ListCreateAPIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        return ProjectExperience.objects.filter(user=self.request.user)
+
+    def get_serializer_class(self):
+        if self.request.method == 'POST':
+            return ProjectExperienceCreateSerializer
+        return ProjectExperienceListSerializer
+
+    def perform_create(self, serializer):
+        serializer.save(user=self.request.user)
+
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        self.perform_create(serializer)
+        project = serializer.instance
+        return Response(
+            {
+                'project_id': str(project.id),
+                'project_name': project.project_name,
+                'created_at': project.created_at,
+            },
+            status=status.HTTP_201_CREATED,
+        )
+
+    def list(self, request, *args, **kwargs):
+        queryset = self.get_queryset()
+        serializer = ProjectExperienceListSerializer(queryset, many=True)
+        return Response(
+            {
+                'total': queryset.count(),
+                'results': serializer.data,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+class ProjectExperienceDetailView(generics.RetrieveUpdateDestroyAPIView):
+    permission_classes = [permissions.IsAuthenticated]
+    lookup_field = 'id'
+    lookup_url_kwarg = 'project_id'
+
+    def get_queryset(self):
+        return ProjectExperience.objects.filter(user=self.request.user)
+
+    def get_serializer_class(self):
+        if self.request.method in ['PATCH', 'PUT']:
+            return ProjectExperienceCreateSerializer
+        return ProjectExperienceListSerializer
+
+    def retrieve(self, request, *args, **kwargs):
+        instance = self.get_object()
+        serializer = self.get_serializer(instance)
+        return Response(serializer.data)
+
+    def patch(self, request, *args, **kwargs):
+        instance = self.get_object()
+        serializer = self.get_serializer(instance, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(
+            {
+                'project_id': str(instance.id),
+                'updated_at': instance.updated_at,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+    def destroy(self, request, *args, **kwargs):
+        instance = self.get_object()
+        self.perform_destroy(instance)
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 class ResumeCertificateCreateView(APIView):
