@@ -43,3 +43,39 @@ class InterviewSession(models.Model):
 
     def __str__(self):
         return f"InterviewSession {self.id} ({self.user})"
+
+
+class InterviewQuestion(models.Model):
+    QUESTION_TYPE_CHOICES = [
+        ('main', 'Main'),
+        ('follow_up', 'Follow Up'),
+    ]
+
+    SOURCE_TYPE_CHOICES = [
+        ('jd', 'JD'),
+        ('resume', 'Resume'),
+        ('cover_letter', 'Cover Letter'),
+        ('project', 'Project'),
+        ('profile', 'Profile'),
+        ('general', 'General'),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    session = models.ForeignKey(InterviewSession, on_delete=models.CASCADE, related_name='questions')
+    order_index = models.PositiveIntegerField()
+    question_type = models.CharField(max_length=20, choices=QUESTION_TYPE_CHOICES, default='main')
+    question_text = models.TextField()
+    source_type = models.CharField(max_length=20, choices=SOURCE_TYPE_CHOICES, default='general')
+    source_reference = models.CharField(max_length=100, blank=True, null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'interview_questions'
+        ordering = ['order_index']
+        constraints = [
+            models.UniqueConstraint(fields=['session', 'order_index'], name='unique_session_order_index')
+        ]
+
+    def __str__(self):
+        return f"Q{self.order_index} for session {self.session.id}"
