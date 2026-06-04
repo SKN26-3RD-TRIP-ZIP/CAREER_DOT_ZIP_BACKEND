@@ -13,9 +13,9 @@ class InterviewSessionAdmin(admin.ModelAdmin):
 
 @admin.register(InterviewQuestion)
 class InterviewQuestionAdmin(admin.ModelAdmin):
-    list_display = ('id', 'session', 'order_index', 'question_type', 'source_type', 'created_at')
+    list_display = ('id', 'session', 'order_index', 'question_type', 'source_type', 'parent_question', 'source_answer', 'created_at')
     list_filter = ('question_type', 'source_type', 'created_at')
-    search_fields = ('question_text', 'source_reference')
+    search_fields = ('question_text', 'source_reference', 'parent_question__question_text', 'source_answer__answer_text')
     readonly_fields = ('created_at', 'updated_at')
 
 
