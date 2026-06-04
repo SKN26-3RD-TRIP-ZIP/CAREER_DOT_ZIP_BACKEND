@@ -40,6 +40,28 @@ class JobDescription(models.Model):
         return f"{self.company_name} - {self.position}"
 
 
+class ResumeMaster(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='resumes')
+    name = models.CharField(max_length=50)
+    phone = models.CharField(max_length=30, blank=True, null=True)
+    email = models.EmailField()
+    address = models.CharField(max_length=255, blank=True, null=True)
+    github_url = models.URLField(blank=True, null=True)
+    original_text = models.TextField(blank=True, null=True)
+    extracted_keywords = models.TextField(blank=True, null=True)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'input_resumemaster'
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"{self.name} ({self.user})"
+
+
 class UserProfile(models.Model):
     CAREER_TYPE_CHOICES = [
         ('신입', '신입'),

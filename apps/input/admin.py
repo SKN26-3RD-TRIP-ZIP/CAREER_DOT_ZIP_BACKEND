@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import JobDescription, UserProfile
+from .models import JobDescription, ResumeMaster, UserProfile
 
 
 @admin.register(JobDescription)
@@ -15,4 +15,12 @@ class UserProfileAdmin(admin.ModelAdmin):
     list_display = ('id', 'user', 'career_type', 'major_type', 'desired_job', 'career_year', 'created_at', 'updated_at')
     list_filter = ('career_type', 'major_type', 'career_year', 'created_at')
     search_fields = ('user__email', 'desired_job')
+    readonly_fields = ('created_at', 'updated_at')
+
+
+@admin.register(ResumeMaster)
+class ResumeMasterAdmin(admin.ModelAdmin):
+    list_display = ('id', 'user', 'name', 'email', 'is_active', 'created_at')
+    list_filter = ('is_active', 'created_at')
+    search_fields = ('user__email', 'name', 'email')
     readonly_fields = ('created_at', 'updated_at')

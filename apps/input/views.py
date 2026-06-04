@@ -3,7 +3,7 @@ from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.views import APIView
 
-from .models import JobDescription, UserProfile
+from .models import JobDescription, ResumeMaster, UserProfile
 from .serializers import (
     JobDescriptionCreateSerializer,
     JobDescriptionListSerializer,
@@ -11,6 +11,8 @@ from .serializers import (
     UserProfileCreateSerializer,
     UserProfileDetailSerializer,
     UserProfilePatchSerializer,
+    ResumeMasterCreateSerializer,
+    ResumeMasterDetailSerializer,
 )
 
 
@@ -53,6 +55,43 @@ class JDDetailView(generics.RetrieveDestroyAPIView):
 
     def get_queryset(self):
         return JobDescription.objects.filter(user=self.request.user)
+
+    def retrieve(self, request, *args, **kwargs):
+        instance = self.get_object()
+        serializer = self.get_serializer(instance)
+        return Response(serializer.data)
+
+    def destroy(self, request, *args, **kwargs):
+        instance = self.get_object()
+        self.perform_destroy(instance)
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class ResumeMasterCreateView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        serializer = ResumeMasterCreateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        resume = serializer.save(user=request.user)
+        return Response(
+            {
+                'resume_id': str(resume.id),
+                'is_active': resume.is_active,
+                'created_at': resume.created_at,
+            },
+            status=status.HTTP_201_CREATED,
+        )
+
+
+class ResumeMasterDetailView(generics.RetrieveDestroyAPIView):
+    permission_classes = [permissions.IsAuthenticated]
+    serializer_class = ResumeMasterDetailSerializer
+    lookup_field = 'id'
+    lookup_url_kwarg = 'resume_id'
+
+    def get_queryset(self):
+        return ResumeMaster.objects.filter(user=self.request.user)
 
     def retrieve(self, request, *args, **kwargs):
         instance = self.get_object()
