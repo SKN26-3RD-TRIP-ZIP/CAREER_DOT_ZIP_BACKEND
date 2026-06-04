@@ -2,6 +2,8 @@ from django.urls import path
 from .views import (
     JDListCreateView,
     JDDetailView,
+    ProjectExperienceListCreateView,
+    ProjectExperienceDetailView,
     UserProfileView,
     ResumeMasterCreateView,
     ResumeMasterDetailView,
@@ -14,6 +16,8 @@ from .views import (
 urlpatterns = [
     path('jds', JDListCreateView.as_view(), name='jd-list-create'),
     path('jds/<uuid:jd_id>', JDDetailView.as_view(), name='jd-detail'),
+    path('projects', ProjectExperienceListCreateView.as_view(), name='project-list-create'),
+    path('projects/<uuid:project_id>', ProjectExperienceDetailView.as_view(), name='project-detail'),
     path('users/me/profile', UserProfileView.as_view(), name='user-profile'),
     path('resumes', ResumeMasterCreateView.as_view(), name='resume-create'),
     path('resumes/<uuid:resume_id>', ResumeMasterDetailView.as_view(), name='resume-detail'),

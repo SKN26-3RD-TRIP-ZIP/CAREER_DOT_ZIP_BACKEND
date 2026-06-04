@@ -1,6 +1,7 @@
 from rest_framework import serializers
 from .models import (
     JobDescription,
+    ProjectExperience,
     ResumeMaster,
     UserProfile,
     ResumeEducation,
@@ -46,6 +47,49 @@ class JobDescriptionDetailSerializer(serializers.ModelSerializer):
         )
 
     def get_jd_id(self, obj):
+        return str(obj.id)
+
+
+class ProjectExperienceCreateSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ProjectExperience
+        fields = (
+            'project_name',
+            'description',
+            'contribution',
+            'tech_stack',
+            'github_url',
+            'start_date',
+            'end_date',
+        )
+        extra_kwargs = {
+            'contribution': {'required': False},
+            'tech_stack': {'required': False, 'default': list},
+            'github_url': {'required': False},
+            'start_date': {'required': False},
+            'end_date': {'required': False},
+        }
+
+
+class ProjectExperienceListSerializer(serializers.ModelSerializer):
+    project_id = serializers.SerializerMethodField()
+
+    class Meta:
+        model = ProjectExperience
+        fields = (
+            'project_id',
+            'project_name',
+            'description',
+            'contribution',
+            'tech_stack',
+            'github_url',
+            'start_date',
+            'end_date',
+            'created_at',
+            'updated_at',
+        )
+
+    def get_project_id(self, obj):
         return str(obj.id)
 
 

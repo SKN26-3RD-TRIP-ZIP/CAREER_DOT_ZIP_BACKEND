@@ -1,6 +1,7 @@
 from django.contrib import admin
 from .models import (
     JobDescription,
+    ProjectExperience,
     ResumeMaster,
     UserProfile,
     ResumeEducation,
@@ -31,6 +32,14 @@ class ResumeMasterAdmin(admin.ModelAdmin):
     list_display = ('id', 'user', 'name', 'email', 'is_active', 'created_at')
     list_filter = ('is_active', 'created_at')
     search_fields = ('user__email', 'name', 'email')
+    readonly_fields = ('created_at', 'updated_at')
+
+
+@admin.register(ProjectExperience)
+class ProjectExperienceAdmin(admin.ModelAdmin):
+    list_display = ('id', 'user', 'project_name', 'created_at', 'updated_at')
+    list_filter = ('created_at', 'updated_at')
+    search_fields = ('project_name', 'description', 'contribution', 'github_url', 'user__email')
     readonly_fields = ('created_at', 'updated_at')
 
 

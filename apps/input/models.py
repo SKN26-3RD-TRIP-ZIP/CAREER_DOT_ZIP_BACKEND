@@ -40,6 +40,27 @@ class JobDescription(models.Model):
         return f"{self.company_name} - {self.position}"
 
 
+class ProjectExperience(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='projects')
+    project_name = models.CharField(max_length=100)
+    description = models.TextField()
+    contribution = models.TextField(blank=True, null=True)
+    tech_stack = models.JSONField(default=list)
+    github_url = models.URLField(blank=True, null=True)
+    start_date = models.CharField(max_length=7, blank=True, null=True)
+    end_date = models.CharField(max_length=7, blank=True, null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'input_projectexperience'
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"{self.project_name} ({self.user})"
+
+
 class ResumeMaster(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='resumes')
