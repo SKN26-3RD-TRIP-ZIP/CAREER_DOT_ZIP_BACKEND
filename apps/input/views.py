@@ -1,12 +1,16 @@
 from rest_framework import generics, permissions
 from rest_framework.response import Response
 from rest_framework import status
+from rest_framework.views import APIView
 
-from .models import JobDescription
+from .models import JobDescription, UserProfile
 from .serializers import (
     JobDescriptionCreateSerializer,
     JobDescriptionListSerializer,
     JobDescriptionDetailSerializer,
+    UserProfileCreateSerializer,
+    UserProfileDetailSerializer,
+    UserProfilePatchSerializer,
 )
 
 
@@ -59,3 +63,62 @@ class JDDetailView(generics.RetrieveDestroyAPIView):
         instance = self.get_object()
         self.perform_destroy(instance)
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class UserProfileView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_object(self):
+        return UserProfile.objects.get(user=self.request.user)
+
+    def post(self, request):
+        if UserProfile.objects.filter(user=request.user).exists():
+            return Response(
+                {'error': 'Profile already exists.'},
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        serializer = UserProfileCreateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        profile = serializer.save(user=request.user)
+
+        return Response(
+            {
+                'profile_id': str(profile.id),
+                'career_type': profile.career_type,
+                'major_type': profile.major_type,
+                'desired_job': profile.desired_job,
+                'career_year': profile.career_year,
+                'created_at': profile.created_at,
+            },
+            status=status.HTTP_201_CREATED,
+        )
+
+    def get(self, request):
+        try:
+            profile = self.get_object()
+        except UserProfile.DoesNotExist:
+            return Response({'detail': 'Profile not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        serializer = UserProfileDetailSerializer(profile)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+    def patch(self, request):
+        try:
+            profile = self.get_object()
+        except UserProfile.DoesNotExist:
+            return Response({'detail': 'Profile not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        serializer = UserProfilePatchSerializer(profile, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        profile = serializer.save()
+
+        return Response(
+            {
+                'profile_id': str(profile.id),
+                'desired_job': profile.desired_job,
+                'github_url': profile.github_url,
+                'updated_at': profile.updated_at,
+            },
+            status=status.HTTP_200_OK,
+        )
