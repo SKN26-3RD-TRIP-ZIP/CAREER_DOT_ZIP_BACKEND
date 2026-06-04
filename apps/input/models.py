@@ -61,6 +61,42 @@ class ProjectExperience(models.Model):
         return f"{self.project_name} ({self.user})"
 
 
+class CoverLetter(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='cover_letters')
+    jd = models.ForeignKey('input.JobDescription', on_delete=models.SET_NULL, null=True, blank=True, related_name='cover_letters')
+    title = models.CharField(max_length=150)
+    company_name = models.CharField(max_length=100, blank=True, null=True)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'input_coverletter'
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"{self.title} ({self.user})"
+
+
+class CoverLetterItem(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    cover_letter = models.ForeignKey(CoverLetter, on_delete=models.CASCADE, related_name='items')
+    question = models.TextField()
+    answer_text = models.TextField()
+    max_length = models.PositiveIntegerField(blank=True, null=True)
+    order_index = models.PositiveIntegerField(default=1)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'input_coverletteritem'
+        ordering = ['order_index', 'created_at']
+
+    def __str__(self):
+        return f"{self.cover_letter.title} item {self.order_index}"
+
+
 class ResumeMaster(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='resumes')
