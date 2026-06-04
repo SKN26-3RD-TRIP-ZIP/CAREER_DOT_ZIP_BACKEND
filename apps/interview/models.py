@@ -79,3 +79,25 @@ class InterviewQuestion(models.Model):
 
     def __str__(self):
         return f"Q{self.order_index} for session {self.session.id}"
+
+
+class InterviewAnswer(models.Model):
+    ANSWER_SOURCE_CHOICES = [
+        ('text', 'Text'),
+        ('stt', 'STT'),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    session = models.ForeignKey(InterviewSession, on_delete=models.CASCADE, related_name='answers')
+    question = models.OneToOneField('InterviewQuestion', on_delete=models.CASCADE, related_name='answer')
+    answer_text = models.TextField()
+    answer_source = models.CharField(max_length=20, choices=ANSWER_SOURCE_CHOICES, default='text')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'interview_answers'
+        ordering = ['question__order_index']
+
+    def __str__(self):
+        return f"Answer for Q{self.question.order_index} (session {self.session.id})"
