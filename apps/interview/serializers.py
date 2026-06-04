@@ -156,3 +156,32 @@ class InterviewAnswerSerializer(serializers.ModelSerializer):
     def get_question_id(self, obj):
         return str(obj.question.id)
 
+
+class FollowUpQuestionSerializer(serializers.ModelSerializer):
+    question_id = serializers.SerializerMethodField()
+    parent_question_id = serializers.SerializerMethodField()
+    answer_id = serializers.SerializerMethodField()
+
+    class Meta:
+        model = InterviewQuestion
+        fields = (
+            'question_id',
+            'parent_question_id',
+            'answer_id',
+            'order_index',
+            'question_type',
+            'question_text',
+            'source_type',
+            'source_reference',
+            'created_at',
+        )
+
+    def get_question_id(self, obj):
+        return str(obj.id)
+
+    def get_parent_question_id(self, obj):
+        return str(obj.parent_question.id) if obj.parent_question else None
+
+    def get_answer_id(self, obj):
+        return str(obj.source_answer.id) if obj.source_answer else None
+

@@ -67,6 +67,8 @@ class InterviewQuestion(models.Model):
     question_text = models.TextField()
     source_type = models.CharField(max_length=20, choices=SOURCE_TYPE_CHOICES, default='general')
     source_reference = models.CharField(max_length=100, blank=True, null=True)
+    parent_question = models.ForeignKey('self', on_delete=models.CASCADE, null=True, blank=True, related_name='follow_up_questions')
+    source_answer = models.ForeignKey('InterviewAnswer', on_delete=models.CASCADE, null=True, blank=True, related_name='follow_up_questions')
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
