@@ -1,5 +1,6 @@
 from django.contrib import admin
 from .models import InterviewSession, InterviewQuestion
+from .models import InterviewAnswer
 
 
 @admin.register(InterviewSession)
@@ -15,4 +16,12 @@ class InterviewQuestionAdmin(admin.ModelAdmin):
     list_display = ('id', 'session', 'order_index', 'question_type', 'source_type', 'created_at')
     list_filter = ('question_type', 'source_type', 'created_at')
     search_fields = ('question_text', 'source_reference')
+    readonly_fields = ('created_at', 'updated_at')
+
+
+@admin.register(InterviewAnswer)
+class InterviewAnswerAdmin(admin.ModelAdmin):
+    list_display = ('id', 'session', 'question', 'answer_source', 'created_at')
+    list_filter = ('answer_source', 'created_at')
+    search_fields = ('answer_text',)
     readonly_fields = ('created_at', 'updated_at')
