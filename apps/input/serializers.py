@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import JobDescription, UserProfile
+from .models import JobDescription, ResumeMaster, UserProfile
 
 
 class JobDescriptionCreateSerializer(serializers.ModelSerializer):
@@ -77,3 +77,47 @@ class UserProfilePatchSerializer(serializers.ModelSerializer):
             'career_year': {'required': False},
             'github_url': {'required': False},
         }
+
+
+class ResumeMasterCreateSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ResumeMaster
+        fields = ('name', 'phone', 'email', 'address', 'github_url', 'original_text')
+
+
+class ResumeMasterDetailSerializer(serializers.ModelSerializer):
+    resume_id = serializers.SerializerMethodField()
+    education = serializers.SerializerMethodField()
+    careers = serializers.SerializerMethodField()
+    skills = serializers.SerializerMethodField()
+    certificates = serializers.SerializerMethodField()
+
+    class Meta:
+        model = ResumeMaster
+        fields = (
+            'resume_id',
+            'name',
+            'original_text',
+            'extracted_keywords',
+            'is_active',
+            'education',
+            'careers',
+            'skills',
+            'certificates',
+            'updated_at',
+        )
+
+    def get_resume_id(self, obj):
+        return str(obj.id)
+
+    def get_education(self, obj):
+        return []
+
+    def get_careers(self, obj):
+        return []
+
+    def get_skills(self, obj):
+        return []
+
+    def get_certificates(self, obj):
+        return []
