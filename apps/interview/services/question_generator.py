@@ -1,51 +1,70 @@
-def generate_interview_questions(session):
-    """Return list of question dicts for the given session (rule-based MVP).
+from apps.question_bank.services.question_selector import select_questions_for_session
 
-    Each question dict contains: order_index, question_type, question_text, source_type, source_reference
-    """
+
+RULE_QUESTIONS = {
+    'technical': [
+        ('TECH_PROJECT_ROLE', 'Describe your role and main contribution in a recent project.'),
+        ('TECH_STACK_DECISION', 'Why did you choose the main technology stack used in your project?'),
+        ('TECH_JD_REQUIREMENT', 'Which job requirement best matches your experience, and why?'),
+    ],
+    'personality': [
+        ('PERSONALITY_CONFLICT', 'Describe a conflict within a team and how you resolved it.'),
+        ('PERSONALITY_STRENGTH', 'Explain your main strength with a concrete example.'),
+        ('PERSONALITY_MOTIVATION', 'Why are you interested in this company and role?'),
+    ],
+    'comprehensive': [
+        ('COMPREHENSIVE_PROJECT', 'Describe your role and main contribution in a recent project.'),
+        ('COMPREHENSIVE_TEAMWORK', 'Describe a conflict within a team and how you resolved it.'),
+        ('COMPREHENSIVE_ROLE', 'Which competency is most important for this role, and why?'),
+    ],
+}
+
+
+def _rule_based_questions(session, count, excluded_texts=None):
+    templates = RULE_QUESTIONS.get(session.interview_type, RULE_QUESTIONS['comprehensive'])
+    excluded = {text.casefold() for text in (excluded_texts or [])}
     questions = []
-    interview_type = getattr(session, 'interview_type', 'technical')
-    persona = getattr(session, 'persona', 'practical')
-    count = int(getattr(session, 'total_question_count', 3) or 3)
+    template_index = 0
 
-    # simple templates by type
-    if interview_type == 'technical':
-        templates = [
-            ("project", "프로젝트에서 본인이 맡은 역할과 주요 기여를 설명해주세요."),
-            ("project", "프로젝트에서 사용한 기술 스택을 선택한 이유를 설명해주세요."),
-            ("jd", "해당 직무의 핵심 요구사항을 충족시키기 위해 어떤 경험을 쌓았는지 설명해주세요."),
-        ]
-    elif interview_type == 'personality':
-        templates = [
-            ("profile", "팀에서 갈등을 해결한 경험을 이야기해 주세요."),
-            ("profile", "자신의 강점과 약점을 구체적인 사례로 설명해주세요."),
-            ("cover_letter", "회사와 직무에 지원한 동기를 말씀해주세요."),
-        ]
-    else:  # comprehensive
-        templates = [
-            ("project", "프로젝트에서 본인이 맡은 역할과 주요 기여를 설명해주세요."),
-            ("profile", "팀에서 갈등을 해결한 경험을 이야기해 주세요."),
-            ("jd", "해당 직무에서 가장 중요하다고 생각하는 역량은 무엇인가요? 구체적으로 설명해주세요."),
-        ]
-
-    # persona could tweak wording; for MVP we'll append a short persona note
-    persona_note = {
-        'coach': ' (코칭 톤으로 질문)',
-        'practical': ' (실무 중심 질문)',
-        'verifier': ' (검증형 질문)',
-        'pressure': ' (압박형 질문)',
-    }.get(persona, '')
-
-    for i in range(count):
-        tpl = templates[i % len(templates)]
-        source, text = tpl
-        q = {
-            'order_index': i + 1,
-            'question_type': 'main',
-            'question_text': text + persona_note,
-            'source_type': source,
-            'source_reference': f'{source}_reference',
-        }
-        questions.append(q)
-
+    while len(questions) < count:
+        cycle, template_offset = divmod(template_index, len(templates))
+        reference, text = templates[template_offset]
+        template_index += 1
+        if cycle:
+            text = f'{text} Use a different example or perspective ({cycle + 1}).'
+            reference = f'{reference}_{cycle + 1}'
+        if text.casefold() in excluded:
+            continue
+        questions.append(
+            {
+                'question_text': text,
+                'source_type': 'rule',
+                'source_reference': reference,
+            }
+        )
+        excluded.add(text.casefold())
     return questions
+
+
+def generate_interview_questions(session):
+    question_count = int(session.total_question_count or 3)
+    selected = select_questions_for_session(session, question_count)
+    selected_texts = [question['question_text'] for question in selected]
+
+    if len(selected) < question_count:
+        selected.extend(
+            _rule_based_questions(
+                session,
+                question_count - len(selected),
+                excluded_texts=selected_texts,
+            )
+        )
+
+    return [
+        {
+            **question,
+            'order_index': index,
+            'question_type': 'main',
+        }
+        for index, question in enumerate(selected[:question_count], start=1)
+    ]

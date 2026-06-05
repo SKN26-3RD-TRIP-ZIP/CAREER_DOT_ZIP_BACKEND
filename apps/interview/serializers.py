@@ -7,7 +7,7 @@ from .models import InterviewSession, InterviewQuestion, InterviewAnswer
 
 
 class InterviewSessionCreateSerializer(serializers.ModelSerializer):
-    jd_id = serializers.UUIDField(required=False, allow_null=True, write_only=True)
+    jd_id = serializers.UUIDField(required=True, allow_null=False, write_only=True)
     resume_id = serializers.UUIDField(required=False, allow_null=True, write_only=True)
     cover_letter_id = serializers.UUIDField(required=False, allow_null=True, write_only=True)
 
