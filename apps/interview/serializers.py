@@ -117,6 +117,14 @@ class InterviewSessionStatusSerializer(serializers.ModelSerializer):
         fields = ('status',)
 
 
+class InterviewSessionCompleteSerializer(serializers.ModelSerializer):
+    session_id = serializers.UUIDField(source='id', read_only=True)
+
+    class Meta:
+        model = InterviewSession
+        fields = ('session_id', 'status', 'started_at', 'ended_at', 'updated_at')
+
+
 class InterviewQuestionSerializer(serializers.ModelSerializer):
     question_id = serializers.SerializerMethodField()
 

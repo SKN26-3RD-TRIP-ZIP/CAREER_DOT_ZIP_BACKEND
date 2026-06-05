@@ -11,11 +11,14 @@ INTERVIEW_PERSONA_CHOICES = [
     ("pressure", "압박형"),
 ]
 
+INTERVIEW_SESSION_STATUS_COMPLETED = "completed"
+INTERVIEW_SESSION_STATUS_CANCELLED = "cancelled"
+
 INTERVIEW_SESSION_STATUS_CHOICES = [
     ("created", "생성됨"),
     ("in_progress", "진행 중"),
-    ("completed", "완료"),
-    ("cancelled", "취소"),
+    (INTERVIEW_SESSION_STATUS_COMPLETED, "완료"),
+    (INTERVIEW_SESSION_STATUS_CANCELLED, "취소"),
 ]
 
 QUESTION_TYPE_CHOICES = [

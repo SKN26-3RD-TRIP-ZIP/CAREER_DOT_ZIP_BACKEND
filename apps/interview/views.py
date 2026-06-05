@@ -1,10 +1,18 @@
+from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from rest_framework import generics, permissions, status
+from rest_framework_simplejwt.authentication import JWTAuthentication
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from apps.common.choices import (
+    INTERVIEW_SESSION_STATUS_CANCELLED,
+    INTERVIEW_SESSION_STATUS_COMPLETED,
+)
+
 from .models import InterviewSession
 from .serializers import (
+    InterviewSessionCompleteSerializer,
     InterviewSessionCreateSerializer,
     InterviewSessionListSerializer,
     InterviewSessionDetailSerializer,
@@ -106,6 +114,33 @@ class InterviewSessionStatusUpdateView(APIView):
             },
             status=status.HTTP_200_OK,
         )
+
+
+class InterviewSessionCompleteView(APIView):
+    authentication_classes = [JWTAuthentication]
+    permission_classes = [permissions.IsAuthenticated]
+
+    def patch(self, request, session_id):
+        session = get_object_or_404(
+            InterviewSession,
+            id=session_id,
+            user=request.user,
+        )
+
+        if session.status == INTERVIEW_SESSION_STATUS_CANCELLED:
+            return Response(
+                {'detail': 'Cancelled session cannot be completed.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if session.status != INTERVIEW_SESSION_STATUS_COMPLETED:
+            session.status = INTERVIEW_SESSION_STATUS_COMPLETED
+            if session.ended_at is None:
+                session.ended_at = timezone.now()
+            session.save(update_fields=('status', 'ended_at', 'updated_at'))
+
+        serializer = InterviewSessionCompleteSerializer(session)
+        return Response(serializer.data, status=status.HTTP_200_OK)
 
 
 class InterviewQuestionGenerateView(APIView):
