@@ -7,13 +7,14 @@ django-cors-headers==4.3
 # ===== 환경변수 & 설정 =====
 python-dotenv==1.0
 dj-database-url==2.1
+requests==2.32.3
 
 # ===== 데이터베이스 =====
-# psycopg2-binary==2.9
+psycopg2-binary==2.9
 
 # ===== Redis & 캐시 — Redis 준비 전 주석 처리 =====
 # redis==5.0
-# django-redis==5.4
+# django-redis==5.4 
 
 # ===== AI / LLM =====
 openai==1.30

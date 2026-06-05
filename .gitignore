@@ -156,6 +156,7 @@ activemq-data/
 .env.local
 .env.prod
 .envrc
+/data/aihub/
 .venv
 env/
 venv/
@@ -222,3 +223,5 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+.idea/

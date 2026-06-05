@@ -1,0 +1,104 @@
+{
+  "session_id": "sess_01",
+  "evaluation_target": "senior_backend_engineer",
+  "interview_flow": [
+    {
+      "client_question_key": "q_01_001",
+      "question_text": "오픈다트 API를 연동하여 10년 치 재무제표를 파싱할 때 대용량 트래픽과 API 레이트 리밋(Rate Limit)을 어떻게 해결하셨나요?",
+      "question_type": "technical",
+      "order_index": 1,
+      "stt_text": "저희가 분기별 공시가 몰릴 때 API 제한에 걸리는 문제를 겪었습니다. 제가 주도해서 Redis를 활용한 분산 락과 토큰 버킷 알고리즘 기반의 글로벌 처리율 제한기를 구현했습니다. 이를 통해 호출 제한을 초과하지 않으면서 병렬 파싱 속도를 기존 대비 45% 향상시켰고, 배치 작업 중 단 한 건의 유실도 없이 10년 치 데이터를 안정적으로 적재했습니다.",
+      "answer_sufficiency": {
+        "is_sufficient": true,
+        "sufficiency_reason": "기술적 제약 사항을 명확히 인지하고 Redis를 통한 정량적 개선 성과(45% 향상)를 구체적으로 입증함.",
+        "answer_weakness_tags": [],
+        "should_generate_followup": true,
+        "next_action": "FOLLOWUP"
+      }
+    },
+    {
+      "client_question_key": "q_01_002",
+      "question_text": "(꼬리질문) Redis 분산 락 도입 시 발생할 수 있는 캐시 스탬피드(Cache Stampede)나 네트워크 병목 현상은 어떻게 모니터링하고 방어하셨습니까?",
+      "question_type": "technical",
+      "order_index": 2,
+      "stt_text": "캐시 스탬피드 현상을 방어하기 위해 만료 시간을 확률적 조기 만료 알고리즘으로 설계했습니다. 또한 Prometheus와 Grafana를 연동하여 Redis의 커넥션 풀을 실시간 대시보드로 모니터링했습니다. 부하가 급증했던 4월 공시 기간에 네트워크 지연이 15ms 발생한 것을 감지하고, 커넥션 타임아웃을 200ms로 튜닝하여 병목을 사전에 차단했습니다.",
+      "answer_sufficiency": {
+        "is_sufficient": true,
+        "sufficiency_reason": "꼬리질문에서도 구체적인 지표(15ms, 200ms)와 함께 모니터링 아키텍처를 정확히 설명하여 일관성을 유지함.",
+        "answer_weakness_tags": [],
+        "should_generate_followup": false,
+        "next_action": "PROCEED"
+      }
+    },
+    {
+      "client_question_key": "q_01_003",
+      "question_text": "대규모 프로젝트를 진행하면서 팀원들과 아키텍처 설계 기조가 충돌했을 때 어떻게 조율하셨나요?",
+      "question_type": "personality",
+      "order_index": 3,
+      "stt_text": "팀 내에서 데이터 스토리지로 NoSQL과 RDB 도입을 두고 의견이 팽팽하게 갈렸습니다. 감정적으로 대립하기보다, 각 아키텍처의 장단점과 인프라 비용 리스크를 정리한 기술 비교 문서를 작성해 공유했습니다. 공유 세션을 통해 팀원들의 합의점을 이끌어냈고, 핵심 원장은 RDB로 가되 로그성 데이터만 NoSQL로 격리하는 혼합 구조를 채택하여 팀의 생산성을 지켜냈습니다.",
+      "answer_sufficiency": {
+        "is_sufficient": true,
+        "sufficiency_reason": "소통과 문서화를 통해 팀 내 생산적인 조율을 이뤄내 강점 태그 요건을 충족함.",
+        "answer_weakness_tags": [],
+        "should_generate_followup": false,
+        "next_action": "PROCEED"
+      }
+    },
+    {
+      "client_question_key": "q_01_004",
+      "question_text": "지원하신 직무에서 가장 중요하게 생각하는 엔지니어링 역량은 무엇인가요?",
+      "question_type": "job",
+      "order_index": 4,
+      "stt_text": "저는 기술의 도입이 비즈니스 임팩트로 연결되어야 한다고 생각합니다. 단순히 아키텍처를 고도화하는 것에 그치지 않고, 시스템 응답 속도를 개선해 이탈률을 5% 감소시킨 경험처럼 비즈니스 가치 얼라인먼트를 맞추는 것이 핵심 역량입니다.",
+      "answer_sufficiency": {
+        "is_sufficient": true,
+        "sufficiency_reason": "기술과 비즈니스 가치의 연결성을 명확히 인지하고 있음.",
+        "answer_weakness_tags": [],
+        "should_generate_followup": false,
+        "next_action": "PROCEED"
+      }
+    },
+    {
+      "client_question_key": "q_01_005",
+      "question_text": "프로젝트 수행 중 예상치 못한 버그나 장애를 만나 극복했던 경험을 말씀해주세요.",
+      "question_type": "technical",
+      "order_index": 5,
+      "stt_text": "운영 DB의 커넥션 풀이 고갈되는 급박한 장애가 발생했습니다. 로그 유실 없이 실시간으로 원인을 추적한 결과, 특정 슬로우 쿼리가 인덱스를 타지 않고 풀 스캔을 유도하는 것을 발견했습니다. 즉시 쿼리 튜닝 및 복합 인덱스를 적용하여 CPU 사용률을 90%에서 15%로 낮추며 장애를 10분 만에 복구했습니다.",
+      "answer_sufficiency": {
+        "is_sufficient": true,
+        "sufficiency_reason": "원인 분석부터 해결까지 STAR 구조가 탄탄함.",
+        "answer_weakness_tags": [],
+        "should_generate_followup": false,
+        "next_action": "PROCEED"
+      }
+    },
+    {
+      "client_question_key": "q_01_006",
+      "question_text": "최근에 깊게 학습하고 계신 새로운 기술 트렌드가 있다면 소개해 주십시오.",
+      "question_type": "personality",
+      "order_index": 6,
+      "stt_text": "최근에는 대규모 언어 모델의 토큰 비용을 최적화하고 응답 속도를 올리기 위해 Vector DB 기반의 차세대 검색 인프라를 공부하고 있습니다. 단순 튜토리얼 수준을 넘어 임베딩 모델의 차원 축소에 따른 검색 정확도 트레이드오프를 테스트하며 한계를 극복하는 회고를 진행 중입니다.",
+      "answer_sufficiency": {
+        "is_sufficient": true,
+        "sufficiency_reason": "단순 사용을 넘어 아키텍처 수준의 한계를 고민하는 깊이를 보임.",
+        "answer_weakness_tags": [],
+        "should_generate_followup": false,
+        "next_action": "PROCEED"
+      }
+    },
+    {
+      "client_question_key": "q_01_007",
+      "question_text": "마지막으로 본인이 이 프로젝트에 왜 적임자인지 요약해 주세요.",
+      "question_type": "job",
+      "order_index": 7,
+      "stt_text": "지원 직무의 JD 요건인 대용량 실시간 파이프라인 설계 경험과 일치하는 역량을 가지고 있습니다. 안정적인 백엔드 아키텍처 설계를 통해 회사의 데이터 신뢰성을 책임지겠습니다.",
+      "answer_sufficiency": {
+        "is_sufficient": true,
+        "sufficiency_reason": "직무 요건과의 얼라인먼트가 우수함.",
+        "answer_weakness_tags": [],
+        "should_generate_followup": false,
+        "next_action": "TERMINATE"
+      }
+    }
+  ]
+}

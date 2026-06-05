@@ -1,0 +1,120 @@
+{
+  "session_id": "sess_02",
+  "evaluation_target": "data_analyst",
+  "interview_flow": [
+    {
+      "client_question_key": "q_02_001",
+      "question_text": "AI 부트캠프 당시 진행하셨던 올림픽 개최국 효과 분석 프로젝트에 대해 설명해 주세요.",
+      "question_type": "experience",
+      "order_index": 1,
+      "stt_text": "저희가 부트캠프에서 세계은행 GDP 데이터랑 인구 데이터를 활용해서 EDA를 진행했었습니다. 저희 팀원들이 데이터 정제랑 결측치 처리를 많이 도와줬고, 저희가 시각화를 해보니까 개최국들의 경제 성장률이 실제로 뛰어오르는 양상을 포착할 수 있었습니다.",
+      "answer_sufficiency": {
+        "is_sufficient": false,
+        "sufficiency_reason": "답변 내 주어가 '저희가', '팀원들이'로 편중되어 정작 지원자 본인의 구체적인 역할과 기여도를 알 수 없음.",
+        "answer_weakness_tags": [
+          {
+            "weakness_tag_id": "wt_02_001",
+            "tag_name": "weak_personal_contribution",
+            "reason": "프로젝트 수행 주어가 팀으로 편중되어 주도성 검증이 필요함",
+            "priority_rank": 1,
+            "is_selected_for_followup": true
+          }
+        ],
+        "should_generate_followup": true,
+        "next_action": "FOLLOWUP"
+      }
+    },
+    {
+      "client_question_key": "q_02_002",
+      "question_text": "(꼬리질문) 팀 전체의 성과 말고, 그 안에서 지원자 '본인'이 직접 코드를 짜서 기여한 알고리즘이나 전처리 파트는 정확히 무엇인가요?",
+      "question_type": "experience",
+      "order_index": 2,
+      "stt_text": "아, 제가 직접 맡은 부분은 세계은행 API를 호출해서 파이썬 판다스로 결측치를 보간하는 작업이었습니다. 가용한 과거 5개년 평균값을 기반으로 선형 보간하는 스크립트를 구현해서 데이터 유실률을 줄였습니다.",
+      "answer_sufficiency": {
+        "is_sufficient": true,
+        "sufficiency_reason": "꼬리질문을 통해 비로소 본인이 직접 구현한 판다스 전처리 기여도를 구체적으로 소명함.",
+        "answer_weakness_tags": [],
+        "should_generate_followup": false,
+        "next_action": "PROCEED"
+      }
+    },
+    {
+      "client_question_key": "q_02_003",
+      "question_text": "프로젝트에서 데이터베이스로 PostgreSQL을 선택하신 특별한 이유가 있으신가요?",
+      "question_type": "technical",
+      "order_index": 3,
+      "stt_text": "그냥 예전부터 자주 써왔던 익숙한 데이터베이스이기도 했고, 다른 팀원들도 다 쓸 줄 안다고 해서 협업 효율을 고려해 큰 고민 없이 선택하고 개발을 진행했습니다.",
+      "answer_sufficiency": {
+        "is_sufficient": false,
+        "sufficiency_reason": "트레이드오프나 대안 비교 없이 익숙함만을 이유로 선택하여 아키텍처적 추론 역량이 부족함.",
+        "answer_weakness_tags": [
+          {
+            "weakness_tag_id": "wt_02_002",
+            "tag_name": "weak_technical_reasoning",
+            "reason": "기술 스택 도입에 대한 다른 대안과의 비교나 타당성 검증이 누락됨",
+            "priority_rank": 2,
+            "is_selected_for_followup": false
+          }
+        ],
+        "should_generate_followup": false,
+        "next_action": "PROCEED"
+      }
+    },
+    {
+      "client_question_key": "q_02_004",
+      "question_text": "팀원 간에 업무 배분으로 갈등이 생기면 어떻게 해결하시겠습니까?",
+      "question_type": "personality",
+      "order_index": 4,
+      "stt_text": "서로 솔직하게 대화하는 게 제일 중요하다고 봅니다. 커피 한 잔 마시면서 힘든 점을 편하게 털어놓고 조율하면 대부분 원만하게 해결되었던 것 같습니다.",
+      "answer_sufficiency": {
+        "is_sufficient": true,
+        "sufficiency_reason": "특별한 가점 요인은 없으나 무난하고 원만하게 소통 성향을 답변함.",
+        "answer_weakness_tags": [],
+        "should_generate_followup": false,
+        "next_action": "PROCEED"
+      }
+    },
+    {
+      "client_question_key": "q_02_005",
+      "question_text": "분석 결과의 시각화 툴로 BI 툴 대신 파이썬 라이브러리를 고집하신 이유가 있나요?",
+      "question_type": "technical",
+      "order_index": 5,
+      "stt_text": "당시에는 BI 툴 라이선스 비용 비용 문제가 조금 걸려 있었고, 분석 탬플릿을 재사용하기 위해 Matplotlib이랑 Seaborn을 조합해 자동화 리포트 파이프라인을 구축하는 편이 낫다고 판단했습니다.",
+      "answer_sufficiency": {
+        "is_sufficient": true,
+        "sufficiency_reason": "비용 및 재사용성 측면에서 납득 가능한 의사결정 사유를 전함.",
+        "answer_weakness_tags": [],
+        "should_generate_followup": false,
+        "next_action": "PROCEED"
+      }
+    },
+    {
+      "client_question_key": "q_02_006",
+      "question_text": "업무 중 데이터 마이그레이션 도중 데이터가 꼬이는 사고가 난다면 어떻게 대처하시겠습니까?",
+      "question_type": "job",
+      "order_index": 6,
+      "stt_text": "사고가 나면 일단 상급자에게 즉시 보고를 드리고 상황을 공유할 것입니다. 그리고 미리 만들어둔 백업 스냅샷이 있을 테니 그걸 활용해서 롤백을 안전하게 진행하겠습니다.",
+      "answer_sufficiency": {
+        "is_sufficient": true,
+        "sufficiency_reason": "기본적인 리스크 전파 및 롤백 절차를 무난하게 인지하고 있음.",
+        "answer_weakness_tags": [],
+        "should_generate_followup": false,
+        "next_action": "PROCEED"
+      }
+    },
+    {
+      "client_question_key": "q_02_007",
+      "question_text": "분석가로서 본인만의 핵심 강점이 무엇인지 말씀해주세요.",
+      "question_type": "job",
+      "order_index": 7,
+      "stt_text": "데이터의 겉모습만 보지 않고 지표가 비즈니스에 미치는 영향력을 꼼꼼하게 끝까지 추적하는 성실함과 끈기가 제 가장 큰 무기입니다.",
+      "answer_sufficiency": {
+        "is_sufficient": true,
+        "sufficiency_reason": "보편적이고 무난한 정성적 강점을 어필함.",
+        "answer_weakness_tags": [],
+        "should_generate_followup": false,
+        "next_action": "TERMINATE"
+      }
+    }
+  ]
+}
