@@ -2,25 +2,19 @@ import uuid
 from django.db import models
 from django.conf import settings
 
+from apps.common.choices import (
+    ANSWER_SOURCE_CHOICES,
+    INTERVIEW_PERSONA_CHOICES,
+    INTERVIEW_SESSION_STATUS_CHOICES,
+    INTERVIEW_TYPE_CHOICES,
+    QUESTION_TYPE_CHOICES,
+)
+
 
 class InterviewSession(models.Model):
-    INTERVIEW_TYPE_CHOICES = [
-        ('technical', 'Technical'),
-        ('personality', 'Personality'),
-        ('comprehensive', 'Comprehensive'),
-    ]
-    PERSONA_CHOICES = [
-        ('coach', 'Coach'),
-        ('practical', 'Practical'),
-        ('verifier', 'Verifier'),
-        ('pressure', 'Pressure'),
-    ]
-    STATUS_CHOICES = [
-        ('created', 'Created'),
-        ('in_progress', 'In Progress'),
-        ('completed', 'Completed'),
-        ('cancelled', 'Cancelled'),
-    ]
+    INTERVIEW_TYPE_CHOICES = INTERVIEW_TYPE_CHOICES
+    PERSONA_CHOICES = INTERVIEW_PERSONA_CHOICES
+    STATUS_CHOICES = INTERVIEW_SESSION_STATUS_CHOICES
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='interview_sessions')
@@ -28,8 +22,8 @@ class InterviewSession(models.Model):
     resume = models.ForeignKey('input.ResumeMaster', on_delete=models.SET_NULL, null=True, blank=True, related_name='interview_sessions')
     cover_letter = models.ForeignKey('input.CoverLetter', on_delete=models.SET_NULL, null=True, blank=True, related_name='interview_sessions')
     interview_type = models.CharField(max_length=20, choices=INTERVIEW_TYPE_CHOICES)
-    persona = models.CharField(max_length=20, choices=PERSONA_CHOICES)
-    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='created')
+    persona = models.CharField(max_length=20, choices=INTERVIEW_PERSONA_CHOICES)
+    status = models.CharField(max_length=20, choices=INTERVIEW_SESSION_STATUS_CHOICES, default='created')
     total_question_count = models.PositiveIntegerField(default=3)
     current_question_index = models.PositiveIntegerField(default=0)
     started_at = models.DateTimeField(null=True, blank=True)
@@ -46,10 +40,7 @@ class InterviewSession(models.Model):
 
 
 class InterviewQuestion(models.Model):
-    QUESTION_TYPE_CHOICES = [
-        ('main', 'Main'),
-        ('follow_up', 'Follow Up'),
-    ]
+    QUESTION_TYPE_CHOICES = QUESTION_TYPE_CHOICES
 
     SOURCE_TYPE_CHOICES = [
         ('jd', 'JD'),
@@ -67,6 +58,8 @@ class InterviewQuestion(models.Model):
     question_text = models.TextField()
     source_type = models.CharField(max_length=20, choices=SOURCE_TYPE_CHOICES, default='general')
     source_reference = models.CharField(max_length=100, blank=True, null=True)
+    parent_question = models.ForeignKey('self', on_delete=models.CASCADE, null=True, blank=True, related_name='follow_up_questions')
+    source_answer = models.ForeignKey('InterviewAnswer', on_delete=models.CASCADE, null=True, blank=True, related_name='follow_up_questions')
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -82,10 +75,7 @@ class InterviewQuestion(models.Model):
 
 
 class InterviewAnswer(models.Model):
-    ANSWER_SOURCE_CHOICES = [
-        ('text', 'Text'),
-        ('stt', 'STT'),
-    ]
+    ANSWER_SOURCE_CHOICES = ANSWER_SOURCE_CHOICES
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     session = models.ForeignKey(InterviewSession, on_delete=models.CASCADE, related_name='answers')

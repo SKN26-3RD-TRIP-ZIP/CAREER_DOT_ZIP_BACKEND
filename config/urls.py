@@ -23,4 +23,10 @@ urlpatterns = [
     path('api/v1/interviews/', include('apps.interview.urls')),
     path('api/v1/', include('apps.input.urls')),
     path('api/v1/', include('apps.evaluation.urls')),
+    path('api/v1/', include('apps.report.urls')),
+    path('api/v1/', include('apps.document.urls')),
+    path('api/v1/mypage/', include('apps.mypage.urls')),
+    path('api/v1/admin/', include('apps.prompt.urls')),
+    path('api/v1/admin/', include('apps.admin_api.urls')),
+    path('api/v1/external/', include('apps.external.urls')),
 ]

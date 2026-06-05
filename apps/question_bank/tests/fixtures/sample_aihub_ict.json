@@ -1,0 +1,25 @@
+{
+  "version": "1.0",
+  "dataSet": {
+    "info": {
+      "occupation": "ICT",
+      "experience": "EXPERIENCED"
+    },
+    "question": {
+      "raw": {
+        "text": "Python API 성능 개선 경험을 설명해주세요.",
+        "wordCount": 7
+      }
+    },
+    "answer": {
+      "raw": {
+        "text": "캐시와 인덱스를 적용해 API 성능을 개선했습니다.",
+        "wordCount": 9
+      },
+      "summary": {
+        "text": "캐시와 인덱스를 활용한 성능 개선 경험"
+      },
+      "intent": []
+    }
+  }
+}
