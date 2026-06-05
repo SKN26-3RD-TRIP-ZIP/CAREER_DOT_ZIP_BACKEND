@@ -50,6 +50,7 @@ INSTALLED_APPS = [
     'apps.mypage',
     'apps.document',
     'apps.prompt',
+    'apps.admin_api',
 ]
 
 MIDDLEWARE = [
