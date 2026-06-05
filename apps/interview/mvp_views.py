@@ -9,12 +9,16 @@ from .models import InterviewQuestion, InterviewSession
 from .mvp_serializers import (
     MVPQuestionGenerateSerializer,
     MVPQuestionSerializer,
+    MVPAnswerCreateSerializer,
+    MVPFollowupQuestionSerializer,
     MVPSessionCreateSerializer,
     MVPSessionStatusSerializer,
     STATUS_INPUT_MAP,
     serialize_mvp_session,
 )
 from .services.question_generator import generate_interview_questions
+from .services.answer_service import AnswerService
+from .services.follow_up_generator import FollowupGenerator
 
 
 def get_prompt_version_id(session):
@@ -123,4 +127,50 @@ class MVPQuestionListView(APIView):
                 'results': MVPQuestionSerializer(questions, many=True).data,
             },
             status=status.HTTP_200_OK,
+        )
+
+
+class MVPAnswerCreateView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        serializer = MVPAnswerCreateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        answer = AnswerService.create_answer(
+            user=request.user,
+            session_id=serializer.validated_data['session_id'],
+            question_id=serializer.validated_data['question_id'],
+            answer_text=serializer.validated_data['answer_text'],
+        )
+        return Response(
+            {
+                'answer_id': str(answer.id),
+                'created_at': answer.created_at,
+            },
+            status=status.HTTP_201_CREATED,
+        )
+
+
+class MVPFollowupQuestionCreateView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, answer_id):
+        answer = AnswerService.get_owned_answer(answer_id=answer_id, user=request.user)
+        followup, created = FollowupGenerator.create_followup(answer)
+        if followup is None:
+            return Response(
+                {
+                    'answer_id': str(answer.id),
+                    'next_action': 'NEXT_QUESTION',
+                    'followup_question': None,
+                },
+                status=status.HTTP_200_OK,
+            )
+        return Response(
+            {
+                'answer_id': str(answer.id),
+                'next_action': 'GENERATE_FOLLOWUP',
+                'followup_question': MVPFollowupQuestionSerializer(followup).data,
+            },
+            status=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
         )
