@@ -24,6 +24,11 @@ class InterviewSession(models.Model):
     interview_type = models.CharField(max_length=20, choices=INTERVIEW_TYPE_CHOICES)
     persona = models.CharField(max_length=20, choices=INTERVIEW_PERSONA_CHOICES)
     status = models.CharField(max_length=20, choices=INTERVIEW_SESSION_STATUS_CHOICES, default='created')
+    interview_mode = models.CharField(
+        max_length=10,
+        choices=[('text', 'Text'), ('voice', 'Voice')],
+        default='text',
+    )
     total_question_count = models.PositiveIntegerField(default=3)
     current_question_index = models.PositiveIntegerField(default=0)
     started_at = models.DateTimeField(null=True, blank=True)
