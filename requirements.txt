@@ -13,7 +13,7 @@ psycopg2-binary==2.9.9
 
 # ===== Redis & 캐시 — Redis 준비 전 주석 처리 =====
 # redis==5.0
-# django-redis==5.4
+# django-redis==5.4 
 
 # ===== AI / LLM =====
 openai==1.30

@@ -26,4 +26,5 @@ urlpatterns = [
     path('api/v1/', include('apps.report.urls')),
     path('api/v1/', include('apps.document.urls')),
     path('api/v1/mypage/', include('apps.mypage.urls')),
+    path('api/v1/admin/', include('apps.prompt.urls')),
 ]

@@ -49,6 +49,7 @@ INSTALLED_APPS = [
     'apps.report',
     'apps.mypage',
     'apps.document',
+    'apps.prompt',
 ]
 
 MIDDLEWARE = [
