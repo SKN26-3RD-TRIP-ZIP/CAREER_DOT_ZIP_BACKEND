@@ -1,0 +1,151 @@
+{
+  "session_id": "sess_03",
+  "evaluation_target": "ml_data_engineer",
+  "interview_flow": [
+    {
+      "client_question_key": "q_03_001",
+      "question_text": "이전 직무에서 처리하셨던 데이터 파이프라인의 규모와 정량적 성과에 대해 구체적으로 소개해 주십시오.",
+      "question_type": "technical",
+      "order_index": 1,
+      "stt_text": "어... 그니까... 데이터가 엄청나게 많었는데요. 음... 그냥 사실 매일 들어오는 데이터를 안정적으로 돌렸고... 이제 성능도 예전보다 훨씬 빨라졌다고 다들 좋아하셨습니다. 그니까 구체적인 수치는 기억 안 나는데 아무튼 많이 개선했습니다.",
+      "answer_sufficiency": {
+        "is_sufficient": false,
+        "sufficiency_reason": "필러워드가 남발되어 전달력이 심각하게 저하되었으며, 개선 성과에 대한 정량적 수치 지표가 단 한 개도 존재하지 않음.",
+        "answer_weakness_tags": [
+          {
+            "weakness_tag_id": "wt_03_001",
+            "tag_name": "excessive_filler_words",
+            "reason": "발화 중 '어, 음, 그니까' 등 간투사 빈도가 매우 높아 전달력 규칙 과락선 돌파",
+            "priority_rank": 1,
+            "is_selected_for_followup": false
+          },
+          {
+            "weakness_tag_id": "wt_03_002",
+            "tag_name": "weak_evidence",
+            "reason": "답변 내에 정량적 수치(%, 건수 등)가 전무하여 실증적 근거 확인 불가",
+            "priority_rank": 2,
+            "is_selected_for_followup": true
+          }
+        ],
+        "should_generate_followup": true,
+        "next_action": "FOLLOWUP"
+      }
+    },
+    {
+      "client_question_key": "q_03_002",
+      "question_text": "(꼬리질문) 성능이 훨씬 빨라졌다고 하셨는데, 대략 수백만 건 기준이었는지 혹은 처리 시간(Latency)이 몇 초에서 몇 초로 단축되었는지 대략적인 범위라도 말씀해 주실 수 있나요?",
+      "question_type": "technical",
+      "order_index": 2,
+      "stt_text": "음... 어... 그게 정확히 기억은 안 나는데요... 그냥 대충 체감상 전보다 시스템이 안 멈추고 엄청 부드럽게 잘 굴러갔던 것 같습니다... 그니까 동시 접속자가 많아도 끄떡없었습니다.",
+      "answer_sufficiency": {
+        "is_sufficient": false,
+        "sufficiency_reason": "꼬리질문 유도를 통해 구체적인 수치를 리마인드하려 했으나 끝까지 정량적 팩트 제시에 실패함.",
+        "answer_weakness_tags": [
+          {
+            "weakness_tag_id": "wt_03_003",
+            "tag_name": "weak_specificity",
+            "reason": "구조화된 상황이나 수치 방어에 완전히 실패하여 추상적 주장에 그침",
+            "priority_rank": 1,
+            "is_selected_for_followup": false
+          }
+        ],
+        "should_generate_followup": false,
+        "next_action": "PROCEED"
+      }
+    },
+    {
+      "client_question_key": "q_03_003",
+      "question_text": "우리 회사의 ML 엔지니어로서 입사 후 다루고 싶은 JD상의 핵심 모델 레이어에 대해 말씀해 주세요.",
+      "question_type": "job",
+      "order_index": 3,
+      "stt_text": "어... 사실 저는 딥러닝보다는 프론트엔드 UI 디자인이나 간단한 웹 서비스 페이지 만드는 작업에도 흥미가 좀 많거든요. 입사하게 되면 그런 풀스택 업무를 다 같이 해보고 싶습니다.",
+      "answer_sufficiency": {
+        "is_sufficient": false,
+        "sufficiency_reason": "지원한 ML 직무 요구사항(JD)과 전혀 다른 개인적 희망을 피력하여 매칭 정합성이 크게 저하됨.",
+        "answer_weakness_tags": [
+          {
+            "weakness_tag_id": "wt_03_004",
+            "tag_name": "weak_jd_fit",
+            "reason": "답변 맥락이 지원 직무의 핵심 역량 및 요구사항 요건과 긴밀히 연결되지 않음",
+            "priority_rank": 2,
+            "is_selected_for_followup": false
+          }
+        ],
+        "should_generate_followup": false,
+        "next_action": "PROCEED"
+      }
+    },
+    {
+      "client_question_key": "q_03_004",
+      "question_text": "이전 팀 프로젝트에서 마감 기한이 촉박한데 진척도가 안 나올 때 어떻게 행동하셨나요?",
+      "question_type": "personality",
+      "order_index": 4,
+      "stt_text": "음... 그냥 어쩌겠습니까. 기한이 촉박하면 팀장님이 알아서 일정을 미뤄주시거나 위에서 다른 대책을 세워주실 테니, 저는 그냥 제가 맡은 루틴한 일만 묵묵히 하면서 결과를 기다렸습니다.",
+      "answer_sufficiency": {
+        "is_sufficient": false,
+        "sufficiency_reason": "상황 극복을 위해 주도적으로 행동하기보다 환경의 해결을 방관하는 수동적 태도가 포착됨.",
+        "answer_weakness_tags": [
+          {
+            "weakness_tag_id": "wt_03_005",
+            "tag_name": "passive_attitude",
+            "reason": "갈등이나 장애 상황 발생 시 주도적으로 나서지 않는 수동 성향 노출",
+            "priority_rank": 3,
+            "is_selected_for_followup": false
+          }
+        ],
+        "should_generate_followup": false,
+        "next_action": "PROCEED"
+      }
+    },
+    {
+      "client_question_key": "q_03_005",
+      "question_text": "협업 중 다른 파트 개발자가 소통을 거부한다면 어떻게 대응하시겠습니까?",
+      "question_type": "personality",
+      "order_index": 5,
+      "stt_text": "저도 굳이 저를 싫어하거나 소통을 피하는 사람에게 다가가서 억지로 말을 걸고 싶지는 않습니다. 그냥 이메일로만 서류상으로 넘기고 제 할 일만 끝내겠습니다.",
+      "answer_sufficiency": {
+        "is_sufficient": false,
+        "sufficiency_reason": "조직 내 협업 및 커뮤니케이션 병목 해결 의지가 전혀 보이지 않음.",
+        "answer_weakness_tags": [],
+        "should_generate_followup": false,
+        "next_action": "PROCEED"
+      }
+    },
+    {
+      "client_question_key": "q_03_006",
+      "question_text": "본인이 다뤄본 데이터 파이프라인 툴 중 하둡(Hadoop)의 단점은 무엇이라고 생각하나요?",
+      "question_type": "technical",
+      "order_index": 6,
+      "stt_text": "어... 하둡이요? 그냥 수업 시간에 좋다고 해서 대충 설치만 해봤고 딱히 단점이나 한계에 대해서는 깊게 생각해 보지 않아서 잘 모르겠습니다.",
+      "answer_sufficiency": {
+        "is_sufficient": false,
+        "sufficiency_reason": "기술적 개념에 대한 원리와 깊이 있는 고찰이 심각하게 누락됨.",
+        "answer_weakness_tags": [
+          {
+            "weakness_tag_id": "wt_03_006",
+            "tag_name": "weak_technical_understanding",
+            "reason": "사용한 기술이나 개념에 대한 이해 설명이 전반적으로 부실함",
+            "priority_rank": 1,
+            "is_selected_for_followup": false
+          }
+        ],
+        "should_generate_followup": false,
+        "next_action": "PROCEED"
+      }
+    },
+    {
+      "client_question_key": "q_03_007",
+      "question_text": "마지막으로 본인이 우리 회사에 채용되어야 하는 단 하나의 이유를 대보세요.",
+      "question_type": "job",
+      "order_index": 7,
+      "stt_text": "그냥 열심히 시키는 대로 무조건 성실하게 군말 없이 군대식으로 잘 다닐 수 있습니다. 뽑아만 주십시오.",
+      "answer_sufficiency": {
+        "is_sufficient": false,
+        "sufficiency_reason": "전문성 중심의 면접 맥락에서 직무 적합성과 동떨어진 맹목적 다짐만 반복함.",
+        "answer_weakness_tags": [],
+        "should_generate_followup": false,
+        "next_action": "TERMINATE"
+      }
+    }
+  ]
+}
