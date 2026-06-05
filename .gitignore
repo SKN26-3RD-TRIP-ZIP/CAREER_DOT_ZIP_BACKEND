@@ -156,6 +156,7 @@ activemq-data/
 .env.local
 .env.prod
 .envrc
+/data/aihub/
 .venv
 env/
 venv/
