@@ -3,6 +3,8 @@ from django.urls import path
 from .mvp_views import (
     MVPQuestionGenerateView,
     MVPQuestionListView,
+    MVPAnswerCreateView,
+    MVPFollowupQuestionCreateView,
     MVPSessionCreateView,
     MVPSessionDetailView,
     MVPSessionStatusView,
@@ -22,5 +24,11 @@ urlpatterns = [
         'sessions/<uuid:session_id>/questions',
         MVPQuestionListView.as_view(),
         name='mvp-question-list',
+    ),
+    path('answers', MVPAnswerCreateView.as_view(), name='mvp-answer-create'),
+    path(
+        'answers/<uuid:answer_id>/followup',
+        MVPFollowupQuestionCreateView.as_view(),
+        name='mvp-answer-followup-create',
     ),
 ]

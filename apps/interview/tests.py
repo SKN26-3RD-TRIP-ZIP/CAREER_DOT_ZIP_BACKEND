@@ -1,4 +1,5 @@
 from datetime import timedelta
+import uuid
 
 from django.contrib.auth import get_user_model
 from django.urls import reverse
@@ -506,3 +507,159 @@ class MVPTextInterviewFlowTests(APITestCase):
 
         self.assertEqual(detail.status_code, status.HTTP_404_NOT_FOUND)
         self.assertEqual(generate.status_code, status.HTTP_404_NOT_FOUND)
+
+
+class MVPAnswerFollowupAPITests(APITestCase):
+    def setUp(self):
+        user_model = get_user_model()
+        self.user = user_model.objects.create_user(
+            email='answer-owner@example.com',
+            password='password123',
+            name='Answer Owner',
+        )
+        self.other_user = user_model.objects.create_user(
+            email='answer-other@example.com',
+            password='password123',
+            name='Answer Other',
+        )
+        self.session = InterviewSession.objects.create(
+            user=self.user,
+            interview_type='technical',
+            persona='practical',
+        )
+        self.question = InterviewQuestion.objects.create(
+            session=self.session,
+            order_index=1,
+            question_type='main',
+            question_text='Explain your project contribution.',
+            source_type='rule',
+        )
+        self.other_session = InterviewSession.objects.create(
+            user=self.other_user,
+            interview_type='technical',
+            persona='practical',
+        )
+        self.other_question = InterviewQuestion.objects.create(
+            session=self.other_session,
+            order_index=1,
+            question_type='main',
+            question_text='Other question',
+            source_type='rule',
+        )
+        self.client.force_authenticate(self.user)
+
+    def answer_payload(self, **overrides):
+        payload = {
+            'session_id': str(self.session.id),
+            'question_id': str(self.question.id),
+            'answer_text': '저는 해당 기능을 직접 구현했습니다.',
+            'speech_duration': 45.25,
+        }
+        payload.update(overrides)
+        return payload
+
+    def create_answer(self, **overrides):
+        return self.client.post(
+            reverse('mvp-answer-create'),
+            self.answer_payload(**overrides),
+            format='json',
+        )
+
+    def test_create_answer_returns_created(self):
+        response = self.create_answer()
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertIn('answer_id', response.data)
+        self.assertIn('created_at', response.data)
+
+    def test_blank_answer_text_returns_bad_request(self):
+        response = self.create_answer(answer_text='   ')
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_missing_session_and_question_return_not_found(self):
+        missing_session = self.create_answer(session_id=str(uuid.uuid4()))
+        missing_question = self.create_answer(question_id=str(uuid.uuid4()))
+
+        self.assertEqual(missing_session.status_code, status.HTTP_404_NOT_FOUND)
+        self.assertEqual(missing_question.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_other_users_session_returns_forbidden(self):
+        response = self.create_answer(
+            session_id=str(self.other_session.id),
+            question_id=str(self.other_question.id),
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_duplicate_answer_returns_bad_request(self):
+        first = self.create_answer()
+        second = self.create_answer(answer_text='두 번째 답변입니다.')
+
+        self.assertEqual(first.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(second.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(InterviewAnswer.objects.filter(question=self.question).count(), 1)
+
+    def test_short_answer_creates_one_linked_followup(self):
+        answer_response = self.create_answer(answer_text='짧은 답변')
+        followup_url = reverse(
+            'mvp-answer-followup-create',
+            kwargs={'answer_id': answer_response.data['answer_id']},
+        )
+
+        first = self.client.post(followup_url, {}, format='json')
+        second = self.client.post(followup_url, {}, format='json')
+
+        self.assertEqual(first.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(first.data['next_action'], 'GENERATE_FOLLOWUP')
+        self.assertEqual(
+            first.data['followup_question']['parent_question_id'],
+            str(self.question.id),
+        )
+        self.assertEqual(second.status_code, status.HTTP_200_OK)
+        self.assertEqual(
+            InterviewQuestion.objects.filter(
+                parent_question=self.question,
+                question_type='follow_up',
+            ).count(),
+            1,
+        )
+
+    def test_sufficient_answer_moves_to_next_question(self):
+        answer_response = self.create_answer(
+            answer_text=(
+                '저는 API 성능 개선을 담당했고 캐시를 선택한 이유는 응답 지연 때문입니다. '
+                '제가 직접 구현한 결과 응답 시간이 30% 감소했습니다.'
+            )
+        )
+
+        response = self.client.post(
+            reverse(
+                'mvp-answer-followup-create',
+                kwargs={'answer_id': answer_response.data['answer_id']},
+            ),
+            {},
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['next_action'], 'NEXT_QUESTION')
+        self.assertIsNone(response.data['followup_question'])
+
+    def test_other_users_answer_returns_forbidden(self):
+        other_answer = InterviewAnswer.objects.create(
+            session=self.other_session,
+            question=self.other_question,
+            answer_text='Other answer',
+        )
+
+        response = self.client.post(
+            reverse(
+                'mvp-answer-followup-create',
+                kwargs={'answer_id': other_answer.id},
+            ),
+            {},
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)

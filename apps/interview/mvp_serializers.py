@@ -143,6 +143,22 @@ class MVPQuestionSerializer(serializers.ModelSerializer):
         return bank_item.difficulty if bank_item else 'medium'
 
 
+class MVPAnswerCreateSerializer(serializers.Serializer):
+    session_id = serializers.UUIDField()
+    question_id = serializers.UUIDField()
+    answer_text = serializers.CharField(allow_blank=False, trim_whitespace=True)
+    speech_duration = serializers.FloatField(required=False, min_value=0)
+
+
+class MVPFollowupQuestionSerializer(serializers.ModelSerializer):
+    question_id = serializers.UUIDField(source='id', read_only=True)
+    parent_question_id = serializers.UUIDField(read_only=True)
+
+    class Meta:
+        model = InterviewQuestion
+        fields = ('question_id', 'question_text', 'parent_question_id')
+
+
 def serialize_mvp_session(session, include_created_at=False, prompt_version_id=None):
     data = {
         'session_id': str(session.id),
