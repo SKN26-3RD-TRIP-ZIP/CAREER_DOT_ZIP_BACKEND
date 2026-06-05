@@ -24,8 +24,13 @@ from .services.question_generator import generate_interview_questions
 from .services.follow_up_generator import generate_follow_up_questions
 from .serializers import FollowUpQuestionSerializer
 from django.db import models
+from django.db.models import Prefetch
 from .models import InterviewAnswer
-from .serializers import InterviewAnswerCreateSerializer, InterviewAnswerSerializer
+from .serializers import (
+    InterviewAnswerCreateSerializer,
+    InterviewAnswerSerializer,
+    InterviewTurnSerializer,
+)
 
 
 class InterviewSessionListCreateView(generics.ListCreateAPIView):
@@ -141,6 +146,52 @@ class InterviewSessionCompleteView(APIView):
 
         serializer = InterviewSessionCompleteSerializer(session)
         return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+class InterviewSessionTurnsView(APIView):
+    authentication_classes = [JWTAuthentication]
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request, session_id):
+        session = get_object_or_404(
+            InterviewSession,
+            id=session_id,
+            user=request.user,
+        )
+        follow_up_queryset = InterviewQuestion.objects.select_related(
+            'answer__evaluation',
+        ).order_by('order_index')
+        main_questions = (
+            InterviewQuestion.objects.filter(
+                session=session,
+                question_type='main',
+            )
+            .select_related('answer__evaluation')
+            .prefetch_related(
+                Prefetch(
+                    'answer__follow_up_questions',
+                    queryset=follow_up_queryset,
+                    to_attr='prefetched_follow_up_questions',
+                )
+            )
+            .order_by('order_index')
+        )
+        turns = [
+            {'turn_index': index, 'question': question}
+            for index, question in enumerate(main_questions, start=1)
+        ]
+
+        return Response(
+            {
+                'session_id': str(session.id),
+                'interview_type': session.interview_type,
+                'persona': session.persona,
+                'status': session.status,
+                'total': len(turns),
+                'turns': InterviewTurnSerializer(turns, many=True).data,
+            },
+            status=status.HTTP_200_OK,
+        )
 
 
 class InterviewQuestionGenerateView(APIView):

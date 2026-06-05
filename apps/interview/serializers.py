@@ -1,6 +1,7 @@
 from rest_framework import serializers
 
 from apps.common.choices import ANSWER_SOURCE_CHOICES
+from apps.evaluation.models import Evaluation
 from apps.input.models import JobDescription, ResumeMaster, CoverLetter
 from .models import InterviewSession, InterviewQuestion, InterviewAnswer
 
@@ -123,6 +124,96 @@ class InterviewSessionCompleteSerializer(serializers.ModelSerializer):
     class Meta:
         model = InterviewSession
         fields = ('session_id', 'status', 'started_at', 'ended_at', 'updated_at')
+
+
+class InterviewTurnQuestionSerializer(serializers.ModelSerializer):
+    question_id = serializers.UUIDField(source='id', read_only=True)
+
+    class Meta:
+        model = InterviewQuestion
+        fields = (
+            'question_id',
+            'order_index',
+            'question_type',
+            'question_text',
+            'source_type',
+            'source_reference',
+        )
+
+
+class InterviewTurnAnswerSerializer(serializers.ModelSerializer):
+    answer_id = serializers.UUIDField(source='id', read_only=True)
+
+    class Meta:
+        model = InterviewAnswer
+        fields = ('answer_id', 'answer_text', 'answer_source', 'created_at')
+
+
+class InterviewTurnEvaluationSerializer(serializers.ModelSerializer):
+    evaluation_id = serializers.UUIDField(source='id', read_only=True)
+
+    class Meta:
+        model = Evaluation
+        fields = (
+            'evaluation_id',
+            'final_tech_score',
+            'llm_concept_score',
+            'score_detail',
+            'evaluated_at',
+        )
+
+
+def get_answer(question):
+    try:
+        return question.answer
+    except InterviewAnswer.DoesNotExist:
+        return None
+
+
+def get_evaluation(answer):
+    if answer is None:
+        return None
+    try:
+        return answer.evaluation
+    except Evaluation.DoesNotExist:
+        return None
+
+
+class InterviewTurnFollowUpSerializer(InterviewTurnQuestionSerializer):
+    answer = serializers.SerializerMethodField()
+    evaluation = serializers.SerializerMethodField()
+
+    class Meta(InterviewTurnQuestionSerializer.Meta):
+        fields = InterviewTurnQuestionSerializer.Meta.fields + ('answer', 'evaluation')
+
+    def get_answer(self, obj):
+        answer = get_answer(obj)
+        return InterviewTurnAnswerSerializer(answer).data if answer else None
+
+    def get_evaluation(self, obj):
+        evaluation = get_evaluation(get_answer(obj))
+        return InterviewTurnEvaluationSerializer(evaluation).data if evaluation else None
+
+
+class InterviewTurnSerializer(serializers.Serializer):
+    turn_index = serializers.IntegerField()
+    question = InterviewTurnQuestionSerializer()
+    answer = serializers.SerializerMethodField()
+    evaluation = serializers.SerializerMethodField()
+    follow_up_questions = serializers.SerializerMethodField()
+
+    def get_answer(self, obj):
+        answer = get_answer(obj['question'])
+        return InterviewTurnAnswerSerializer(answer).data if answer else None
+
+    def get_evaluation(self, obj):
+        evaluation = get_evaluation(get_answer(obj['question']))
+        return InterviewTurnEvaluationSerializer(evaluation).data if evaluation else None
+
+    def get_follow_up_questions(self, obj):
+        answer = get_answer(obj['question'])
+        follow_up_questions = getattr(answer, 'prefetched_follow_up_questions', []) if answer else []
+        return InterviewTurnFollowUpSerializer(follow_up_questions, many=True).data
 
 
 class InterviewQuestionSerializer(serializers.ModelSerializer):
