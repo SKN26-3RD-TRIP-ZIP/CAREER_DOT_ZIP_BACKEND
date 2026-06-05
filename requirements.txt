@@ -7,6 +7,7 @@ django-cors-headers==4.3
 # ===== 환경변수 & 설정 =====
 python-dotenv==1.0
 dj-database-url==2.1
+requests==2.32.3
 
 # ===== 데이터베이스 =====
 psycopg2-binary==2.9.9
