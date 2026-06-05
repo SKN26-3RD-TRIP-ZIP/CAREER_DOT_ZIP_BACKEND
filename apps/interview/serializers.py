@@ -1,4 +1,6 @@
 from rest_framework import serializers
+
+from apps.common.choices import ANSWER_SOURCE_CHOICES
 from apps.input.models import JobDescription, ResumeMaster, CoverLetter
 from .models import InterviewSession, InterviewQuestion, InterviewAnswer
 
@@ -136,7 +138,7 @@ class InterviewQuestionSerializer(serializers.ModelSerializer):
 
 class InterviewAnswerCreateSerializer(serializers.Serializer):
     answer_text = serializers.CharField()
-    answer_source = serializers.ChoiceField(choices=("text", "stt"), required=False, default='text')
+    answer_source = serializers.ChoiceField(choices=ANSWER_SOURCE_CHOICES, required=False, default='text')
 
     def validate(self, attrs):
         return attrs
