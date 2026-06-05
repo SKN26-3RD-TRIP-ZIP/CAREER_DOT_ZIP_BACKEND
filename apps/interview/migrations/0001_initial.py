@@ -11,7 +11,7 @@ class Migration(migrations.Migration):
     initial = True
 
     dependencies = [
-        ('input', '0005_projectexperience'),
+        ('input', '0006_coverletter'),
         migrations.swappable_dependency(settings.AUTH_USER_MODEL),
     ]
 

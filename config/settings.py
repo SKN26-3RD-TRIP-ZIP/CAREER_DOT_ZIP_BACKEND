@@ -59,6 +59,7 @@ INSTALLED_APPS = [
     'apps.prompt',
     'apps.admin_api',
     'apps.external',
+    'apps.question_bank',
 ]
 
 MIDDLEWARE = [
