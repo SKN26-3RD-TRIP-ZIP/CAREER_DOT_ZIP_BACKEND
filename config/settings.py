@@ -47,6 +47,7 @@ INSTALLED_APPS = [
     'apps.interview',
     'apps.evaluation',
     'apps.report',
+    'apps.mypage',
 ]
 
 MIDDLEWARE = [
