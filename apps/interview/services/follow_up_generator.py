@@ -1,89 +1,194 @@
 from django.db import transaction
 from django.db.models import Max, Q
 
+from apps.interview.ai_chain_contracts import (
+    DEFAULT_WEAKNESS_TAG_CANDIDATES,
+    NextAction,
+)
 from apps.interview.models import InterviewQuestion
-
-
-FOLLOWUP_TRIGGERS = {
-    'TOO_SHORT': 'Answer is too short.',
-    'MISSING_REASON': 'The reason for the choice is missing.',
-    'UNCLEAR_ROLE': 'The applicant role and contribution are unclear.',
-    'NO_RESULT': 'The result or outcome is missing.',
-    'TECH_DEPTH_LOW': 'Technical depth is insufficient.',
-}
-
-FOLLOWUP_QUESTIONS = {
-    'TOO_SHORT': '방금 답변을 조금 더 구체적인 사례를 들어 설명해주시겠어요?',
-    'MISSING_REASON': '그 방식을 선택한 이유와 다른 대안과 비교했을 때의 장점을 설명해주세요.',
-    'UNCLEAR_ROLE': '그 과정에서 본인이 직접 담당한 역할과 기여도를 구체적으로 설명해주세요.',
-    'NO_RESULT': '그 경험의 결과나 성과는 무엇이었나요?',
-    'TECH_DEPTH_LOW': '해당 기술을 실제로 적용할 때 주의해야 할 점이나 한계를 설명해주세요.',
-}
+from apps.interview.services.ai_chain_service import InterviewAIChainService
 
 
 class FollowupGenerator:
-    REASON_WORDS = ('왜', '이유', '때문', '선택')
-    ROLE_WORDS = ('제가', '저는', '담당', '구현', '기여')
-    RESULT_WORDS = ('결과', '성과', '개선', '증가', '감소', '%')
+    """답변 기반 꼬리질문 생성기.
 
-    @classmethod
-    def determine_trigger(cls, answer_text):
-        text = (answer_text or '').strip()
-        if len(text) < 30:
-            return 'TOO_SHORT'
-        if not any(word in text for word in cls.REASON_WORDS):
-            return 'MISSING_REASON'
-        if not any(word in text for word in cls.ROLE_WORDS):
-            return 'UNCLEAR_ROLE'
-        if not any(word in text for word in cls.RESULT_WORDS):
-            return 'NO_RESULT'
-        return None
+    MVP 단계에서는 InterviewAIChainService의 mock 판단 로직을 사용한다.
+    추후 LLM Chain으로 교체하더라도 create_followup(answer)의 외부 계약은 유지한다.
+    """
+
+    ai_chain_service = InterviewAIChainService()
 
     @classmethod
     def create_followup(cls, answer):
         existing = (
             InterviewQuestion.objects.filter(
                 Q(source_answer=answer) | Q(parent_question=answer.question),
-                question_type='follow_up',
+                question_type="follow_up",
             )
-            .order_by('order_index')
+            .order_by("order_index")
             .first()
         )
         if existing:
             return existing, False
 
-        trigger = cls.determine_trigger(answer.answer_text)
-        if trigger is None:
+        sufficiency_payload = cls._build_sufficiency_payload(answer)
+        sufficiency_result = cls.ai_chain_service.judge_answer_sufficiency(
+            sufficiency_payload
+        )
+
+        if sufficiency_result.get("next_action") == NextAction.NEXT_QUESTION.value:
+            return None, False
+
+        selected_weakness_tag = sufficiency_result.get("selected_weakness_tag")
+        if not selected_weakness_tag:
+            return None, False
+
+        followup_payload = cls._build_followup_payload(
+            answer=answer,
+            selected_weakness_tag=selected_weakness_tag,
+        )
+        followup_result = cls.ai_chain_service.generate_followup_question(
+            followup_payload
+        )
+        followup_data = followup_result.get("followup_question")
+
+        if not followup_data or not followup_data.get("question_text"):
             return None, False
 
         with transaction.atomic():
             last_index = (
                 InterviewQuestion.objects.filter(session=answer.session)
-                .aggregate(last=Max('order_index'))['last']
+                .aggregate(last=Max("order_index"))["last"]
                 or 0
             )
+
             question = InterviewQuestion.objects.create(
                 session=answer.session,
                 parent_question=answer.question,
                 source_answer=answer,
-                question_text=FOLLOWUP_QUESTIONS[trigger],
-                question_type='follow_up',
-                source_type='rule',
-                source_reference=trigger,
+                question_text=followup_data["question_text"],
+                question_type="follow_up",
+                source_type="general",
+                source_reference=selected_weakness_tag.get("tag_name", "ai_chain_mock"),
                 order_index=last_index + 1,
             )
+
         return question, True
+
+    @classmethod
+    def _build_sufficiency_payload(cls, answer):
+        question = answer.question
+        session = answer.session
+
+        return {
+            "session_id": str(session.id),
+            "question": {
+                "question_id": str(question.id),
+                "question_text": question.question_text,
+                "question_type": cls._map_question_type(question.question_type),
+                "parent_question_id": (
+                    str(question.parent_question_id)
+                    if question.parent_question_id
+                    else None
+                ),
+                "source_tags": [
+                    {
+                        "source_type": question.source_type or "general",
+                        "source_label": question.source_type or "general",
+                        "source_text_excerpt": question.source_reference or "",
+                    }
+                ],
+            },
+            "answer": {
+                "answer_id": str(answer.id),
+                "answer_text": answer.answer_text,
+            },
+            "persona": {
+                "persona_id": None,
+                "persona_type": cls._map_persona_type(session.persona),
+                "name": session.persona,
+                "description": "",
+            },
+            "prompt_version_id": None,
+            "weakness_tag_candidates": DEFAULT_WEAKNESS_TAG_CANDIDATES,
+        }
+
+    @classmethod
+    def _build_followup_payload(cls, answer, selected_weakness_tag):
+        question = answer.question
+        session = answer.session
+
+        previous_followup_count = InterviewQuestion.objects.filter(
+            session=session,
+            parent_question=question,
+            question_type="follow_up",
+        ).count()
+
+        previous_question_count = InterviewQuestion.objects.filter(
+            session=session
+        ).count()
+
+        return {
+            "session_id": str(session.id),
+            "parent_question": {
+                "question_id": str(question.id),
+                "question_text": question.question_text,
+                "question_type": cls._map_question_type(question.question_type),
+                "source_tags": [
+                    {
+                        "source_type": question.source_type or "general",
+                        "source_label": question.source_type or "general",
+                        "source_text_excerpt": question.source_reference or "",
+                    }
+                ],
+            },
+            "answer": {
+                "answer_id": str(answer.id),
+                "answer_text": answer.answer_text,
+            },
+            "selected_weakness_tag": {
+                "answer_weakness_tag_id": None,
+                **selected_weakness_tag,
+            },
+            "persona": {
+                "persona_id": None,
+                "persona_type": cls._map_persona_type(session.persona),
+                "name": session.persona,
+                "description": "",
+            },
+            "prompt_version_id": None,
+            "conversation_context": {
+                "previous_question_count": previous_question_count,
+                "previous_followup_count_for_parent": previous_followup_count,
+            },
+        }
+
+    @staticmethod
+    def _map_question_type(question_type):
+        if question_type == "follow_up":
+            return "job"
+        if question_type == "main":
+            return "job"
+        return question_type or "job"
+
+    @staticmethod
+    def _map_persona_type(persona):
+        if persona == "verifier":
+            return "verify"
+        if persona in {"coach", "practical", "verify"}:
+            return persona
+        return "practical"
 
 
 def generate_follow_up_questions(answer):
-    trigger = FollowupGenerator.determine_trigger(answer.answer_text)
-    if trigger is None:
+    followup, created = FollowupGenerator.create_followup(answer)
+    if followup is None:
         return []
     return [
         {
-            'question_type': 'follow_up',
-            'question_text': FOLLOWUP_QUESTIONS[trigger],
-            'source_type': 'rule',
-            'source_reference': trigger,
+            "question_type": followup.question_type,
+            "question_text": followup.question_text,
+            "source_type": followup.source_type,
+            "source_reference": followup.source_reference,
         }
     ]
