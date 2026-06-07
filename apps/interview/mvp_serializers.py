@@ -2,7 +2,7 @@ from rest_framework import serializers
 
 from apps.input.models import CoverLetter, JobDescription, ProjectExperience, ResumeMaster
 from apps.question_bank.models import QuestionBankItem
-from .models import InterviewQuestion, InterviewSession
+from .models import InterviewAnswer, InterviewQuestion, InterviewSession
 
 
 PERSONA_INPUT_MAP = {
@@ -148,6 +148,24 @@ class MVPAnswerCreateSerializer(serializers.Serializer):
     question_id = serializers.UUIDField()
     answer_text = serializers.CharField(allow_blank=False, trim_whitespace=True)
     speech_duration = serializers.FloatField(required=False, min_value=0)
+
+
+class MVPSTTResultUpdateSerializer(serializers.ModelSerializer):
+    stt_text = serializers.CharField(allow_blank=False, trim_whitespace=True)
+    audio_url = serializers.URLField(required=False, allow_null=True, allow_blank=True)
+    speech_duration = serializers.FloatField(required=False, min_value=0)
+    total_pause_duration = serializers.FloatField(required=False, min_value=0)
+    long_pause_count = serializers.IntegerField(required=False, min_value=0)
+
+    class Meta:
+        model = InterviewAnswer
+        fields = (
+            'stt_text',
+            'audio_url',
+            'speech_duration',
+            'total_pause_duration',
+            'long_pause_count',
+        )
 
 
 class MVPFollowupQuestionSerializer(serializers.ModelSerializer):
