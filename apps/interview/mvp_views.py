@@ -5,11 +5,12 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.prompt.models import PersonaConfig
-from .models import InterviewQuestion, InterviewSession
+from .models import InterviewAnswer, InterviewQuestion, InterviewSession
 from .mvp_serializers import (
     MVPQuestionGenerateSerializer,
     MVPQuestionSerializer,
     MVPAnswerCreateSerializer,
+    MVPSTTResultUpdateSerializer,
     MVPFollowupQuestionSerializer,
     MVPSessionCreateSerializer,
     MVPSessionStatusSerializer,
@@ -141,6 +142,7 @@ class MVPAnswerCreateView(APIView):
             session_id=serializer.validated_data['session_id'],
             question_id=serializer.validated_data['question_id'],
             answer_text=serializer.validated_data['answer_text'],
+            speech_duration=serializer.validated_data.get('speech_duration'),
         )
         return Response(
             {
@@ -148,6 +150,35 @@ class MVPAnswerCreateView(APIView):
                 'created_at': answer.created_at,
             },
             status=status.HTTP_201_CREATED,
+        )
+
+
+class MVPSTTResultUpdateView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def patch(self, request, answer_id):
+        answer = get_object_or_404(
+            InterviewAnswer.objects.select_related('session', 'question'),
+            id=answer_id,
+            session__user=request.user,
+        )
+        serializer = MVPSTTResultUpdateSerializer(
+            answer,
+            data=request.data,
+            partial=True,
+        )
+        serializer.is_valid(raise_exception=True)
+        serializer.save(
+            answer_text=serializer.validated_data['stt_text'],
+            answer_source='stt',
+        )
+        return Response(
+            {
+                'answer_id': str(answer.id),
+                'stt_text': answer.stt_text,
+                'updated_at': answer.updated_at,
+            },
+            status=status.HTTP_200_OK,
         )
 
 

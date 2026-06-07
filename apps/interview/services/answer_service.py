@@ -6,7 +6,7 @@ from apps.interview.models import InterviewAnswer, InterviewQuestion, InterviewS
 
 class AnswerService:
     @staticmethod
-    def create_answer(*, user, session_id, question_id, answer_text):
+    def create_answer(*, user, session_id, question_id, answer_text, speech_duration=None, answer_source='text'):
         session = AnswerService._get_session(session_id, user)
         question = AnswerService._get_question(question_id)
         if question.session_id != session.id:
@@ -17,6 +17,8 @@ class AnswerService:
             raise ValidationError({'answer_text': 'Answer text must not be blank.'})
         if InterviewAnswer.objects.filter(question=question).exists():
             raise ValidationError({'question_id': 'An answer already exists for this question.'})
+        if answer_source not in {'text', 'stt'}:
+            raise ValidationError({'answer_source': 'Answer source must be text or stt.'})
 
         try:
             with transaction.atomic():
@@ -24,7 +26,8 @@ class AnswerService:
                     session=session,
                     question=question,
                     answer_text=normalized_text,
-                    answer_source='text',
+                    answer_source=answer_source,
+                    speech_duration=speech_duration,
                 )
         except IntegrityError:
             raise ValidationError({'question_id': 'An answer already exists for this question.'})

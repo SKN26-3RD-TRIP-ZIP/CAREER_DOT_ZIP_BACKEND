@@ -87,6 +87,11 @@ class InterviewAnswer(models.Model):
     question = models.OneToOneField('InterviewQuestion', on_delete=models.CASCADE, related_name='answer')
     answer_text = models.TextField()
     answer_source = models.CharField(max_length=20, choices=ANSWER_SOURCE_CHOICES, default='text')
+    stt_text = models.TextField(blank=True, null=True)
+    audio_url = models.URLField(blank=True, null=True)
+    speech_duration = models.FloatField(blank=True, null=True)
+    total_pause_duration = models.FloatField(default=0)
+    long_pause_count = models.IntegerField(default=0)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
