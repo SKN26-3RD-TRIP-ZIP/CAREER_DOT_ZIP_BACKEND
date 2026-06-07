@@ -287,7 +287,7 @@ class InterviewQuestionGenerationIntegrationTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn('jd_id', response.data)
 
-    def test_question_generation_uses_bank_then_rule_fallback(self):
+    def test_question_generation_uses_bank_then_ai_chain_fallback(self):
         bank_question = QuestionBankItem.objects.create(
             question_text='How do you design a Django REST API?',
             answer_example='Explain resource design and validation.',
@@ -311,7 +311,13 @@ class InterviewQuestionGenerationIntegrationTests(APITestCase):
             response.data['questions'][0]['source_reference'],
             f'aihub:{bank_question.id}',
         )
-        self.assertEqual(response.data['questions'][1]['source_type'], 'rule')
+        self.assertIn(
+            response.data['questions'][1]['source_type'],
+            ['jd', 'resume', 'cover_letter', 'project_experience', 'question_bank', 'general'],
+        )
+        self.assertTrue(
+            response.data['questions'][1]['source_reference'].startswith('ai_chain_mock:')
+        )
         self.assertEqual(
             list(
                 InterviewQuestion.objects.filter(session_id=session_id)
