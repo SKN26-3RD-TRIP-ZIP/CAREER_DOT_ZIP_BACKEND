@@ -627,9 +627,10 @@ class MVPAnswerFollowupAPITests(APITestCase):
 
     def test_sufficient_answer_moves_to_next_question(self):
         answer_response = self.create_answer(
-            answer_text=(
-                '저는 API 성능 개선을 담당했고 캐시를 선택한 이유는 응답 지연 때문입니다. '
-                '제가 직접 구현한 결과 응답 시간이 30% 감소했습니다.'
+            answer_text = (
+                "제가 직접 LangChain 기반 질문 생성 체인을 설계했고, 일반 함수 호출 방식과 비교했을 때 "
+                "프롬프트 단계 분리와 추후 RAG 검색 결과 연결이 쉬웠기 때문에 선택했습니다. "
+                "또한 답변 평가와 꼬리질문 생성을 분리해 유지보수성과 확장성을 높이는 것을 기준으로 판단했습니다."
             )
         )
 
