@@ -616,6 +616,12 @@ class MVPAnswerFollowupAPITests(APITestCase):
             first.data['followup_question']['parent_question_id'],
             str(self.question.id),
         )
+
+        followup_id = first.data["followup_question"]["question_id"]
+        followup = InterviewQuestion.objects.get(id=followup_id)
+
+        self.assertTrue(followup.source_reference.startswith("ai_chain_mock:"))
+
         self.assertEqual(second.status_code, status.HTTP_200_OK)
         self.assertEqual(
             InterviewQuestion.objects.filter(

@@ -69,7 +69,7 @@ class FollowupGenerator:
                 question_text=followup_data["question_text"],
                 question_type="follow_up",
                 source_type="general",
-                source_reference=selected_weakness_tag.get("tag_name", "ai_chain_mock"),
+                source_reference=cls._build_source_reference(selected_weakness_tag),
                 order_index=last_index + 1,
             )
 
@@ -178,6 +178,12 @@ class FollowupGenerator:
         if persona in {"coach", "practical", "verify"}:
             return persona
         return "practical"
+    
+    @staticmethod
+    def _build_source_reference(selected_weakness_tag):
+        tag_name = selected_weakness_tag.get("tag_name") or "unknown"
+        weakness_tag_id = selected_weakness_tag.get("weakness_tag_id") or "unknown"
+        return f"ai_chain_mock:{weakness_tag_id}:{tag_name}"
 
 
 def generate_follow_up_questions(answer):
