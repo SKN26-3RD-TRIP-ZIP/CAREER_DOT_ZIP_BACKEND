@@ -17,6 +17,10 @@ from typing import Any
 from django.conf import settings
 
 from apps.interview.services.ai_chain_mock_engine import AIChainMockEngine
+from apps.interview.services.ai_chain_response_parser import (
+    parse_llm_json_list,
+    parse_llm_json_object,
+)
 
 
 class AIChainOpenAIEngine:
@@ -72,3 +76,25 @@ class AIChainOpenAIEngine:
 
     def generate_followup_mock(self, payload: dict[str, Any]) -> dict[str, Any]:
         return self.fallback_engine.generate_followup_mock(payload)
+
+    def _parse_response_object(
+        self,
+        raw_response: Any,
+        fallback: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """OpenAI 응답을 JSON object로 파싱한다.
+
+        실제 OpenAI API 연결 시 질문 생성, 답변 판단, 꼬리질문 생성 결과 파싱에 사용한다.
+        """
+        return parse_llm_json_object(raw_response, default=fallback or {})
+
+    def _parse_response_list(
+        self,
+        raw_response: Any,
+        fallback: list[Any] | None = None,
+    ) -> list[Any]:
+        """OpenAI 응답을 JSON list로 파싱한다.
+
+        실제 OpenAI API 연결 시 list 형태 결과 파싱이 필요할 때 사용한다.
+        """
+        return parse_llm_json_list(raw_response, default=fallback or [])

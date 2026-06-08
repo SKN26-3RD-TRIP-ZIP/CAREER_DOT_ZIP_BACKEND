@@ -55,3 +55,39 @@ class AIChainOpenAIEngineTest(SimpleTestCase):
 
         self.assertTrue(result["fallback_used"])
         self.assertEqual(len(result["questions"]), 3)
+
+    def test_parse_response_object_parses_markdown_fenced_json(self):
+        raw_response = """```json
+        {"next_action": "NEXT_QUESTION", "is_sufficient": true}
+        ```"""
+
+        result = self.engine._parse_response_object(raw_response)
+
+        self.assertEqual(result["next_action"], "NEXT_QUESTION")
+        self.assertTrue(result["is_sufficient"])
+
+    def test_parse_response_object_returns_fallback_when_invalid(self):
+        fallback = {
+            "next_action": "NEXT_QUESTION",
+            "is_sufficient": True,
+        }
+
+        result = self.engine._parse_response_object("JSON이 아닌 응답", fallback=fallback)
+
+        self.assertEqual(result, fallback)
+
+    def test_parse_response_list_parses_json_list(self):
+        raw_response = """```json
+        [{"tag_name": "답변 구체성 부족"}]
+        ```"""
+
+        result = self.engine._parse_response_list(raw_response)
+
+        self.assertEqual(result[0]["tag_name"], "답변 구체성 부족")
+
+    def test_parse_response_list_returns_fallback_when_invalid(self):
+        fallback = [{"tag_name": "fallback"}]
+
+        result = self.engine._parse_response_list("JSON이 아닌 응답", fallback=fallback)
+
+        self.assertEqual(result, fallback)
