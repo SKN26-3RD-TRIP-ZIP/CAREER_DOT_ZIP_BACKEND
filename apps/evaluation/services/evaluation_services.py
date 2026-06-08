@@ -21,7 +21,7 @@ SPEECH_CONFIG = getattr(settings, "SPEECH_CONFIG", {
 logger = logging.getLogger("feedback_ai.evaluation_service")
 
 kiwi = Kiwi()
-FILLER_WORDS = [["어", "음", "그니까", "사실", "이제", "저기"]]
+FILLER_WORDS = [["어", "음", "그니까", "그러니까", "사실", "이제", "저기"]]
 
 
 class EvaluationService:
