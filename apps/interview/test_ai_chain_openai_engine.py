@@ -4,9 +4,45 @@ from apps.interview.ai_chain_contracts import NextAction
 from apps.interview.services.ai_chain_openai_engine import AIChainOpenAIEngine
 
 
+class FakeOpenAIMessage:
+    def __init__(self, content):
+        self.content = content
+
+
+class FakeOpenAIChoice:
+    def __init__(self, content):
+        self.message = FakeOpenAIMessage(content)
+
+
+class FakeOpenAIResponse:
+    def __init__(self, content):
+        self.choices = [FakeOpenAIChoice(content)]
+
+
+class FakeChatCompletions:
+    def __init__(self, content):
+        self.content = content
+        self.last_kwargs = None
+
+    def create(self, **kwargs):
+        self.last_kwargs = kwargs
+        return FakeOpenAIResponse(self.content)
+
+
+class FakeChat:
+    def __init__(self, completions):
+        self.completions = completions
+
+
+class FakeOpenAIClient:
+    def __init__(self, content):
+        self.completions = FakeChatCompletions(content)
+        self.chat = FakeChat(self.completions)
+
+
 class AIChainOpenAIEngineTest(SimpleTestCase):
     def setUp(self):
-        self.engine = AIChainOpenAIEngine()
+        self.engine = AIChainOpenAIEngine(api_key="test-api-key")
 
     def test_openai_engine_keeps_mock_fallback_persona_contract(self):
         personas = self.engine.get_personas()
@@ -55,6 +91,40 @@ class AIChainOpenAIEngineTest(SimpleTestCase):
 
         self.assertTrue(result["fallback_used"])
         self.assertEqual(len(result["questions"]), 3)
+
+    def test_request_text_calls_openai_client_and_returns_content(self):
+        fake_client = FakeOpenAIClient('{"next_action": "NEXT_QUESTION"}')
+        engine = AIChainOpenAIEngine(
+            api_key="test-api-key",
+            model="gpt-test",
+            client_factory=lambda api_key: fake_client,
+        )
+
+        result = engine._request_text(
+            system_prompt="system prompt",
+            user_prompt="user prompt",
+            temperature=0.1,
+            max_tokens=500,
+        )
+
+        self.assertEqual(result, '{"next_action": "NEXT_QUESTION"}')
+        self.assertEqual(fake_client.completions.last_kwargs["model"], "gpt-test")
+        self.assertEqual(fake_client.completions.last_kwargs["temperature"], 0.1)
+        self.assertEqual(fake_client.completions.last_kwargs["max_tokens"], 500)
+        self.assertEqual(
+            fake_client.completions.last_kwargs["messages"][0]["content"],
+            "system prompt",
+        )
+        self.assertEqual(
+            fake_client.completions.last_kwargs["messages"][1]["content"],
+            "user prompt",
+        )
+
+    def test_get_client_raises_value_error_without_api_key(self):
+        engine = AIChainOpenAIEngine(api_key="")
+
+        with self.assertRaises(ValueError):
+            engine._get_client()
 
     def test_parse_response_object_parses_markdown_fenced_json(self):
         raw_response = """```json

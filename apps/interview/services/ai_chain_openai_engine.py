@@ -12,7 +12,7 @@ apps/interview/services/ai_chain_openai_engine.py
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Callable
 
 from django.conf import settings
 
@@ -26,8 +26,8 @@ from apps.interview.services.ai_chain_response_parser import (
 class AIChainOpenAIEngine:
     """OpenAI 기반 AI Chain engine 기본 클래스.
 
-    현재 단계에서는 engine 교체 구조를 먼저 고정하는 것이 목적이다.
-    실제 OpenAI 호출, 프롬프트 구성, JSON 파싱은 후속 작업에서 확장한다.
+    현재 public method는 기존 안정성을 위해 mock fallback을 반환한다.
+    실제 OpenAI 호출은 private helper로 먼저 준비하고, 후속 작업에서 각 Chain에 연결한다.
     """
 
     def __init__(
@@ -35,6 +35,7 @@ class AIChainOpenAIEngine:
         model: str | None = None,
         api_key: str | None = None,
         fallback_engine: Any | None = None,
+        client_factory: Callable[[str], Any] | None = None,
     ):
         self.model = model or getattr(
             settings,
@@ -43,6 +44,8 @@ class AIChainOpenAIEngine:
         )
         self.api_key = api_key or getattr(settings, "OPENAI_API_KEY", None)
         self.fallback_engine = fallback_engine or AIChainMockEngine()
+        self.client_factory = client_factory
+        self._client = None
 
     def get_personas(self) -> list[dict[str, Any]]:
         return self.fallback_engine.get_personas()
@@ -76,6 +79,58 @@ class AIChainOpenAIEngine:
 
     def generate_followup_mock(self, payload: dict[str, Any]) -> dict[str, Any]:
         return self.fallback_engine.generate_followup_mock(payload)
+
+    def _get_client(self):
+        """OpenAI client를 lazy initialization 방식으로 생성한다."""
+        if self._client is not None:
+            return self._client
+
+        if not self.api_key:
+            raise ValueError("OPENAI_API_KEY is required to use AIChainOpenAIEngine.")
+
+        if self.client_factory:
+            self._client = self.client_factory(self.api_key)
+            return self._client
+
+        from openai import OpenAI
+
+        self._client = OpenAI(api_key=self.api_key)
+        return self._client
+
+    def _request_text(
+        self,
+        *,
+        system_prompt: str,
+        user_prompt: str,
+        temperature: float = 0.2,
+        max_tokens: int = 1200,
+    ) -> str:
+        """OpenAI Chat Completions API를 호출하고 message content를 반환한다.
+
+        실제 Chain method에서는 이 결과를 _parse_response_object/list로 파싱해서 사용한다.
+        """
+        client = self._get_client()
+        response = client.chat.completions.create(
+            model=self.model,
+            messages=[
+                {
+                    "role": "system",
+                    "content": system_prompt,
+                },
+                {
+                    "role": "user",
+                    "content": user_prompt,
+                },
+            ],
+            temperature=temperature,
+            max_tokens=max_tokens,
+        )
+
+        if not getattr(response, "choices", None):
+            return ""
+
+        message = response.choices[0].message
+        return (getattr(message, "content", "") or "").strip()
 
     def _parse_response_object(
         self,
