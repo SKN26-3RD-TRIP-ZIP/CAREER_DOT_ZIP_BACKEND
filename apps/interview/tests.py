@@ -1,4 +1,5 @@
 from datetime import timedelta
+import uuid
 
 from django.contrib.auth import get_user_model
 from django.urls import reverse
@@ -11,7 +12,7 @@ from apps.common.choices import (
     INTERVIEW_SESSION_STATUS_COMPLETED,
 )
 from apps.evaluation.models import Evaluation
-from apps.input.models import JobDescription
+from apps.input.models import JobDescription, ResumeMaster
 from apps.question_bank.models import QuestionBankItem
 
 from .models import InterviewAnswer, InterviewQuestion, InterviewSession
@@ -286,7 +287,7 @@ class InterviewQuestionGenerationIntegrationTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn('jd_id', response.data)
 
-    def test_question_generation_uses_bank_then_rule_fallback(self):
+    def test_question_generation_uses_bank_then_ai_chain_fallback(self):
         bank_question = QuestionBankItem.objects.create(
             question_text='How do you design a Django REST API?',
             answer_example='Explain resource design and validation.',
@@ -310,7 +311,13 @@ class InterviewQuestionGenerationIntegrationTests(APITestCase):
             response.data['questions'][0]['source_reference'],
             f'aihub:{bank_question.id}',
         )
-        self.assertEqual(response.data['questions'][1]['source_type'], 'rule')
+        self.assertIn(
+            response.data['questions'][1]['source_type'],
+            ['jd', 'resume', 'cover_letter', 'project_experience', 'question_bank', 'general'],
+        )
+        self.assertTrue(
+            response.data['questions'][1]['source_reference'].startswith('ai_chain_mock:')
+        )
         self.assertEqual(
             list(
                 InterviewQuestion.objects.filter(session_id=session_id)
@@ -355,3 +362,317 @@ class InterviewQuestionGenerationIntegrationTests(APITestCase):
         self.assertTrue(first_ids.isdisjoint(regenerated_ids))
         self.assertEqual(list_response.status_code, status.HTTP_200_OK)
         self.assertEqual(list_response.data['total'], 2)
+
+
+class MVPTextInterviewFlowTests(APITestCase):
+    def setUp(self):
+        user_model = get_user_model()
+        self.user = user_model.objects.create_user(
+            email='mvp-owner@example.com',
+            password='password123',
+            name='MVP Owner',
+        )
+        self.other_user = user_model.objects.create_user(
+            email='mvp-other@example.com',
+            password='password123',
+            name='MVP Other',
+        )
+        self.jd = JobDescription.objects.create(
+            user=self.user,
+            company_name='Career Zip',
+            position='Backend Developer',
+            original_text='Python Django REST API',
+        )
+        self.other_jd = JobDescription.objects.create(
+            user=self.other_user,
+            company_name='Other',
+            position='Backend Developer',
+            original_text='Java Spring API',
+        )
+        self.resume = ResumeMaster.objects.create(
+            user=self.user,
+            name='Owner',
+            email='mvp-owner@example.com',
+            original_text='Python backend developer',
+        )
+        self.client.force_authenticate(self.user)
+
+    def create_payload(self, **overrides):
+        payload = {
+            'jd_id': str(self.jd.id),
+            'resume_id': str(self.resume.id),
+            'persona_type': 'practical',
+            'interview_mode': 'text',
+        }
+        payload.update(overrides)
+        return payload
+
+    def create_session(self, **overrides):
+        return self.client.post(
+            reverse('mvp-session-create'),
+            self.create_payload(**overrides),
+            format='json',
+        )
+
+    def test_authenticated_user_creates_text_session(self):
+        response = self.create_session()
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data['status'], 'ready')
+        self.assertEqual(response.data['persona_type'], 'practical')
+        self.assertEqual(response.data['interview_mode'], 'text')
+        session = InterviewSession.objects.get(id=response.data['session_id'])
+        self.assertEqual(session.user, self.user)
+        self.assertEqual(session.jd, self.jd)
+        self.assertEqual(session.resume, self.resume)
+
+    def test_session_creation_requires_jd_and_resume(self):
+        missing_jd = self.create_payload()
+        missing_jd.pop('jd_id')
+        missing_resume = self.create_payload()
+        missing_resume.pop('resume_id')
+
+        jd_response = self.client.post(reverse('mvp-session-create'), missing_jd, format='json')
+        resume_response = self.client.post(
+            reverse('mvp-session-create'),
+            missing_resume,
+            format='json',
+        )
+
+        self.assertEqual(jd_response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(resume_response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_session_creation_rejects_other_users_jd(self):
+        response = self.create_session(jd_id=str(self.other_jd.id))
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_session_creation_rejects_invalid_persona_and_mode(self):
+        persona_response = self.create_session(persona_type='pressure')
+        mode_response = self.create_session(interview_mode='video')
+
+        self.assertEqual(persona_response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(mode_response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_session_detail_and_status_update(self):
+        created = self.create_session()
+        session_id = created.data['session_id']
+
+        detail = self.client.get(
+            reverse('mvp-session-detail', kwargs={'session_id': session_id})
+        )
+        status_response = self.client.patch(
+            reverse('mvp-session-status', kwargs={'session_id': session_id}),
+            {'status': 'completed'},
+            format='json',
+        )
+
+        self.assertEqual(detail.status_code, status.HTTP_200_OK)
+        self.assertEqual(detail.data['status'], 'ready')
+        self.assertEqual(status_response.status_code, status.HTTP_200_OK)
+        self.assertEqual(status_response.data['status'], 'completed')
+        self.assertIsNotNone(status_response.data['ended_at'])
+
+    def test_question_generation_defaults_to_three_and_prevents_duplicates(self):
+        created = self.create_session()
+        session_id = created.data['session_id']
+        generate_url = reverse('mvp-question-generate', kwargs={'session_id': session_id})
+
+        first = self.client.post(generate_url, {}, format='json')
+        second = self.client.post(generate_url, {}, format='json')
+        question_list = self.client.get(
+            reverse('mvp-question-list', kwargs={'session_id': session_id})
+        )
+
+        self.assertEqual(first.status_code, status.HTTP_200_OK)
+        self.assertEqual(first.data['generated_count'], 3)
+        self.assertEqual(second.data['generated_count'], 3)
+        self.assertEqual(InterviewQuestion.objects.filter(session_id=session_id).count(), 3)
+        self.assertEqual(question_list.data['total'], 3)
+        self.assertEqual(
+            [item['order_index'] for item in question_list.data['results']],
+            [1, 2, 3],
+        )
+
+    def test_other_users_session_returns_not_found(self):
+        session = InterviewSession.objects.create(
+            user=self.other_user,
+            jd=self.other_jd,
+            interview_type='technical',
+            persona='practical',
+        )
+
+        detail = self.client.get(
+            reverse('mvp-session-detail', kwargs={'session_id': session.id})
+        )
+        generate = self.client.post(
+            reverse('mvp-question-generate', kwargs={'session_id': session.id}),
+            {},
+            format='json',
+        )
+
+        self.assertEqual(detail.status_code, status.HTTP_404_NOT_FOUND)
+        self.assertEqual(generate.status_code, status.HTTP_404_NOT_FOUND)
+
+
+class MVPAnswerFollowupAPITests(APITestCase):
+    def setUp(self):
+        user_model = get_user_model()
+        self.user = user_model.objects.create_user(
+            email='answer-owner@example.com',
+            password='password123',
+            name='Answer Owner',
+        )
+        self.other_user = user_model.objects.create_user(
+            email='answer-other@example.com',
+            password='password123',
+            name='Answer Other',
+        )
+        self.session = InterviewSession.objects.create(
+            user=self.user,
+            interview_type='technical',
+            persona='practical',
+        )
+        self.question = InterviewQuestion.objects.create(
+            session=self.session,
+            order_index=1,
+            question_type='main',
+            question_text='Explain your project contribution.',
+            source_type='rule',
+        )
+        self.other_session = InterviewSession.objects.create(
+            user=self.other_user,
+            interview_type='technical',
+            persona='practical',
+        )
+        self.other_question = InterviewQuestion.objects.create(
+            session=self.other_session,
+            order_index=1,
+            question_type='main',
+            question_text='Other question',
+            source_type='rule',
+        )
+        self.client.force_authenticate(self.user)
+
+    def answer_payload(self, **overrides):
+        payload = {
+            'session_id': str(self.session.id),
+            'question_id': str(self.question.id),
+            'answer_text': '저는 해당 기능을 직접 구현했습니다.',
+            'speech_duration': 45.25,
+        }
+        payload.update(overrides)
+        return payload
+
+    def create_answer(self, **overrides):
+        return self.client.post(
+            reverse('mvp-answer-create'),
+            self.answer_payload(**overrides),
+            format='json',
+        )
+
+    def test_create_answer_returns_created(self):
+        response = self.create_answer()
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertIn('answer_id', response.data)
+        self.assertIn('created_at', response.data)
+
+    def test_blank_answer_text_returns_bad_request(self):
+        response = self.create_answer(answer_text='   ')
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_missing_session_and_question_return_not_found(self):
+        missing_session = self.create_answer(session_id=str(uuid.uuid4()))
+        missing_question = self.create_answer(question_id=str(uuid.uuid4()))
+
+        self.assertEqual(missing_session.status_code, status.HTTP_404_NOT_FOUND)
+        self.assertEqual(missing_question.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_other_users_session_returns_forbidden(self):
+        response = self.create_answer(
+            session_id=str(self.other_session.id),
+            question_id=str(self.other_question.id),
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_duplicate_answer_returns_bad_request(self):
+        first = self.create_answer()
+        second = self.create_answer(answer_text='두 번째 답변입니다.')
+
+        self.assertEqual(first.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(second.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(InterviewAnswer.objects.filter(question=self.question).count(), 1)
+
+    def test_short_answer_creates_one_linked_followup(self):
+        answer_response = self.create_answer(answer_text='짧은 답변')
+        followup_url = reverse(
+            'mvp-answer-followup-create',
+            kwargs={'answer_id': answer_response.data['answer_id']},
+        )
+
+        first = self.client.post(followup_url, {}, format='json')
+        second = self.client.post(followup_url, {}, format='json')
+
+        self.assertEqual(first.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(first.data['next_action'], 'GENERATE_FOLLOWUP')
+        self.assertEqual(
+            first.data['followup_question']['parent_question_id'],
+            str(self.question.id),
+        )
+
+        followup_id = first.data["followup_question"]["question_id"]
+        followup = InterviewQuestion.objects.get(id=followup_id)
+
+        self.assertTrue(followup.source_reference.startswith("ai_chain_mock:"))
+
+        self.assertEqual(second.status_code, status.HTTP_200_OK)
+        self.assertEqual(
+            InterviewQuestion.objects.filter(
+                parent_question=self.question,
+                question_type='follow_up',
+            ).count(),
+            1,
+        )
+
+    def test_sufficient_answer_moves_to_next_question(self):
+        answer_response = self.create_answer(
+            answer_text = (
+                "제가 직접 LangChain 기반 질문 생성 체인을 설계했고, 일반 함수 호출 방식과 비교했을 때 "
+                "프롬프트 단계 분리와 추후 RAG 검색 결과 연결이 쉬웠기 때문에 선택했습니다. "
+                "또한 답변 평가와 꼬리질문 생성을 분리해 유지보수성과 확장성을 높이는 것을 기준으로 판단했습니다."
+            )
+        )
+
+        response = self.client.post(
+            reverse(
+                'mvp-answer-followup-create',
+                kwargs={'answer_id': answer_response.data['answer_id']},
+            ),
+            {},
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['next_action'], 'NEXT_QUESTION')
+        self.assertIsNone(response.data['followup_question'])
+
+    def test_other_users_answer_returns_forbidden(self):
+        other_answer = InterviewAnswer.objects.create(
+            session=self.other_session,
+            question=self.other_question,
+            answer_text='Other answer',
+        )
+
+        response = self.client.post(
+            reverse(
+                'mvp-answer-followup-create',
+                kwargs={'answer_id': other_answer.id},
+            ),
+            {},
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)

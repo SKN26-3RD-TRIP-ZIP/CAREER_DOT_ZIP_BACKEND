@@ -1,4 +1,7 @@
+import json
+
 from rest_framework import serializers
+
 from .models import (
     JobDescription,
     ProjectExperience,
@@ -13,10 +16,146 @@ from .models import (
 )
 
 
+def _build_original_text_from_dropdown(data: dict) -> str:
+    parts = []
+    if data.get('job_category'):
+        parts.append(f'[직무 카테고리] {data["job_category"]}')
+    if data.get('experience_level'):
+        parts.append(f'[경력 구분] {data["experience_level"]}')
+    all_tech = [
+        t.strip()
+        for t in (data.get('tech_stacks', []) + data.get('custom_tech_stacks', []))
+        if t.strip()
+    ]
+    if all_tech:
+        parts.append(f'[기술스택] {", ".join(all_tech)}')
+    if data.get('main_tasks'):
+        parts.append(f'[주요업무] {data["main_tasks"]}')
+    if data.get('requirements'):
+        parts.append(f'[자격요건] {data["requirements"]}')
+    if data.get('preferences'):
+        parts.append(f'[우대사항] {data["preferences"]}')
+    if data.get('jd_text'):
+        parts.append(f'[추가 설명] {data["jd_text"]}')
+    return '\n'.join(parts)
+
+
+def _build_keywords_from_dropdown(data: dict) -> list:
+    raw = []
+    if data.get('job_category'):
+        raw.append(data['job_category'])
+    if data.get('experience_level'):
+        raw.append(data['experience_level'])
+    raw.extend(t.strip() for t in data.get('tech_stacks', []) if t.strip())
+    raw.extend(t.strip() for t in data.get('custom_tech_stacks', []) if t.strip())
+    raw.extend(k.strip() for k in data.get('custom_keywords', []) if k.strip())
+    seen = set()
+    unique = []
+    for kw in raw:
+        if kw and kw not in seen:
+            seen.add(kw)
+            unique.append(kw)
+    return unique
+
+
 class JobDescriptionCreateSerializer(serializers.ModelSerializer):
+    job_category = serializers.CharField(required=False, allow_blank=True, write_only=True)
+    experience_level = serializers.CharField(required=False, allow_blank=True, write_only=True)
+    tech_stacks = serializers.ListField(
+        child=serializers.CharField(allow_blank=False),
+        required=False,
+        default=list,
+        write_only=True,
+    )
+    custom_tech_stacks = serializers.ListField(
+        child=serializers.CharField(allow_blank=False),
+        required=False,
+        default=list,
+        write_only=True,
+    )
+    main_tasks = serializers.CharField(required=False, allow_blank=True, write_only=True)
+    requirements = serializers.CharField(required=False, allow_blank=True, write_only=True)
+    preferences = serializers.CharField(required=False, allow_blank=True, write_only=True)
+    jd_text = serializers.CharField(required=False, allow_blank=True, write_only=True)
+    custom_keywords = serializers.ListField(
+        child=serializers.CharField(allow_blank=False),
+        required=False,
+        default=list,
+        write_only=True,
+    )
+
     class Meta:
         model = JobDescription
-        fields = ('company_name', 'position', 'original_text', 'input_method')
+        fields = (
+            'company_name',
+            'position',
+            'original_text',
+            'input_method',
+            'job_category',
+            'experience_level',
+            'tech_stacks',
+            'custom_tech_stacks',
+            'main_tasks',
+            'requirements',
+            'preferences',
+            'jd_text',
+            'custom_keywords',
+        )
+        extra_kwargs = {
+            'original_text': {'required': False, 'allow_blank': True},
+        }
+
+    def validate(self, attrs):
+        original_text = (attrs.get('original_text') or '').strip()
+        text_fields = [
+            attrs.get('job_category', ''),
+            attrs.get('experience_level', ''),
+            attrs.get('main_tasks', ''),
+            attrs.get('requirements', ''),
+            attrs.get('preferences', ''),
+            attrs.get('jd_text', ''),
+        ]
+        has_dropdown_text = any((v or '').strip() for v in text_fields)
+        has_dropdown_list = bool(
+            attrs.get('tech_stacks') or
+            attrs.get('custom_tech_stacks') or
+            attrs.get('custom_keywords')
+        )
+        if not original_text and not has_dropdown_text and not has_dropdown_list:
+            raise serializers.ValidationError(
+                'original_text 또는 드롭다운 입력값(job_category, tech_stacks 등) 중 하나는 필수입니다.'
+            )
+        return attrs
+
+    def create(self, validated_data):
+        dropdown_data = {
+            'job_category': validated_data.pop('job_category', '') or '',
+            'experience_level': validated_data.pop('experience_level', '') or '',
+            'tech_stacks': validated_data.pop('tech_stacks', []) or [],
+            'custom_tech_stacks': validated_data.pop('custom_tech_stacks', []) or [],
+            'main_tasks': validated_data.pop('main_tasks', '') or '',
+            'requirements': validated_data.pop('requirements', '') or '',
+            'preferences': validated_data.pop('preferences', '') or '',
+            'jd_text': validated_data.pop('jd_text', '') or '',
+            'custom_keywords': validated_data.pop('custom_keywords', []) or [],
+        }
+
+        dropdown_text = _build_original_text_from_dropdown(dropdown_data)
+        existing_text = (validated_data.get('original_text') or '').strip()
+        if dropdown_text:
+            validated_data['original_text'] = '\n'.join(filter(None, [dropdown_text, existing_text]))
+        elif not existing_text:
+            validated_data['original_text'] = ''
+
+        new_keywords = _build_keywords_from_dropdown(dropdown_data)
+        if new_keywords:
+            validated_data['keywords'] = json.dumps(new_keywords, ensure_ascii=False)
+
+        requirements = dropdown_data.get('requirements', '')
+        if requirements and not validated_data.get('job_requirements'):
+            validated_data['job_requirements'] = requirements
+
+        return super().create(validated_data)
 
 
 class JobDescriptionListSerializer(serializers.ModelSerializer):

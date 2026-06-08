@@ -13,6 +13,7 @@ https://docs.djangoproject.com/en/4.2/ref/settings/
 import os
 from pathlib import Path
 
+import dj_database_url
 from dotenv import load_dotenv
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
@@ -27,6 +28,21 @@ WORKNET_BASE_URL = os.getenv('WORKNET_BASE_URL', '')
 LANGCHAIN_TRACING_V2 = os.getenv('LANGCHAIN_TRACING_V2', 'false')
 LANGCHAIN_API_KEY    = os.getenv('LANGCHAIN_API_KEY', '')
 LANGCHAIN_PROJECT    = os.getenv('LANGCHAIN_PROJECT', 'career-dot-zip')
+# ===== AI Chain / OpenAI Settings =====
+def _env_bool(name: str, default: bool = False) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {'1', 'true', 'yes', 'y', 'on'}
+
+
+OPENAI_API_KEY = os.getenv('OPENAI_API_KEY', '')
+INTERVIEW_AI_CHAIN_ENGINE = os.getenv('INTERVIEW_AI_CHAIN_ENGINE', 'mock').strip().lower()
+INTERVIEW_AI_OPENAI_MODEL = os.getenv('INTERVIEW_AI_OPENAI_MODEL', 'gpt-4o-mini')
+INTERVIEW_AI_OPENAI_ENABLE_REAL_CALL = _env_bool(
+    'INTERVIEW_AI_OPENAI_ENABLE_REAL_CALL',
+    False,
+)
 
 
 # Quick-start development settings - unsuitable for production
@@ -105,15 +121,25 @@ WSGI_APPLICATION = 'config.wsgi.application'
 # https://docs.djangoproject.com/en/4.2/ref/settings/#databases
 import dj_database_url
 
-_DATABASE_URL = os.getenv('DATABASE_URL')
-DATABASES = {
-    'default': dj_database_url.config(default=_DATABASE_URL)
-    if _DATABASE_URL
-    else {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
+_DB_URL = os.getenv("DATABASE_URL", "").strip()
+
+if _DB_URL:
+    _db_config = dj_database_url.config(default=_DB_URL, conn_max_age=600)
+    if _db_config.get("ENGINE") == "django.db.backends.mysql":
+        # PyMySQL does not accept 'ssl-mode'; convert to ssl={} for Aiven SSL
+        _opts = _db_config.get("OPTIONS", {})
+        _ssl_mode = _opts.pop("ssl-mode", _opts.pop("ssl_mode", None))
+        if _ssl_mode:
+            _opts["ssl"] = {}
+        _db_config["OPTIONS"] = _opts
+    DATABASES = {"default": _db_config}
+else:
+    DATABASES = {
+        "default": {
+            "ENGINE": "django.db.backends.sqlite3",
+            "NAME": BASE_DIR / "db.sqlite3",
+        }
     }
-}
 
 
 # Password validation
@@ -185,4 +211,12 @@ SIMPLE_JWT = {
     'ROTATE_REFRESH_TOKENS': True,
     'BLACKLIST_AFTER_ROTATION': False,
     'UPDATE_LAST_LOGIN': False,
+}
+
+# ===== Speech Evaluation Metrics Configuration =====
+SPEECH_CONFIG = {
+    "BASE_SCORE": 100.0,
+    "FILLER_PENALTY_PER_COUNT": 5.0,        # 필러워드 개당 감점 수치
+    "FLOOR_SCORE": 20.0,                    # 최저 방어선 점수
+    "EXCESSIVE_FILLER_LIMIT": 6            # 과락 기준 개수
 }
