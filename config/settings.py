@@ -10,6 +10,11 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/4.2/ref/settings/
 """
 
+import pymysql
+pymysql.install_as_MySQLdb()
+# Django 6.0+ 은 mysqlclient 2.2.1+ 요구 → PyMySQL 버전을 맞춰줌
+pymysql.version_info = (2, 2, 1, "final", 0)
+
 import os
 from pathlib import Path
 
@@ -94,13 +99,19 @@ TEMPLATES = [
 WSGI_APPLICATION = 'config.wsgi.application'
 
 
-# Database
-# https://docs.djangoproject.com/en/4.2/ref/settings/#databases
-
+# Database - Aiven MySQL
 DATABASES = {
     'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
+        'ENGINE': 'django.db.backends.mysql',
+        'NAME': os.getenv('DB_NAME', 'defaultdb'),
+        'USER': os.getenv('DB_USER', ''),
+        'PASSWORD': os.getenv('DB_PASSWORD', ''),
+        'HOST': os.getenv('DB_HOST', ''),
+        'PORT': os.getenv('DB_PORT', '3306'),
+        'OPTIONS': {
+            'ssl': {'ssl_disabled': False},  # Aiven SSL 필수
+            'charset': 'utf8mb4',
+        },
     }
 }
 
