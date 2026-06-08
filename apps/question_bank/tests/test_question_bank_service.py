@@ -1,3 +1,5 @@
+import uuid
+
 from django.test import TestCase
 
 from apps.question_bank.models import QuestionBankItem
@@ -12,6 +14,7 @@ class QuestionBankServiceTests(TestCase):
             'difficulty': 'medium',
             'keywords': [],
             'source_file': f'{QuestionBankItem.objects.count()}.json',
+            'source_ref': str(uuid.uuid4()),
         }
         defaults.update(overrides)
         return QuestionBankItem.objects.create(**defaults)
