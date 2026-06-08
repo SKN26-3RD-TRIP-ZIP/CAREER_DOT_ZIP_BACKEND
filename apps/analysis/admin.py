@@ -1,17 +1,25 @@
 from django.contrib import admin
-from .models import AnalysisSession, GeneratedQuestion
+from .models import AnalysisSession, JdAnalysis, GeneratedQuestion
 
 
 @admin.register(AnalysisSession)
 class AnalysisSessionAdmin(admin.ModelAdmin):
     list_display    = ["id", "user", "job_role", "company_name", "status", "created_at"]
     list_filter     = ["status", "job_role"]
-    search_fields   = ["user__username", "company_name"]
+    search_fields   = ["user__email", "company_name"]
     readonly_fields = ["jd_keywords", "resume_analysis", "created_at", "updated_at"]
+
+
+@admin.register(JdAnalysis)
+class JdAnalysisAdmin(admin.ModelAdmin):
+    list_display    = ["id", "user", "jd", "resume", "match_score", "analyzed_at"]
+    list_filter     = ["match_score"]
+    search_fields   = ["user__email"]
+    readonly_fields = ["jd_keywords", "resume_analysis", "strengths", "weaknesses", "cl_points"]
 
 
 @admin.register(GeneratedQuestion)
 class GeneratedQuestionAdmin(admin.ModelAdmin):
-    list_display  = ["id", "session", "question_type", "question_text", "order", "is_used"]
+    list_display  = ["id", "jd_analysis", "question_type", "question_text", "order", "is_used"]
     list_filter   = ["question_type", "is_used"]
     search_fields = ["question_text"]
