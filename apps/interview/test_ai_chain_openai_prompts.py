@@ -13,9 +13,11 @@ from apps.interview.services.ai_chain_openai_prompts import (
 
 
 class AIChainOpenAIPromptsTest(SimpleTestCase):
-    def test_question_generation_system_prompt_mentions_required_fields(self):
-        prompt = build_question_generation_system_prompt()
+    def test_question_generation_system_prompt_includes_persona_instruction(self):
+        prompt = build_question_generation_system_prompt({"persona_type": "friendly"})
 
+        self.assertIn("persona_type: friendly", prompt)
+        self.assertIn("친절한 코치형", prompt)
         self.assertIn("session_id", prompt)
         self.assertIn("questions", prompt)
         self.assertIn("source_tags", prompt)
@@ -34,9 +36,11 @@ class AIChainOpenAIPromptsTest(SimpleTestCase):
         self.assertEqual(result["session_id"], "session-1")
         self.assertEqual(result["generation_options"]["question_count"], 3)
 
-    def test_answer_sufficiency_system_prompt_mentions_next_action(self):
-        prompt = build_answer_sufficiency_system_prompt()
+    def test_answer_sufficiency_system_prompt_includes_persona_instruction(self):
+        prompt = build_answer_sufficiency_system_prompt({"persona_type": "verify"})
 
+        self.assertIn("persona_type: verify", prompt)
+        self.assertIn("검증 면접관형", prompt)
         self.assertIn("next_action", prompt)
         self.assertIn("NEXT_QUESTION", prompt)
         self.assertIn("GENERATE_FOLLOWUP", prompt)
@@ -54,9 +58,11 @@ class AIChainOpenAIPromptsTest(SimpleTestCase):
         self.assertIn("weakness_tag_candidates", result)
         self.assertGreaterEqual(len(result["weakness_tag_candidates"]), 1)
 
-    def test_followup_system_prompt_mentions_followup_question(self):
-        prompt = build_followup_system_prompt()
+    def test_followup_system_prompt_includes_persona_instruction(self):
+        prompt = build_followup_system_prompt({"persona_type": "practical"})
 
+        self.assertIn("persona_type: practical", prompt)
+        self.assertIn("실무 면접관형", prompt)
         self.assertIn("followup_question", prompt)
         self.assertIn("question_text", prompt)
 

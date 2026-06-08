@@ -81,7 +81,7 @@ class AIChainOpenAIEngine:
 
         try:
             raw_response = self._request_text(
-                system_prompt=build_question_generation_system_prompt(),
+                system_prompt=build_question_generation_system_prompt(payload.get("persona")),
                 user_prompt=build_question_generation_user_prompt(payload),
                 temperature=0.3,
                 max_tokens=1600,
@@ -107,7 +107,7 @@ class AIChainOpenAIEngine:
 
         try:
             raw_response = self._request_text(
-                system_prompt=build_answer_sufficiency_system_prompt(),
+                system_prompt=build_answer_sufficiency_system_prompt(payload.get("persona")),
                 user_prompt=build_answer_sufficiency_user_prompt(payload),
                 temperature=0.1,
                 max_tokens=1000,
@@ -129,7 +129,7 @@ class AIChainOpenAIEngine:
 
         try:
             raw_response = self._request_text(
-                system_prompt=build_followup_system_prompt(),
+                system_prompt=build_followup_system_prompt(payload.get("persona")),
                 user_prompt=build_followup_user_prompt(payload),
                 temperature=0.3,
                 max_tokens=800,
