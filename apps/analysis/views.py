@@ -1,12 +1,16 @@
+import logging
 import threading
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from rest_framework import status
+from django.db import connection
 
 from .models import AnalysisSession, JdAnalysis, GeneratedQuestion
 from .services import extract_jd_keywords, analyze_resume, generate_all_questions
 from .services.match_service import calculate_match_score
+
+logger = logging.getLogger(__name__)
 
 
 def _run_analysis(session_id: int):
@@ -83,7 +87,9 @@ def _run_analysis(session_id: int):
     except Exception as e:
         session.status = "failed"
         session.save(update_fields=["status", "updated_at"])
-        raise e
+        logger.error("Analysis failed for session %s: %s", session_id, e, exc_info=True)
+    finally:
+        connection.close()
 
 
 class AnalysisStartView(APIView):

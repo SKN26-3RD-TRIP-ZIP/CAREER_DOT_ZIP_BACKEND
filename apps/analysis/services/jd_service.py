@@ -1,10 +1,10 @@
 import json
-from openai import OpenAI
+from .utils import get_client, clean_json
 
 
 def extract_jd_keywords(jd_text: str) -> list[str]:
     """JD 텍스트에서 기술 스택·역량·우대사항 키워드를 추출해 리스트로 반환."""
-    client = OpenAI()
+    client = get_client()
     response = client.chat.completions.create(
         model="gpt-4o-mini",
         temperature=0.3,
@@ -36,10 +36,5 @@ def extract_jd_keywords(jd_text: str) -> list[str]:
             },
         ],
     )
-    raw = _clean_json(response.choices[0].message.content)
+    raw = clean_json(response.choices[0].message.content)
     return json.loads(raw)
-
-
-def _clean_json(text: str) -> str:
-    # GPT가 ```json ... ``` 마크다운 블록으로 감쌀 때 제거
-    return text.strip().replace("```json", "").replace("```", "").strip()
