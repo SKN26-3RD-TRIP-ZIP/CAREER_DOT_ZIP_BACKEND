@@ -225,5 +225,11 @@ __marimo__/
 .streamlit/secrets.toml
 
 .idea/
-
 settings.json
+
+# Local datasets
+data/raw/
+data/processed/
+*.zip
+*.xlsx
+*.csv
