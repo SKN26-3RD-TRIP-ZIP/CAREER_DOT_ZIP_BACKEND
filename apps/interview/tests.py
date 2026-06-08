@@ -426,7 +426,8 @@ class MVPTextInterviewFlowTests(APITestCase):
         self.assertEqual(session.jd, self.jd)
         self.assertEqual(session.resume, self.resume)
 
-    def test_session_creation_requires_jd_and_resume(self):
+    def test_session_creation_requires_jd(self):
+        # jd_id는 필수, resume_id는 선택(JD-only 플로우 지원)
         missing_jd = self.create_payload()
         missing_jd.pop('jd_id')
         missing_resume = self.create_payload()
@@ -440,7 +441,8 @@ class MVPTextInterviewFlowTests(APITestCase):
         )
 
         self.assertEqual(jd_response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertEqual(resume_response.status_code, status.HTTP_400_BAD_REQUEST)
+        # resume_id는 optional — resume 없이도 세션 생성 가능
+        self.assertEqual(resume_response.status_code, status.HTTP_201_CREATED)
 
     def test_session_creation_rejects_other_users_jd(self):
         response = self.create_session(jd_id=str(self.other_jd.id))
@@ -448,11 +450,17 @@ class MVPTextInterviewFlowTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
 
     def test_session_creation_rejects_invalid_persona_and_mode(self):
-        persona_response = self.create_session(persona_type='pressure')
+        # pressure는 유효한 페르소나로 추가됨. 완전히 잘못된 값으로 검증
+        persona_response = self.create_session(persona_type='invalid_persona')
         mode_response = self.create_session(interview_mode='video')
 
         self.assertEqual(persona_response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertEqual(mode_response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_session_creation_accepts_pressure_persona(self):
+        # pressure 페르소나가 JD-only 플로우에서 허용되는지 확인
+        response = self.create_session(persona_type='pressure')
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
 
     def test_session_detail_and_status_update(self):
         created = self.create_session()
