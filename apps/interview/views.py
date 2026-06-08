@@ -184,14 +184,27 @@ class InterviewSessionTurnsView(APIView):
 
         answered_count = 0
         follow_up_question_count = 0
+        first_unanswered_turn = None
+        pending_follow_up_turn = None
+        pending_follow_up_answer = None
 
         for turn in turns:
-            answer = getattr(turn['question'], 'answer', None)
+            question = turn['question']
+            try:
+                answer = question.answer
+            except InterviewAnswer.DoesNotExist:
+                answer = None
+
             if answer:
                 answered_count += 1
-                follow_up_question_count += len(
-                    getattr(answer, 'prefetched_follow_up_questions', [])
-                )
+                follow_up_questions = getattr(answer, 'prefetched_follow_up_questions', [])
+                follow_up_question_count += len(follow_up_questions)
+
+                if not follow_up_questions and pending_follow_up_answer is None:
+                    pending_follow_up_turn = turn
+                    pending_follow_up_answer = answer
+            elif first_unanswered_turn is None:
+                first_unanswered_turn = turn
 
         main_question_count = len(turns)
         total_question_count = session.total_question_count or main_question_count
@@ -200,6 +213,38 @@ class InterviewSessionTurnsView(APIView):
             if total_question_count
             else 0
         )
+
+        current_turn = None
+        next_action = {
+            'type': 'COMPLETE_INTERVIEW',
+            'question_id': None,
+            'answer_id': None,
+        }
+
+        if pending_follow_up_answer is not None and pending_follow_up_turn is not None:
+            pending_question = pending_follow_up_turn['question']
+            current_turn = {
+                'turn_index': pending_follow_up_turn['turn_index'],
+                'question_id': str(pending_question.id),
+                'answer_id': str(pending_follow_up_answer.id),
+            }
+            next_action = {
+                'type': 'GENERATE_FOLLOW_UP',
+                'question_id': str(pending_question.id),
+                'answer_id': str(pending_follow_up_answer.id),
+            }
+        elif first_unanswered_turn is not None:
+            unanswered_question = first_unanswered_turn['question']
+            current_turn = {
+                'turn_index': first_unanswered_turn['turn_index'],
+                'question_id': str(unanswered_question.id),
+                'answer_id': None,
+            }
+            next_action = {
+                'type': 'ANSWER_CURRENT_QUESTION',
+                'question_id': str(unanswered_question.id),
+                'answer_id': None,
+            }
 
         return Response(
             {
@@ -217,6 +262,8 @@ class InterviewSessionTurnsView(APIView):
                     'current_question_index': session.current_question_index,
                     'completion_rate': completion_rate,
                 },
+                'current_turn': current_turn,
+                'next_action': next_action,
                 'turns': InterviewTurnSerializer(turns, many=True).data,
             },
             status=status.HTTP_200_OK,
