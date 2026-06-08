@@ -9,6 +9,7 @@ apps/interview/services/ai_chain_persona_prompts.py
 - 공식 persona_type은 friendly / practical / verify 3가지만 사용
 - 알 수 없는 persona_type은 practical로 fallback
 - OpenAI system prompt에서 공통으로 사용할 persona instruction 제공
+- 프론트 페르소나 선택 카드에서 사용할 persona 목록 제공
 """
 
 from __future__ import annotations
@@ -22,6 +23,8 @@ DEFAULT_PERSONA_TYPE = "practical"
 PERSONA_PROMPT_TEMPLATES = {
     "friendly": {
         "label": "친절한 코치형",
+        "description": "긴장을 낮추고 답변을 자연스럽게 확장하도록 돕는 면접관입니다.",
+        "usage_guide": "면접 경험이 적거나 답변 구조를 연습하고 싶은 사용자에게 적합합니다.",
         "instruction": (
             "면접관 페르소나: 친절한 코치형. "
             "지원자가 긴장하지 않고 답변을 확장할 수 있도록 부드럽고 격려하는 톤을 사용하세요. "
@@ -31,6 +34,8 @@ PERSONA_PROMPT_TEMPLATES = {
     },
     "practical": {
         "label": "실무 면접관형",
+        "description": "프로젝트 경험, 구현 범위, 기술 선택 이유를 실무 관점에서 확인하는 면접관입니다.",
+        "usage_guide": "실제 기업 면접과 유사한 기본 면접 흐름을 연습하고 싶은 사용자에게 적합합니다.",
         "instruction": (
             "면접관 페르소나: 실무 면접관형. "
             "지원자의 프로젝트 경험, 실제 역할, 구현 범위, 기술 선택 이유, 협업 과정, 문제 해결 방식을 중심으로 확인하세요. "
@@ -40,6 +45,8 @@ PERSONA_PROMPT_TEMPLATES = {
     },
     "verify": {
         "label": "검증 면접관형",
+        "description": "답변의 근거, 본인 기여도, 기술 이해도를 꼼꼼하게 확인하는 면접관입니다.",
+        "usage_guide": "답변의 빈틈을 점검하거나 심화 꼬리질문에 대비하고 싶은 사용자에게 적합합니다.",
         "instruction": (
             "면접관 페르소나: 검증 면접관형. "
             "지원자의 본인 기여도, 주장에 대한 근거, 경험의 구체성, 기술 이해도, 과장 가능성을 근거 중심으로 확인하세요. "
@@ -108,3 +115,16 @@ def build_persona_prompt_block(persona: Any) -> str:
         f"- persona_label: {template['label']}\n"
         f"- instruction: {template['instruction']}"
     )
+
+
+def get_persona_options() -> list[dict[str, str]]:
+    """프론트 선택 UI와 API 응답에서 사용할 공식 persona 목록을 반환한다."""
+    return [
+        {
+            "persona_type": persona_type,
+            "label": template["label"],
+            "description": template["description"],
+            "usage_guide": template["usage_guide"],
+        }
+        for persona_type, template in PERSONA_PROMPT_TEMPLATES.items()
+    ]
