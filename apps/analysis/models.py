@@ -1,23 +1,32 @@
+import uuid
 from django.db import models
 from django.contrib.auth import get_user_model
-from common.constants import 
 
 User = get_user_model()
 
 
 class AnalysisSession(models.Model):
     """
-    사용자 입력 → 분석 → 질문 생성까지를 묶는 단위.
-    면접 진행(interview 앱)은 이 session_id를 FK로 참조한다.
+    비동기 분석 파이프라인의 처리 상태를 추적하는 세션.
+    분석이 완료되면 JdAnalysis가 생성된다.
     """
-    user              = models.ForeignKey(User, on_delete=models.CASCADE, related_name="analysis_sessions")
+    user          = models.ForeignKey(User, on_delete=models.CASCADE, related_name="analysis_sessions")
+
+    # 입력 문서 FK (input 앱 참조)
+    jd            = models.ForeignKey('input.JobDescription', on_delete=models.SET_NULL, null=True, blank=True, related_name="analysis_sessions")
+    resume        = models.ForeignKey('input.ResumeMaster', on_delete=models.SET_NULL, null=True, blank=True, related_name="analysis_sessions")
+    cover_letter  = models.ForeignKey('input.CoverLetter', on_delete=models.SET_NULL, null=True, blank=True, related_name="analysis_sessions")
+
+    # 분석 완료 후 생성된 JdAnalysis 참조
+    jd_analysis   = models.OneToOneField('JdAnalysis', on_delete=models.SET_NULL, null=True, blank=True, related_name="session")
+
     job_role          = models.CharField(max_length=100)
     company_name      = models.CharField(max_length=100, blank=True)
     jd_text           = models.TextField()
     resume_text       = models.TextField(blank=True)
     cover_letter_text = models.TextField(blank=True)
 
-    # 분석 결과
+    # 중간 분석 결과 (파이프라인 내부용)
     jd_keywords     = models.JSONField(default=list)
     resume_analysis = models.JSONField(default=dict)
 
@@ -32,20 +41,50 @@ class AnalysisSession(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
+        db_table = 'analysis_session'
         ordering = ["-created_at"]
 
     def __str__(self):
         return f"[{self.user}] {self.job_role} @ {self.company_name} ({self.status})"
 
 
+class JdAnalysis(models.Model):
+    """
+    JD + 이력서 + 자소서 매핑 분석 결과.
+    분석 완료 후 생성되며, 면접 세션(InterviewSession)이 이 테이블을 참조해 질문을 가져간다.
+    """
+    id            = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user          = models.ForeignKey(User, on_delete=models.CASCADE, related_name="jd_analyses")
+    jd            = models.ForeignKey('input.JobDescription', on_delete=models.CASCADE, related_name="jd_analyses")
+    resume        = models.ForeignKey('input.ResumeMaster', on_delete=models.CASCADE, related_name="jd_analyses")
+    cover_letter  = models.ForeignKey('input.CoverLetter', on_delete=models.SET_NULL, null=True, blank=True, related_name="jd_analyses")
+
+    # 분석 결과
+    match_score   = models.FloatField(default=0.0)           # 0.0 ~ 100.0
+    jd_keywords   = models.JSONField(default=list)            # JD 핵심 키워드
+    resume_analysis = models.JSONField(default=dict)          # 이력서 구조화 분석 결과
+    strengths     = models.JSONField(default=list)            # 강점 리스트
+    weaknesses    = models.JSONField(default=list)            # 약점 리스트
+    cl_points     = models.JSONField(default=list)            # 자소서 반영 포인트
+
+    analyzed_at   = models.DateTimeField(auto_now_add=True)
+    updated_at    = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'jd_analysis'
+        ordering = ["-analyzed_at"]
+
+    def __str__(self):
+        return f"[{self.user}] JD:{self.jd_id} × Resume:{self.resume_id} ({self.match_score:.1f}%)"
+
+
 class GeneratedQuestion(models.Model):
     """
-    AnalysisSession에 연결된 사전 생성 예상 질문.
-    interview 앱에서 session_id로 이 테이블을 조회한다.
+    JdAnalysis 기반으로 생성된 면접 질문 + STAR 모범 답안.
+    interview 앱의 InterviewSession이 jd_analysis_id로 이 테이블을 조회한다.
     """
-    session = models.ForeignKey(
-        AnalysisSession, on_delete=models.CASCADE, related_name="questions"
-    )
+    id          = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    jd_analysis = models.ForeignKey(JdAnalysis, on_delete=models.CASCADE, related_name="questions")
 
     QUESTION_TYPES = [
         ("personality", "인성"),
@@ -56,9 +95,21 @@ class GeneratedQuestion(models.Model):
     question_text = models.TextField()
     order         = models.IntegerField(default=0)
     is_used       = models.BooleanField(default=False)
-    created_at    = models.DateTimeField(auto_now_add=True)
+
+    # STAR 모범 답안
+    answer = models.JSONField(default=dict)
+    # {
+    #   "summary":   "두괄식 오프닝",
+    #   "situation": "상황 설명",
+    #   "task":      "역할·과제",
+    #   "action":    "구체적 행동",
+    #   "result":    "결과 및 배운 점"
+    # }
+
+    created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
+        db_table = 'analysis_generated_question'
         ordering = ["order"]
 
     def __str__(self):

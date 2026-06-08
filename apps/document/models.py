@@ -40,8 +40,8 @@ class UploadedDocument(models.Model):
         choices=PARSE_STATUS_CHOICES,
         default='pending',
     )
-    extracted_text = models.TextField(blank=True)
-    error_message = models.TextField(blank=True)
+    extracted_text = models.TextField(blank=True, null=True)
+    error_message = models.TextField(blank=True, null=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

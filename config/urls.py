@@ -30,4 +30,5 @@ urlpatterns = [
     path('api/v1/admin/', include('apps.prompt.urls')),
     path('api/v1/admin/', include('apps.admin_api.urls')),
     path('api/v1/external/', include('apps.external.urls')),
+    path('api/v1/analysis/', include('apps.analysis.urls')),
 ]

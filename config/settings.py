@@ -19,10 +19,15 @@ from dotenv import load_dotenv
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(BASE_DIR / '.env')
+load_dotenv(BASE_DIR / '.env.local', override=True)
 
 WORKNET_API_KEY = os.getenv('WORKNET_API_KEY', '')
 WORKNET_BASE_URL = os.getenv('WORKNET_BASE_URL', '')
 
+# ===== LangChain / LangSmith =====
+LANGCHAIN_TRACING_V2 = os.getenv('LANGCHAIN_TRACING_V2', 'false')
+LANGCHAIN_API_KEY    = os.getenv('LANGCHAIN_API_KEY', '')
+LANGCHAIN_PROJECT    = os.getenv('LANGCHAIN_PROJECT', 'career-dot-zip')
 # ===== AI Chain / OpenAI Settings =====
 def _env_bool(name: str, default: bool = False) -> bool:
     value = os.getenv(name)
@@ -77,6 +82,7 @@ INSTALLED_APPS = [
     'apps.admin_api',
     'apps.external',
     'apps.question_bank',
+    'apps.analysis',
 ]
 
 MIDDLEWARE = [
@@ -113,6 +119,7 @@ WSGI_APPLICATION = 'config.wsgi.application'
 
 # Database
 # https://docs.djangoproject.com/en/4.2/ref/settings/#databases
+import dj_database_url
 
 _DB_URL = os.getenv("DATABASE_URL", "").strip()
 
