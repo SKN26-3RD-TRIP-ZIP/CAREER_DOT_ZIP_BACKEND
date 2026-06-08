@@ -66,6 +66,38 @@ class AIChainOpenAIEngineTest(SimpleTestCase):
             "prompt_version_id": 1,
         }
 
+    def _followup_payload(self):
+        return {
+            "session_id": "11111111-1111-1111-1111-111111111111",
+            "parent_question": {
+                "question_id": "22222222-2222-2222-2222-222222222222",
+                "question_text": "프로젝트에서 본인이 맡은 역할과 기술 선택 이유를 설명해주세요.",
+                "question_type": "technical",
+                "source_tags": [],
+            },
+            "answer": {
+                "answer_id": "33333333-3333-3333-3333-333333333333",
+                "answer_text": "데이터를 수집하고 분석해서 리포트를 만들었습니다.",
+            },
+            "selected_weakness_tag": {
+                "answer_weakness_tag_id": "44444444-4444-4444-4444-444444444444",
+                "weakness_tag_id": "00000000-0000-0000-0000-000000000002",
+                "tag_name": "본인 기여도 불명확",
+                "reason": "본인 기여가 명확하지 않음",
+            },
+            "persona": {
+                "persona_id": 2,
+                "persona_type": "practical",
+                "name": "실무 면접관형",
+                "description": "",
+            },
+            "prompt_version_id": 1,
+            "conversation_context": {
+                "previous_question_count": 1,
+                "previous_followup_count_for_parent": 0,
+            },
+        }
+
     def test_openai_engine_keeps_mock_fallback_persona_contract(self):
         personas = self.engine.get_personas()
 
@@ -115,6 +147,54 @@ class AIChainOpenAIEngineTest(SimpleTestCase):
 
         self.assertEqual(result["next_action"], NextAction.GENERATE_FOLLOWUP.value)
         self.assertTrue(result["should_generate_followup"])
+
+    def test_openai_engine_uses_real_call_when_enabled_for_followup_generation(self):
+        raw_response = """```json
+        {
+          "session_id": "11111111-1111-1111-1111-111111111111",
+          "followup_question": {
+            "parent_question_id": "22222222-2222-2222-2222-222222222222",
+            "generated_from_answer_id": "33333333-3333-3333-3333-333333333333",
+            "answer_weakness_tag_id": "44444444-4444-4444-4444-444444444444",
+            "question_text": "방금 답변에서 본인이 직접 담당한 역할을 더 구체적으로 설명해주실 수 있나요?",
+            "question_type": "technical",
+            "difficulty": null,
+            "order_index": 2,
+            "generation_reason": "본인 기여도 불명확 태그 기준으로 생성"
+          }
+        }
+        ```"""
+        fake_client = FakeOpenAIClient(raw_response)
+        engine = AIChainOpenAIEngine(
+            api_key="test-api-key",
+            client_factory=lambda api_key: fake_client,
+            enable_real_call=True,
+        )
+
+        result = engine.generate_followup_question(self._followup_payload())
+        followup = result["followup_question"]
+
+        self.assertEqual(result["session_id"], "11111111-1111-1111-1111-111111111111")
+        self.assertEqual(
+            followup["question_text"],
+            "방금 답변에서 본인이 직접 담당한 역할을 더 구체적으로 설명해주실 수 있나요?",
+        )
+        self.assertEqual(followup["parent_question_id"], "22222222-2222-2222-2222-222222222222")
+        self.assertEqual(followup["generated_from_answer_id"], "33333333-3333-3333-3333-333333333333")
+        self.assertEqual(followup["answer_weakness_tag_id"], "44444444-4444-4444-4444-444444444444")
+
+    def test_openai_engine_falls_back_when_followup_real_call_returns_invalid_json(self):
+        fake_client = FakeOpenAIClient("JSON이 아닌 응답")
+        engine = AIChainOpenAIEngine(
+            api_key="test-api-key",
+            client_factory=lambda api_key: fake_client,
+            enable_real_call=True,
+        )
+
+        result = engine.generate_followup_question(self._followup_payload())
+
+        self.assertIn("followup_question", result)
+        self.assertIn("question_text", result["followup_question"])
 
     def test_openai_engine_keeps_question_generation_contract_with_fallback(self):
         payload = {

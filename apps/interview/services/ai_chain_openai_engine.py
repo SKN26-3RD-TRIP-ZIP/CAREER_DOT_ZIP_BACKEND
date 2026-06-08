@@ -20,6 +20,7 @@ from django.conf import settings
 from apps.interview.ai_chain_contracts import (
     DEFAULT_WEAKNESS_TAG_CANDIDATES,
     NextAction,
+    QuestionType,
 )
 from apps.interview.services.ai_chain_mock_engine import AIChainMockEngine
 from apps.interview.services.ai_chain_response_parser import (
@@ -96,12 +97,26 @@ class AIChainOpenAIEngine:
             return fallback
 
     def generate_followup_question(self, payload: dict[str, Any]) -> dict[str, Any]:
-        """OpenAI 꼬리질문 생성 엔진 진입점.
+        """꼬리질문 생성.
 
-        후속 작업에서 실제 OpenAI API 호출 및 JSON 파싱을 연결한다.
-        현재는 기존 API 안정성을 위해 mock fallback 결과를 반환한다.
+        enable_real_call=True일 때 OpenAI 호출을 시도한다.
+        호출 실패, JSON 파싱 실패, 필수 필드 누락 시 mock fallback을 반환한다.
         """
-        return self.fallback_engine.generate_followup_question(payload)
+        fallback = self.fallback_engine.generate_followup_question(payload)
+        if not self.enable_real_call:
+            return fallback
+
+        try:
+            raw_response = self._request_text(
+                system_prompt=self._build_followup_system_prompt(),
+                user_prompt=self._build_followup_user_prompt(payload),
+                temperature=0.3,
+                max_tokens=800,
+            )
+            parsed = self._parse_response_object(raw_response, fallback=fallback)
+            return self._normalize_followup_result(parsed, payload=payload, fallback=fallback)
+        except Exception:
+            return fallback
 
     def generate_followup_mock(self, payload: dict[str, Any]) -> dict[str, Any]:
         return self.fallback_engine.generate_followup_mock(payload)
@@ -192,6 +207,27 @@ class AIChainOpenAIEngine:
         }
         return json.dumps(compact_payload, ensure_ascii=False)
 
+    def _build_followup_system_prompt(self) -> str:
+        return (
+            "당신은 IT 직무 모의면접에서 지원자의 답변을 바탕으로 꼬리질문을 생성하는 면접관입니다. "
+            "반드시 JSON object만 반환하세요. "
+            "최상위 필드는 session_id, followup_question을 포함해야 합니다. "
+            "followup_question은 parent_question_id, generated_from_answer_id, answer_weakness_tag_id, "
+            "question_text, question_type, difficulty, order_index, generation_reason을 포함해야 합니다. "
+            "question_text는 한 문장의 자연스러운 한국어 면접 질문이어야 합니다."
+        )
+
+    def _build_followup_user_prompt(self, payload: dict[str, Any]) -> str:
+        compact_payload = {
+            "session_id": payload.get("session_id"),
+            "parent_question": payload.get("parent_question"),
+            "answer": payload.get("answer"),
+            "selected_weakness_tag": payload.get("selected_weakness_tag"),
+            "persona": payload.get("persona"),
+            "conversation_context": payload.get("conversation_context"),
+        }
+        return json.dumps(compact_payload, ensure_ascii=False)
+
     def _normalize_sufficiency_result(
         self,
         parsed: dict[str, Any],
@@ -242,4 +278,64 @@ class AIChainOpenAIEngine:
             "selected_weakness_tag": selected_weakness_tag,
             "should_generate_followup": should_generate_followup,
             "next_action": next_action,
+        }
+
+    def _normalize_followup_result(
+        self,
+        parsed: dict[str, Any],
+        payload: dict[str, Any],
+        fallback: dict[str, Any],
+    ) -> dict[str, Any]:
+        """OpenAI 꼬리질문 생성 결과를 기존 service 계약에 맞게 보정한다."""
+        if not isinstance(parsed, dict):
+            return fallback
+
+        followup_question = parsed.get("followup_question")
+        if not isinstance(followup_question, dict):
+            return fallback
+
+        question_text = (followup_question.get("question_text") or "").strip()
+        if not question_text:
+            return fallback
+
+        parent_question = payload.get("parent_question") or {}
+        answer = payload.get("answer") or {}
+        selected_tag = payload.get("selected_weakness_tag") or {}
+        context = payload.get("conversation_context") or {}
+
+        previous_question_count = int(context.get("previous_question_count") or 1)
+        previous_followup_count = int(context.get("previous_followup_count_for_parent") or 0)
+
+        normalized_followup = {
+            "parent_question_id": followup_question.get(
+                "parent_question_id",
+                parent_question.get("question_id"),
+            ),
+            "generated_from_answer_id": followup_question.get(
+                "generated_from_answer_id",
+                answer.get("answer_id"),
+            ),
+            "answer_weakness_tag_id": followup_question.get(
+                "answer_weakness_tag_id",
+                selected_tag.get("answer_weakness_tag_id"),
+            ),
+            "question_text": question_text,
+            "question_type": followup_question.get(
+                "question_type",
+                parent_question.get("question_type") or QuestionType.JOB.value,
+            ),
+            "difficulty": followup_question.get("difficulty"),
+            "order_index": int(
+                followup_question.get("order_index")
+                or previous_question_count + previous_followup_count + 1
+            ),
+            "generation_reason": followup_question.get(
+                "generation_reason",
+                f"{selected_tag.get('tag_name', '약점 태그')} 기준으로 생성됨",
+            ),
+        }
+
+        return {
+            "session_id": parsed.get("session_id", payload.get("session_id")),
+            "followup_question": normalized_followup,
         }
