@@ -4,7 +4,7 @@ from apps.common.choices import ANSWER_SOURCE_CHOICES
 from apps.evaluation.models import Evaluation
 from apps.input.models import JobDescription, ResumeMaster, CoverLetter
 from .models import InterviewSession, InterviewQuestion, InterviewAnswer
-from .services.ai_chain_persona_prompts import normalize_persona_type
+from .services.ai_chain_persona_prompts import get_persona_options, normalize_persona_type
 
 
 class InterviewSessionCreateSerializer(serializers.ModelSerializer):
@@ -69,6 +69,20 @@ class InterviewSessionCreateSerializer(serializers.ModelSerializer):
         validated_data['persona'] = normalize_persona_type(validated_data.get('persona'))
 
         return InterviewSession.objects.create(**validated_data)
+
+
+def get_persona_detail(persona):
+    persona_type = normalize_persona_type(persona)
+
+    for option in get_persona_options():
+        if option['persona_type'] == persona_type:
+            return option
+
+    for option in get_persona_options():
+        if option['persona_type'] == 'practical':
+            return option
+
+    return None
 
 
 class InterviewSessionListSerializer(serializers.ModelSerializer):
