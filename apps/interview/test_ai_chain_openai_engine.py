@@ -1,4 +1,4 @@
-from django.test import SimpleTestCase
+from django.test import SimpleTestCase, override_settings
 
 from apps.interview.ai_chain_contracts import NextAction
 from apps.interview.services.ai_chain_openai_engine import AIChainOpenAIEngine
@@ -310,6 +310,7 @@ class AIChainOpenAIEngineTest(SimpleTestCase):
             "user prompt",
         )
 
+    @override_settings(OPENAI_API_KEY="")
     def test_get_client_raises_value_error_without_api_key(self):
         engine = AIChainOpenAIEngine(api_key="")
 
