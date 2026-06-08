@@ -1,5 +1,5 @@
 import json
-from openai import OpenAI
+from .utils import get_client, clean_json
 
 
 def analyze_resume(resume_text: str, cover_letter_text: str) -> dict:
@@ -16,7 +16,7 @@ def analyze_resume(resume_text: str, cover_letter_text: str) -> dict:
         ]
     }
     """
-    client = OpenAI()
+    client = get_client()
     response = client.chat.completions.create(
         model="gpt-4o-mini",
         temperature=0.3,
@@ -70,10 +70,5 @@ def analyze_resume(resume_text: str, cover_letter_text: str) -> dict:
             },
         ],
     )
-    raw = _clean_json(response.choices[0].message.content)
+    raw = clean_json(response.choices[0].message.content)
     return json.loads(raw)
-
-
-def _clean_json(text: str) -> str:
-    # GPT가 ```json ... ``` 마크다운 블록으로 감쌀 때 제거
-    return text.strip().replace("```json", "").replace("```", "").strip()

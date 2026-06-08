@@ -1,5 +1,5 @@
 import json
-from openai import OpenAI
+from .utils import get_client, clean_json
 
 
 def calculate_match_score(
@@ -18,7 +18,7 @@ def calculate_match_score(
         "cl_points":   ["자소서 반영 포인트1", "포인트2"]
     }
     """
-    client = OpenAI()
+    client = get_client()
 
     tech_stack   = resume_analysis.get("tech_stack", [])
     experiences  = resume_analysis.get("key_experiences", [])
@@ -68,5 +68,5 @@ def calculate_match_score(
         ],
     )
 
-    raw = response.choices[0].message.content.strip().replace("```json", "").replace("```", "").strip()
+    raw = clean_json(response.choices[0].message.content)
     return json.loads(raw)
