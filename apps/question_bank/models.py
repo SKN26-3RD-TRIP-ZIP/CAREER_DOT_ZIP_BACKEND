@@ -35,8 +35,8 @@ class QuestionBankItem(models.Model):
         ordering = ['-created_at', 'id']
         constraints = [
             models.UniqueConstraint(
-                fields=('source', 'source_file', 'question_text'),
-                name='unique_question_bank_source_file_text',
+                fields=('source', 'source_ref'),
+                name='unique_question_bank_source_ref',
             )
         ]
         indexes = [
