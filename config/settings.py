@@ -22,6 +22,22 @@ load_dotenv(BASE_DIR / '.env')
 WORKNET_API_KEY = os.getenv('WORKNET_API_KEY', '')
 WORKNET_BASE_URL = os.getenv('WORKNET_BASE_URL', '')
 
+# ===== AI Chain / OpenAI Settings =====
+def _env_bool(name: str, default: bool = False) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {'1', 'true', 'yes', 'y', 'on'}
+
+
+OPENAI_API_KEY = os.getenv('OPENAI_API_KEY', '')
+INTERVIEW_AI_CHAIN_ENGINE = os.getenv('INTERVIEW_AI_CHAIN_ENGINE', 'mock').strip().lower()
+INTERVIEW_AI_OPENAI_MODEL = os.getenv('INTERVIEW_AI_OPENAI_MODEL', 'gpt-4o-mini')
+INTERVIEW_AI_OPENAI_ENABLE_REAL_CALL = _env_bool(
+    'INTERVIEW_AI_OPENAI_ENABLE_REAL_CALL',
+    False,
+)
+
 
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/4.2/howto/deployment/checklist/
