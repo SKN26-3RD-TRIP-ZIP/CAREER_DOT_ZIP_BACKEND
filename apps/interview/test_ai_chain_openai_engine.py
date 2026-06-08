@@ -44,14 +44,8 @@ class AIChainOpenAIEngineTest(SimpleTestCase):
     def setUp(self):
         self.engine = AIChainOpenAIEngine(api_key="test-api-key")
 
-    def test_openai_engine_keeps_mock_fallback_persona_contract(self):
-        personas = self.engine.get_personas()
-
-        self.assertGreaterEqual(len(personas), 1)
-        self.assertIn("persona_type", personas[0])
-
-    def test_openai_engine_keeps_answer_sufficiency_contract_with_fallback(self):
-        payload = {
+    def _sufficiency_payload(self):
+        return {
             "session_id": "11111111-1111-1111-1111-111111111111",
             "question": {
                 "question_id": "22222222-2222-2222-2222-222222222222",
@@ -72,7 +66,52 @@ class AIChainOpenAIEngineTest(SimpleTestCase):
             "prompt_version_id": 1,
         }
 
-        result = self.engine.judge_answer_sufficiency(payload)
+    def test_openai_engine_keeps_mock_fallback_persona_contract(self):
+        personas = self.engine.get_personas()
+
+        self.assertGreaterEqual(len(personas), 1)
+        self.assertIn("persona_type", personas[0])
+
+    def test_openai_engine_keeps_answer_sufficiency_contract_with_fallback(self):
+        result = self.engine.judge_answer_sufficiency(self._sufficiency_payload())
+
+        self.assertEqual(result["next_action"], NextAction.GENERATE_FOLLOWUP.value)
+        self.assertTrue(result["should_generate_followup"])
+
+    def test_openai_engine_uses_real_call_when_enabled_for_answer_sufficiency(self):
+        raw_response = """```json
+        {
+          "answer_id": "33333333-3333-3333-3333-333333333333",
+          "is_sufficient": true,
+          "sufficiency_reason": "충분한 답변입니다.",
+          "answer_weakness_tags": [],
+          "selected_weakness_tag": null,
+          "should_generate_followup": false,
+          "next_action": "NEXT_QUESTION"
+        }
+        ```"""
+        fake_client = FakeOpenAIClient(raw_response)
+        engine = AIChainOpenAIEngine(
+            api_key="test-api-key",
+            client_factory=lambda api_key: fake_client,
+            enable_real_call=True,
+        )
+
+        result = engine.judge_answer_sufficiency(self._sufficiency_payload())
+
+        self.assertEqual(result["next_action"], NextAction.NEXT_QUESTION.value)
+        self.assertFalse(result["should_generate_followup"])
+        self.assertTrue(result["is_sufficient"])
+
+    def test_openai_engine_falls_back_when_real_call_returns_invalid_json(self):
+        fake_client = FakeOpenAIClient("JSON이 아닌 응답")
+        engine = AIChainOpenAIEngine(
+            api_key="test-api-key",
+            client_factory=lambda api_key: fake_client,
+            enable_real_call=True,
+        )
+
+        result = engine.judge_answer_sufficiency(self._sufficiency_payload())
 
         self.assertEqual(result["next_action"], NextAction.GENERATE_FOLLOWUP.value)
         self.assertTrue(result["should_generate_followup"])
