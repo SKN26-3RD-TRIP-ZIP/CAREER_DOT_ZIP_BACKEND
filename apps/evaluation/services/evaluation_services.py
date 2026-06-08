@@ -3,12 +3,19 @@ import logging
 import time
 from datetime import datetime
 from kiwipiepy import Kiwi
+from django.conf import settings
 
 # 💡 동기식으로 매핑된 기존 파일 및 외부 유틸 반입
-from evaluation_chains import eval_grounding_chain, eval_competency_chain
+from apps.evaluation.evaluation_chains import eval_grounding_chain, eval_competency_chain
 from apps.evaluation.utils.tag_router import route_deterministic_tags
-from apps.evaluation.models import StrengthTag, WeaknessTag, AnswerStrengthTag, AnswerWeaknessTag
-from .config import SPEECH_CONFIG  # 설정 파일 반입 (팀원 환경 경로에 맞게 상대 참조)
+
+# 💡 settings.py에 선언한 SPEECH_CONFIG를 안전하게 맵핑 (없을 경우를 대비한 Fallback 방어코드 포함)
+SPEECH_CONFIG = getattr(settings, "SPEECH_CONFIG", {
+    "BASE_SCORE": 100.0,
+    "FILLER_PENALTY_PER_COUNT": 5.0,
+    "FLOOR_SCORE": 20.0,
+    "EXCESSIVE_FILLER_LIMIT": 6
+})
 
 # 로거 정의
 logger = logging.getLogger("feedback_ai.evaluation_service")

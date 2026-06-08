@@ -19,7 +19,7 @@ from .serializers import (
     AnswerStrengthTagSerializer,
 )
 # 💡 evaluation_service 엔진 반입
-from services.evaluation_services import EvaluationService
+from .services.evaluation_services import EvaluationService
 
 
 class EvaluationCreateView(APIView):
