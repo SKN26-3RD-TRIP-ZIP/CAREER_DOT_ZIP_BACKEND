@@ -13,6 +13,7 @@ https://docs.djangoproject.com/en/4.2/ref/settings/
 import os
 from pathlib import Path
 
+import dj_database_url
 from dotenv import load_dotenv
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
@@ -97,12 +98,25 @@ WSGI_APPLICATION = 'config.wsgi.application'
 # Database
 # https://docs.djangoproject.com/en/4.2/ref/settings/#databases
 
-DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
+_DB_URL = os.getenv("DATABASE_URL", "").strip()
+
+if _DB_URL:
+    _db_config = dj_database_url.config(default=_DB_URL, conn_max_age=600)
+    if _db_config.get("ENGINE") == "django.db.backends.mysql":
+        # PyMySQL does not accept 'ssl-mode'; convert to ssl={} for Aiven SSL
+        _opts = _db_config.get("OPTIONS", {})
+        _ssl_mode = _opts.pop("ssl-mode", _opts.pop("ssl_mode", None))
+        if _ssl_mode:
+            _opts["ssl"] = {}
+        _db_config["OPTIONS"] = _opts
+    DATABASES = {"default": _db_config}
+else:
+    DATABASES = {
+        "default": {
+            "ENGINE": "django.db.backends.sqlite3",
+            "NAME": BASE_DIR / "db.sqlite3",
+        }
     }
-}
 
 
 # Password validation

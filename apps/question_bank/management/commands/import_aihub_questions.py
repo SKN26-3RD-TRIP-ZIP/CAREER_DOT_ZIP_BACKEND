@@ -62,8 +62,7 @@ class Command(BaseCommand):
 
             lookup = {
                 'source': item_data['source'],
-                'source_file': item_data['source_file'],
-                'question_text': item_data['question_text'],
+                'source_ref': item_data['source_ref'],
             }
             if QuestionBankItem.objects.filter(**lookup).exists():
                 stats['skipped_duplicate'] += 1
