@@ -67,12 +67,26 @@ class AIChainOpenAIEngine:
         return self.fallback_engine.get_weakness_tags()
 
     def generate_questions(self, payload: dict[str, Any]) -> dict[str, Any]:
-        """OpenAI 질문 생성 엔진 진입점.
+        """질문 생성.
 
-        후속 작업에서 실제 OpenAI API 호출 및 JSON 파싱을 연결한다.
-        현재는 기존 API 안정성을 위해 mock fallback 결과를 반환한다.
+        enable_real_call=True일 때 OpenAI 호출을 시도한다.
+        호출 실패, JSON 파싱 실패, 필수 필드 누락 시 mock fallback을 반환한다.
         """
-        return self.fallback_engine.generate_questions(payload)
+        fallback = self.fallback_engine.generate_questions(payload)
+        if not self.enable_real_call:
+            return fallback
+
+        try:
+            raw_response = self._request_text(
+                system_prompt=self._build_question_generation_system_prompt(),
+                user_prompt=self._build_question_generation_user_prompt(payload),
+                temperature=0.3,
+                max_tokens=1600,
+            )
+            parsed = self._parse_response_object(raw_response, fallback=fallback)
+            return self._normalize_question_generation_result(parsed, payload=payload, fallback=fallback)
+        except Exception:
+            return fallback
 
     def judge_answer_sufficiency(self, payload: dict[str, Any]) -> dict[str, Any]:
         """답변 충족도 판단.
@@ -186,6 +200,27 @@ class AIChainOpenAIEngine:
         """OpenAI 응답을 JSON list로 파싱한다."""
         return parse_llm_json_list(raw_response, default=fallback or [])
 
+    def _build_question_generation_system_prompt(self) -> str:
+        return (
+            "당신은 IT 직무 모의면접 질문 생성 엔진입니다. "
+            "반드시 JSON object만 반환하세요. "
+            "최상위 필드는 session_id, questions를 포함해야 합니다. "
+            "questions는 question_text, question_type, difficulty, order_index, "
+            "generation_reason, source_tags를 포함한 객체 배열이어야 합니다. "
+            "source_tags는 source_type, source_label, source_text_excerpt를 포함해야 합니다. "
+            "질문은 사용자의 JD, 이력서, 자기소개서, 프로젝트 경험에 근거해야 합니다."
+        )
+
+    def _build_question_generation_user_prompt(self, payload: dict[str, Any]) -> str:
+        compact_payload = {
+            "session_id": payload.get("session_id"),
+            "persona": payload.get("persona"),
+            "user_profile": payload.get("user_profile"),
+            "input_sources": payload.get("input_sources"),
+            "generation_options": payload.get("generation_options"),
+        }
+        return json.dumps(compact_payload, ensure_ascii=False)
+
     def _build_answer_sufficiency_system_prompt(self) -> str:
         return (
             "당신은 IT 직무 모의면접 답변 평가 엔진입니다. "
@@ -227,6 +262,89 @@ class AIChainOpenAIEngine:
             "conversation_context": payload.get("conversation_context"),
         }
         return json.dumps(compact_payload, ensure_ascii=False)
+
+    def _normalize_question_generation_result(
+        self,
+        parsed: dict[str, Any],
+        payload: dict[str, Any],
+        fallback: dict[str, Any],
+    ) -> dict[str, Any]:
+        """OpenAI 질문 생성 결과를 기존 service 계약에 맞게 보정한다."""
+        if not isinstance(parsed, dict):
+            return fallback
+
+        questions = parsed.get("questions")
+        if not isinstance(questions, list):
+            return fallback
+
+        options = payload.get("generation_options") or {}
+        question_count = int(options.get("question_count") or len(questions) or 3)
+        normalized_questions = []
+
+        for index, question in enumerate(questions[:question_count], start=1):
+            if not isinstance(question, dict):
+                continue
+
+            question_text = (question.get("question_text") or "").strip()
+            if not question_text:
+                continue
+
+            source_tags = question.get("source_tags")
+            if not isinstance(source_tags, list):
+                source_tags = []
+
+            normalized_source_tags = self._normalize_source_tags(source_tags)
+
+            normalized_questions.append(
+                {
+                    "client_question_key": question.get("client_question_key") or f"q_{index:03d}",
+                    "question_text": question_text,
+                    "question_type": question.get("question_type") or QuestionType.JOB.value,
+                    "difficulty": question.get("difficulty"),
+                    "order_index": int(question.get("order_index") or index),
+                    "generation_reason": question.get(
+                        "generation_reason",
+                        "OpenAI engine 기반 질문 생성",
+                    ),
+                    "source_tags": normalized_source_tags,
+                }
+            )
+
+        if not normalized_questions:
+            return fallback
+
+        return {
+            "session_id": parsed.get("session_id", payload.get("session_id")),
+            "questions": normalized_questions,
+            "fallback_used": False,
+        }
+
+    def _normalize_source_tags(self, source_tags: list[Any]) -> list[dict[str, Any]]:
+        normalized = []
+
+        for source_tag in source_tags:
+            if not isinstance(source_tag, dict):
+                continue
+
+            source_type = source_tag.get("source_type") or "general"
+            normalized.append(
+                {
+                    "source_type": source_type,
+                    "source_label": source_tag.get("source_label") or source_type,
+                    "source_text_excerpt": source_tag.get("source_text_excerpt") or "",
+                }
+            )
+
+        if normalized:
+            return normalized
+
+        return [
+            {
+                "source_type": "general",
+                "source_label": "일반 질문",
+                "source_text_excerpt": "",
+            }
+        ]
 
     def _normalize_sufficiency_result(
         self,

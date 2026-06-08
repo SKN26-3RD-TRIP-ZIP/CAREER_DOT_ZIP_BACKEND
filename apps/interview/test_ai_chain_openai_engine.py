@@ -44,6 +44,28 @@ class AIChainOpenAIEngineTest(SimpleTestCase):
     def setUp(self):
         self.engine = AIChainOpenAIEngine(api_key="test-api-key")
 
+    def _question_generation_payload(self):
+        return {
+            "session_id": "11111111-1111-1111-1111-111111111111",
+            "persona": {
+                "persona_id": 2,
+                "persona_type": "practical",
+                "name": "실무 면접관형",
+                "description": "",
+            },
+            "input_sources": {
+                "job_description": {
+                    "position": "Backend Developer",
+                    "original_text": "Python Django REST API 개발",
+                    "job_requirements": "Django API 설계 경험",
+                }
+            },
+            "generation_options": {
+                "question_count": 2,
+                "allow_multiple_source_tags": True,
+            },
+        }
+
     def _sufficiency_payload(self):
         return {
             "session_id": "11111111-1111-1111-1111-111111111111",
@@ -103,6 +125,55 @@ class AIChainOpenAIEngineTest(SimpleTestCase):
 
         self.assertGreaterEqual(len(personas), 1)
         self.assertIn("persona_type", personas[0])
+
+    def test_openai_engine_uses_real_call_when_enabled_for_question_generation(self):
+        raw_response = """```json
+        {
+          "session_id": "11111111-1111-1111-1111-111111111111",
+          "questions": [
+            {
+              "client_question_key": "q_001",
+              "question_text": "Django REST API를 설계할 때 본인이 직접 맡은 역할을 설명해주세요.",
+              "question_type": "technical",
+              "difficulty": null,
+              "order_index": 1,
+              "generation_reason": "JD의 Django API 요구사항 기반",
+              "source_tags": [
+                {
+                  "source_type": "jd",
+                  "source_label": "JD 기반",
+                  "source_text_excerpt": "Django API 설계 경험"
+                }
+              ]
+            }
+          ]
+        }
+        ```"""
+        fake_client = FakeOpenAIClient(raw_response)
+        engine = AIChainOpenAIEngine(
+            api_key="test-api-key",
+            client_factory=lambda api_key: fake_client,
+            enable_real_call=True,
+        )
+
+        result = engine.generate_questions(self._question_generation_payload())
+        question = result["questions"][0]
+
+        self.assertFalse(result["fallback_used"])
+        self.assertEqual(question["question_text"], "Django REST API를 설계할 때 본인이 직접 맡은 역할을 설명해주세요.")
+        self.assertEqual(question["source_tags"][0]["source_type"], "jd")
+
+    def test_openai_engine_falls_back_when_question_generation_returns_invalid_json(self):
+        fake_client = FakeOpenAIClient("JSON이 아닌 응답")
+        engine = AIChainOpenAIEngine(
+            api_key="test-api-key",
+            client_factory=lambda api_key: fake_client,
+            enable_real_call=True,
+        )
+
+        result = engine.generate_questions(self._question_generation_payload())
+
+        self.assertEqual(len(result["questions"]), 2)
 
     def test_openai_engine_keeps_answer_sufficiency_contract_with_fallback(self):
         result = self.engine.judge_answer_sufficiency(self._sufficiency_payload())
