@@ -9,8 +9,15 @@ PERSONA_INPUT_MAP = {
     'coach': 'coach',
     'practical': 'practical',
     'verify': 'verifier',
+    'verifier': 'verifier',
+    'pressure': 'pressure',
 }
-PERSONA_OUTPUT_MAP = {value: key for key, value in PERSONA_INPUT_MAP.items()}
+PERSONA_OUTPUT_MAP = {
+    'coach': 'coach',
+    'practical': 'practical',
+    'verifier': 'verify',
+    'pressure': 'pressure',
+}
 STATUS_INPUT_MAP = {
     'in_progress': 'in_progress',
     'completed': 'completed',
@@ -25,27 +32,44 @@ STATUS_OUTPUT_MAP = {
 
 class MVPSessionCreateSerializer(serializers.Serializer):
     jd_id = serializers.UUIDField()
-    resume_id = serializers.UUIDField()
+    resume_id = serializers.UUIDField(required=False, allow_null=True)
     cover_letter_id = serializers.UUIDField(required=False, allow_null=True)
-    persona_type = serializers.ChoiceField(choices=PERSONA_INPUT_MAP)
-    interview_mode = serializers.ChoiceField(choices=('text', 'voice'))
+    # persona_type: 프론트 필드명. persona도 별칭으로 허용
+    persona_type = serializers.ChoiceField(choices=PERSONA_INPUT_MAP, required=False)
+    persona = serializers.ChoiceField(choices=PERSONA_INPUT_MAP, required=False)
+    interview_mode = serializers.ChoiceField(choices=('text', 'voice'), required=False, default='voice')
+    # interview_type: 프론트에서 전송하는 기존 필드(무시하지 않고 저장)
+    interview_type = serializers.ChoiceField(
+        choices=('technical', 'personality', 'comprehensive'),
+        required=False,
+        default='comprehensive',
+    )
+    total_question_count = serializers.IntegerField(required=False, min_value=1, max_value=20)
 
     def validate(self, attrs):
         user = self.context['request'].user
         attrs['jd'] = self._owned_object(JobDescription, attrs.pop('jd_id'), user, 'JD')
-        attrs['resume'] = self._owned_object(
-            ResumeMaster,
-            attrs.pop('resume_id'),
-            user,
-            'Resume',
+
+        resume_id = attrs.pop('resume_id', None)
+        attrs['resume'] = (
+            self._owned_object(ResumeMaster, resume_id, user, 'Resume')
+            if resume_id
+            else None
         )
+
         cover_letter_id = attrs.pop('cover_letter_id', None)
         attrs['cover_letter'] = (
             self._owned_object(CoverLetter, cover_letter_id, user, 'Cover letter')
             if cover_letter_id
             else None
         )
-        attrs['persona'] = PERSONA_INPUT_MAP[attrs.pop('persona_type')]
+
+        # persona_type 우선, 없으면 persona 필드 사용
+        raw_persona = attrs.pop('persona_type', None) or attrs.pop('persona', None)
+        if not raw_persona:
+            raise serializers.ValidationError({'persona_type': 'persona_type or persona is required.'})
+        attrs['persona'] = PERSONA_INPUT_MAP[raw_persona]
+
         return attrs
 
     @staticmethod
@@ -56,11 +80,11 @@ class MVPSessionCreateSerializer(serializers.Serializer):
             raise serializers.ValidationError({f'{label.lower().replace(" ", "_")}_id': f'{label} not found.'})
 
     def create(self, validated_data):
+        total_question_count = validated_data.pop('total_question_count', 5)
         return InterviewSession.objects.create(
             user=self.context['request'].user,
-            interview_type='comprehensive',
             status='created',
-            total_question_count=3,
+            total_question_count=total_question_count,
             **validated_data,
         )
 
