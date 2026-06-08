@@ -4,12 +4,14 @@ from apps.common.choices import ANSWER_SOURCE_CHOICES
 from apps.evaluation.models import Evaluation
 from apps.input.models import JobDescription, ResumeMaster, CoverLetter
 from .models import InterviewSession, InterviewQuestion, InterviewAnswer
+from .services.ai_chain_persona_prompts import normalize_persona_type
 
 
 class InterviewSessionCreateSerializer(serializers.ModelSerializer):
     jd_id = serializers.UUIDField(required=True, allow_null=False, write_only=True)
     resume_id = serializers.UUIDField(required=False, allow_null=True, write_only=True)
     cover_letter_id = serializers.UUIDField(required=False, allow_null=True, write_only=True)
+    persona = serializers.CharField(required=False, allow_blank=True, default='practical')
 
     class Meta:
         model = InterviewSession
@@ -48,6 +50,9 @@ class InterviewSessionCreateSerializer(serializers.ModelSerializer):
             return CoverLetter.objects.get(id=value, user=self.context['request'].user)
         except CoverLetter.DoesNotExist:
             raise serializers.ValidationError('Cover letter not found.')
+        
+    def validate_persona(self, value):
+        return normalize_persona_type(value)
 
     def create(self, validated_data):
         jd = validated_data.pop('jd_id', None)
@@ -60,6 +65,8 @@ class InterviewSessionCreateSerializer(serializers.ModelSerializer):
             validated_data['resume'] = resume
         if cover_letter is not None:
             validated_data['cover_letter'] = cover_letter
+
+        validated_data['persona'] = normalize_persona_type(validated_data.get('persona'))
 
         return InterviewSession.objects.create(**validated_data)
 
