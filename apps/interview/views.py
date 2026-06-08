@@ -30,6 +30,7 @@ from .serializers import (
     InterviewAnswerCreateSerializer,
     InterviewAnswerSerializer,
     InterviewTurnSerializer,
+    get_persona_detail,
 )
 
 
@@ -181,13 +182,41 @@ class InterviewSessionTurnsView(APIView):
             for index, question in enumerate(main_questions, start=1)
         ]
 
+        answered_count = 0
+        follow_up_question_count = 0
+
+        for turn in turns:
+            answer = getattr(turn['question'], 'answer', None)
+            if answer:
+                answered_count += 1
+                follow_up_question_count += len(
+                    getattr(answer, 'prefetched_follow_up_questions', [])
+                )
+
+        main_question_count = len(turns)
+        total_question_count = session.total_question_count or main_question_count
+        completion_rate = (
+            round(answered_count / total_question_count, 2)
+            if total_question_count
+            else 0
+        )
+
         return Response(
             {
                 'session_id': str(session.id),
                 'interview_type': session.interview_type,
                 'persona': session.persona,
+                'persona_detail': get_persona_detail(session.persona),
                 'status': session.status,
                 'total': len(turns),
+                'progress': {
+                    'main_question_count': main_question_count,
+                    'answered_count': answered_count,
+                    'follow_up_question_count': follow_up_question_count,
+                    'total_question_count': total_question_count,
+                    'current_question_index': session.current_question_index,
+                    'completion_rate': completion_rate,
+                },
                 'turns': InterviewTurnSerializer(turns, many=True).data,
             },
             status=status.HTTP_200_OK,
