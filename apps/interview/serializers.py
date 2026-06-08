@@ -286,3 +286,9 @@ class FollowUpQuestionSerializer(serializers.ModelSerializer):
     def get_answer_id(self, obj):
         return str(obj.source_answer.id) if obj.source_answer else None
 
+
+class InterviewPersonaSerializer(serializers.Serializer):
+    persona_type = serializers.CharField()
+    label = serializers.CharField()
+    description = serializers.CharField()
+    usage_guide = serializers.CharField()

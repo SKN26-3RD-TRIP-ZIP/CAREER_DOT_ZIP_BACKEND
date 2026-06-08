@@ -9,11 +9,13 @@ from .views import (
     InterviewQuestionListView,
     InterviewAnswerSaveView,
     InterviewAnswerListView,
+    InterviewPersonaListView,
     FollowUpGenerateView,
     FollowUpListView,
 )
 
 urlpatterns = [
+    path('personas', InterviewPersonaListView.as_view(), name='interview-persona-list'),
     path('sessions', InterviewSessionListCreateView.as_view(), name='interview-session-list-create'),
     path('sessions/<uuid:session_id>', InterviewSessionDetailView.as_view(), name='interview-session-detail'),
     path('sessions/<uuid:session_id>/status', InterviewSessionStatusUpdateView.as_view(), name='interview-session-status-update'),

@@ -376,3 +376,21 @@ class FollowUpListView(generics.ListAPIView):
         queryset = self.get_queryset()
         serializer = self.get_serializer(queryset, many=True)
         return Response({'session_id': kwargs.get('session_id'), 'total': queryset.count(), 'results': serializer.data}, status=status.HTTP_200_OK)
+
+
+class InterviewPersonaListView(APIView):
+    permission_classes = [permissions.AllowAny]
+
+    def get(self, request):
+        from .serializers import InterviewPersonaSerializer
+        from .services.ai_chain_persona_prompts import get_persona_options
+
+        personas = get_persona_options()
+        serializer = InterviewPersonaSerializer(personas, many=True)
+        return Response(
+            {
+                'total': len(personas),
+                'results': serializer.data,
+            },
+            status=status.HTTP_200_OK,
+        )
