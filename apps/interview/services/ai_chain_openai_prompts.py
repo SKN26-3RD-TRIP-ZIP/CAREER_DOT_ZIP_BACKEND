@@ -26,6 +26,12 @@ def build_question_generation_system_prompt(persona: Any = None) -> str:
         "source_tags는 source_type, source_label, source_text_excerpt를 포함해야 합니다. "
         "질문은 사용자의 JD, 이력서, 자기소개서, 프로젝트 경험에 근거해야 합니다. "
         "질문 문체와 검증 강도는 위 면접관 페르소나 지시문을 따르세요."
+        "question_type은 MVP DB 저장 및 turns 조회 흐름을 위해 반드시 'main'으로 반환하세요. "
+        "프로젝트 경험, 기술 선택, 협업 등 세부 질문 성격은 question_type에 넣지 말고 generation_reason에 설명하세요. "
+        "source_tags.source_type은 반드시 jd, resume, cover_letter, project_experience, general 중 하나여야 합니다. "
+        "input_sources에 JD, 이력서, 자기소개서, 프로젝트 경험이 제공된 경우 가능한 general만 단독으로 사용하지 마세요. "
+        "질문의 근거가 된 가장 가까운 문서를 골라 source_type을 지정하세요. "
+        "source_text_excerpt는 근거 문구가 있으면 80자 이내로 작성하고, 없을 때만 빈 문자열을 사용하세요. "
     )
 
 
