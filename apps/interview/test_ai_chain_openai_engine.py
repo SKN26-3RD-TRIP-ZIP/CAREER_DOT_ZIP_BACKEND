@@ -352,3 +352,80 @@ class AIChainOpenAIEngineTest(SimpleTestCase):
         result = self.engine._parse_response_list("JSON이 아닌 응답", fallback=fallback)
 
         self.assertEqual(result, fallback)
+
+    def test_openai_question_generation_normalizes_question_type_to_main(self):
+        raw_response = '''```json
+        {
+          "session_id": "11111111-1111-1111-1111-111111111111",
+          "questions": [
+            {
+              "client_question_key": "q_001",
+              "question_text": "Django를 선택한 이유를 설명해주세요.",
+              "question_type": "technical_choice",
+              "difficulty": "medium",
+              "order_index": 1,
+              "generation_reason": "기술 선택 이유 확인",
+              "source_tags": [
+                {
+                  "source_type": "job_description",
+                  "source_label": "JD 기반",
+                  "source_text_excerpt": "Django API 설계 경험"
+                }
+              ]
+            }
+          ]
+        }
+        ```'''
+        fake_client = FakeOpenAIClient(raw_response)
+        engine = AIChainOpenAIEngine(
+            api_key="test-api-key",
+            client_factory=lambda api_key: fake_client,
+            enable_real_call=True,
+        )
+
+        result = engine.generate_questions(self._question_generation_payload())
+        question = result["questions"][0]
+
+        self.assertFalse(result["fallback_used"])
+        self.assertEqual(question["question_type"], "main")
+        self.assertEqual(question["source_tags"][0]["source_type"], "jd")
+
+    def test_normalize_source_tags_maps_unknown_source_type_to_general(self):
+        result = self.engine._normalize_source_tags(
+            [
+                {
+                    "source_type": "unknown_source",
+                    "source_label": "알 수 없는 출처",
+                    "source_text_excerpt": "근거 문구",
+                }
+            ]
+        )
+
+        self.assertEqual(result[0]["source_type"], "general")
+        self.assertEqual(result[0]["source_label"], "알 수 없는 출처")
+        self.assertEqual(result[0]["source_text_excerpt"], "근거 문구")
+
+    def test_normalize_source_tags_maps_source_type_aliases(self):
+        result = self.engine._normalize_source_tags(
+            [
+                {
+                    "source_type": "job_description",
+                    "source_label": "JD 기반",
+                    "source_text_excerpt": "Django API 설계 경험",
+                },
+                {
+                    "source_type": "self_intro",
+                    "source_label": "자기소개서 기반",
+                    "source_text_excerpt": "프로젝트 경험",
+                },
+                {
+                    "source_type": "project",
+                    "source_label": "프로젝트 기반",
+                    "source_text_excerpt": "AI 모의면접 시스템",
+                },
+            ]
+        )
+
+        self.assertEqual(result[0]["source_type"], "jd")
+        self.assertEqual(result[1]["source_type"], "cover_letter")
+        self.assertEqual(result[2]["source_type"], "project_experience")

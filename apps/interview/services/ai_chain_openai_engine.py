@@ -32,6 +32,32 @@ from apps.interview.services.ai_chain_response_parser import (
 )
 
 
+MAIN_QUESTION_TYPE = "main"
+
+ALLOWED_QUESTION_SOURCE_TYPES = {
+    "jd",
+    "resume",
+    "cover_letter",
+    "project_experience",
+    "general",
+}
+
+QUESTION_SOURCE_TYPE_ALIASES = {
+    "jd": "jd",
+    "job_description": "jd",
+    "jobdescription": "jd",
+    "resume": "resume",
+    "cv": "resume",
+    "cover_letter": "cover_letter",
+    "coverletter": "cover_letter",
+    "self_introduction": "cover_letter",
+    "self_intro": "cover_letter",
+    "project": "project_experience",
+    "project_experience": "project_experience",
+    "general": "general",
+}
+
+
 class AIChainOpenAIEngine:
     """OpenAI 기반 AI Chain engine.
 
@@ -247,7 +273,7 @@ class AIChainOpenAIEngine:
                 {
                     "client_question_key": question.get("client_question_key") or f"q_{index:03d}",
                     "question_text": question_text,
-                    "question_type": question.get("question_type") or QuestionType.JOB.value,
+                    "question_type": MAIN_QUESTION_TYPE,
                     "difficulty": question.get("difficulty"),
                     "order_index": int(question.get("order_index") or index),
                     "generation_reason": question.get(
@@ -266,6 +292,10 @@ class AIChainOpenAIEngine:
             "questions": normalized_questions,
             "fallback_used": False,
         }
+    
+    def _normalize_question_source_type(self, source_type: Any) -> str:
+        normalized_source_type = str(source_type or "general").strip().lower()
+        return QUESTION_SOURCE_TYPE_ALIASES.get(normalized_source_type, "general")
 
     def _normalize_source_tags(self, source_tags: list[Any]) -> list[dict[str, Any]]:
         normalized = []
@@ -274,7 +304,7 @@ class AIChainOpenAIEngine:
             if not isinstance(source_tag, dict):
                 continue
 
-            source_type = source_tag.get("source_type") or "general"
+            source_type = self._normalize_question_source_type(source_tag.get("source_type"))
             normalized.append(
                 {
                     "source_type": source_type,

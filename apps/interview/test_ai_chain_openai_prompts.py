@@ -80,3 +80,14 @@ class AIChainOpenAIPromptsTest(SimpleTestCase):
 
         self.assertEqual(result["session_id"], "session-1")
         self.assertEqual(result["selected_weakness_tag"]["tag_name"], "답변 구체성 부족")
+
+    def test_question_generation_system_prompt_guides_main_question_type_and_source_tags(self):
+        prompt = build_question_generation_system_prompt()
+
+        self.assertIn("main", prompt)
+        self.assertIn("jd", prompt)
+        self.assertIn("resume", prompt)
+        self.assertIn("cover_letter", prompt)
+        self.assertIn("project_experience", prompt)
+        self.assertIn("general", prompt)
+        self.assertIn("general만", prompt)
