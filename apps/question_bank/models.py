@@ -29,7 +29,8 @@ class QuestionBankItem(models.Model):
     source_file = models.CharField(max_length=255, blank=True)
     source_ref = models.CharField(max_length=255, blank=True)
     raw_metadata = models.JSONField(default=dict)
-    is_active = models.BooleanField(default=True)
+    is_active    = models.BooleanField(default=True)
+    is_embedded  = models.BooleanField(default=False, db_index=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
