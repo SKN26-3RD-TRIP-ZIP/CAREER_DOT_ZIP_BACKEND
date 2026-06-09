@@ -8,7 +8,7 @@ User = get_user_model()
 class AnalysisSession(models.Model):
     """
     비동기 분석 파이프라인의 처리 상태를 추적하는 세션.
-    분석이 완료되면 JdAnalysis가 생성된다.
+    분석이 완료되면 JdAnalysis가 생성
     """
     user          = models.ForeignKey(User, on_delete=models.CASCADE, related_name="analysis_sessions")
 
@@ -27,8 +27,16 @@ class AnalysisSession(models.Model):
     cover_letter_text = models.TextField(blank=True)
 
     # 중간 분석 결과 (파이프라인 내부용)
-    jd_keywords     = models.JSONField(default=list)
+    jd_keywords     = models.JSONField(default=dict)   # {"tech_keywords": [], "trait_keywords": []}
     resume_analysis = models.JSONField(default=dict)
+
+    CAREER_LEVEL_CHOICES = [
+        ("entry",       "신입"),
+        ("experienced", "경력"),
+    ]
+    career_level = models.CharField(
+        max_length=20, choices=CAREER_LEVEL_CHOICES, default="entry"
+    )
 
     STATUS_CHOICES = [
         ("pending",   "분석 대기"),
@@ -60,12 +68,16 @@ class JdAnalysis(models.Model):
     cover_letter  = models.ForeignKey('input.CoverLetter', on_delete=models.SET_NULL, null=True, blank=True, related_name="jd_analyses")
 
     # 분석 결과
-    match_score   = models.FloatField(default=0.0)           # 0.0 ~ 100.0
-    jd_keywords   = models.JSONField(default=list)            # JD 핵심 키워드
-    resume_analysis = models.JSONField(default=dict)          # 이력서 구조화 분석 결과
-    strengths     = models.JSONField(default=list)            # 강점 리스트
-    weaknesses    = models.JSONField(default=list)            # 약점 리스트
-    cl_points     = models.JSONField(default=list)            # 자소서 반영 포인트
+    match_score         = models.FloatField(default=0.0)    # 최종 가중 합산 점수 (0.0 ~ 100.0)
+    tech_score          = models.FloatField(default=0.0)    # 기술 스택 집합 연산 점수
+    trait_score         = models.FloatField(default=0.0)    # 인재상 임베딩 유사도 점수
+    matched_keywords    = models.JSONField(default=list)    # 매칭된 기술 키워드
+    unmatched_keywords  = models.JSONField(default=list)    # 부족한 기술 키워드
+    jd_keywords         = models.JSONField(default=dict)    # {"tech_keywords": [], "trait_keywords": []}
+    resume_analysis     = models.JSONField(default=dict)    # 이력서 구조화 분석 결과
+    strengths           = models.JSONField(default=list)    # 강점 리스트
+    weaknesses          = models.JSONField(default=list)    # 약점 리스트
+    cl_points           = models.JSONField(default=list)    # 자소서 반영 포인트
 
     analyzed_at   = models.DateTimeField(auto_now_add=True)
     updated_at    = models.DateTimeField(auto_now=True)
@@ -95,6 +107,23 @@ class GeneratedQuestion(models.Model):
     question_text = models.TextField()
     order         = models.IntegerField(default=0)
     is_used       = models.BooleanField(default=False)
+
+    # 질문 출처 (어떤 문서를 근거로 생성됐는지)
+    SOURCE_CHOICES = [
+        ("jd",            "채용공고(JD)"),
+        ("resume",        "이력서"),
+        ("cover_letter",  "자기소개서"),
+        ("project",       "프로젝트 경험"),
+        ("combined",      "복합 출처"),
+    ]
+    source     = models.CharField(max_length=20, choices=SOURCE_CHOICES, default="jd")
+    source_ref = models.TextField(blank=True, default="")
+    # source_ref 예시:
+    #   source="jd"           → "Python, Django, Docker"  (사용된 JD 키워드)
+    #   source="resume"       → "핵심 경험: 백엔드 API 설계 및 운영"
+    #   source="cover_letter" → "자소서 키워드: 문제 해결 중심 사고"
+    #   source="project"      → "프로젝트명: 배달 플랫폼 서버 개발"
+    #   source="combined"     → "JD(Python) + 프로젝트(배달 플랫폼)"
 
     # STAR 모범 답안
     answer = models.JSONField(default=dict)
