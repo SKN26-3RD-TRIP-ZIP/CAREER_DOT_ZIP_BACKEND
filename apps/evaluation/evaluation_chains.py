@@ -62,17 +62,29 @@ def fetch_competency(answer_text: str) -> dict:
         # 💡 Fallback 처리: 서비스가 터지지 않도록 기본 규격의 딕셔너리를 반환합니다.
         return {
             "bei_star": {
-                "situation": {"score": 0, "reason": "평가 실패 (API 에러)"},
-                "task": {"score": 0, "reason": "평가 실패 (API 에러)"},
-                "action": {"score": 0, "reason": "평가 실패 (API 에러)"},
-                "result": {"score": 0, "reason": "평가 실패 (API 에러)"}
+                "situation": {
+                    "desc": "OpenAI 연결 실패로 상황 평가를 진행하지 못했습니다.",
+                    "score": 0,
+                },
+                "task": {
+                    "desc": "OpenAI 연결 실패로 과제 평가를 진행하지 못했습니다.",
+                    "score": 0,
+                },
+                "action": {
+                    "desc": "OpenAI 연결 실패로 행동 평가를 진행하지 못했습니다.",
+                    "score": 0,
+                },
+                "result": {
+                    "desc": "OpenAI 연결 실패로 결과 평가를 진행하지 못했습니다.",
+                    "score": 0,
+                },
             },
-            "cbi_competency_level": {
-                "level": 0,
+            "cbi_competency": {
+                "assigned_level": 0,
                 "score": 0,
-                "evidence_sentence": "OpenAI 연결 실패로 역량 평가를 진행하지 못했습니다."
+                "evidence_sentence": "OpenAI 연결 실패로 역량 평가를 진행하지 못했습니다.",
             },
-            "llm_weakness_tags": []
+            "llm_weakness_tags": [],
         }
 
 def eval_grounding_chain(answer_text: str) -> dict:

@@ -63,7 +63,8 @@ EVAL_COMPETENCY_FORMAT_PROMPT = """
   },
   "cbi_competency": {
     "assigned_level": 3,
-    "evidence_sentence": "레벨을 산정한 발화 원문 내의 핵심 증거 문장 적재"
+    "score": 60,
+    "evidence_sentence": "근거 문장"
   }
 }
 """

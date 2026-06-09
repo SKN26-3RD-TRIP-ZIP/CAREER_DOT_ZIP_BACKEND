@@ -84,17 +84,24 @@ class EvaluationService:
         
         logger.info("📡 LLM 체인 응답 수신 완료")
 
-        # 4. [정성 지표 정산 레이어] (원본 스코어링 공식 완벽 유지)
-        bei_star = cbi_res.get("bei_star_rating", {})
-        situation_score = bei_star.get("situation", {}).get("score", 0)
-        task_score = bei_star.get("task", {}).get("score", 0)
-        action_score = bei_star.get("action", {}).get("score", 0)
-        result_score = bei_star.get("result", {}).get("score", 0)
-        
+        # 4. [정성 지표 정산 레이어]
+        bei_star = cbi_res.get("bei_star", {})
+        cbi_competency = cbi_res.get("cbi_competency", {})
+
+        situation = bei_star.get("situation", {})
+        task = bei_star.get("task", {})
+        action = bei_star.get("action", {})
+        result = bei_star.get("result", {})
+
+        situation_score = situation.get("score", 0)
+        task_score = task.get("score", 0)
+        action_score = action.get("score", 0)
+        result_score = result.get("score", 0)
+
         bei_total = situation_score + task_score + action_score + result_score
-        
-        cbi_level = cbi_res.get("cbi_competency_level", {}).get("assigned_level", 1)
-        cbi_mapped_score = float(cbi_level * 20)
+
+        cbi_level = cbi_competency.get("assigned_level", 1)
+        cbi_mapped_score = cbi_competency.get("score", float(cbi_level * 20))
 
         logger.info(f"[정성 지표 중간 정산] BEI STAR 총합: {bei_total}점, CBI 매핑 레벨: {cbi_level} (환산: {cbi_mapped_score}점)")
 
@@ -149,37 +156,46 @@ class EvaluationService:
         # 9. [Django DB 맞춤형 마샬링]: Pydantic 스키마 대신 순수 딕셔너리로 마샬링하여 리턴
         return {
             "bei_score": {
-                "situation": situation_score,
-                "task": task_score,
-                "action": action_score,
-                "result": result_score,
-                "total": bei_total
+                "situation": situation,
+                "task": task,
+                "action": action,
+                "result": result,
+                "total": bei_total,
             },
             "cbi_score": {
-                "level": cbi_level,
+                "assigned_level": cbi_level,
                 "score": cbi_mapped_score,
-                "evidence": cbi_res.get("cbi_competency_level", {}).get("evidence_sentence", "")
+                "evidence_sentence": cbi_competency.get("evidence_sentence", ""),
             },
             "filler_words": {
                 "counts": dysfluency_res["filler_word_counts"],
                 "total": total_fillers,
                 "repetitions": dysfluency_res["repetitions"],
-                "comment": speech_comment
+                "comment": speech_comment,
             },
             "final_tech_score": int(overall_score),
             "score_detail": {
-                "tech_grounding": {
+                "bei_logic": {
+                    "total": bei_total,
+                    "weights": {"bei": 0.4 if question_type == "technical" else 0.5},
+                },
+                "cbi_competency": {
+                    "assigned_level": cbi_level,
+                    "score": cbi_mapped_score,
+                    "evidence_sentence": cbi_competency.get("evidence_sentence", ""),
+                },
+                "technical_depth": {
                     "tech_stack": grounding_res.get("tech_stack", "없음"),
                     "before_metric": grounding_res.get("before_metric", "없음"),
                     "after_metric": grounding_res.get("after_metric", "없음"),
-                    "is_grounded": grounding_res.get("is_grounded", False)
+                    "is_grounded": grounding_res.get("is_grounded", False),
                 },
-                "meta": {
-                    "char_count": char_count,
-                    "word_count": word_count,
-                    "evaluated_at": datetime.now().isoformat()
-                }
+                "speech_delivery": {
+                    "total_filler_count": total_fillers,
+                    "long_pause_count": long_pause_count,
+                    "speech_score": final_speech_score,
+                },
+                "meta_cognition": {},
             },
-            # 💡 views.py의 트랜잭션 내부에서 루프를 돌며 관계 테이블을 생성하도록 태그 패키징 리스트 첨부
-            "pipeline_tags": deterministic_tags
+            "pipeline_tags": deterministic_tags,
         }

@@ -44,7 +44,7 @@ class EvaluationCreateView(APIView):
             return Response({'detail': 'Answer not found or access denied.'}, status=status.HTTP_404_NOT_FOUND)
         
         # 💡 [AI 파이프라인 연동에 필요한 필수 인자 파싱]
-        question_type = answer.question.question_type if hasattr(answer.question, 'question_type') else "technical"
+        question_type = answer.session.interview_type or "technical"
         llm_weakness_tags = request.data.get("answer_sufficiency", {}).get("answer_weakness_tags", [])
 
         # 🚀 [동기식 호출 수행]
