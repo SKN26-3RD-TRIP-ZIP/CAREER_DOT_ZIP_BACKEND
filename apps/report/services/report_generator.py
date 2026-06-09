@@ -1,6 +1,11 @@
 from collections import Counter
 from django.db.models import Prefetch
 
+def get_score(value):
+    if isinstance(value, dict):
+        return value.get("score", 0)
+    return value or 0
+
 def generate_final_report(session):
     """
     Generate a data-driven final report summary for a session
@@ -63,15 +68,20 @@ def generate_final_report(session):
 
         # BEI 상세 데이터 추출
         bei = eval_obj.bei_score if isinstance(eval_obj.bei_score, dict) else {}
-        bei_situations.append(bei.get('situation', {}).get('score', 0))
-        bei_tasks.append(bei.get('task', {}).get('score', 0))
-        bei_actions.append(bei.get('action', {}).get('score', 0))
-        bei_results.append(bei.get('result', {}).get('score', 0))
-        
+        bei_situations.append(get_score(bei.get("situation")))
+        bei_tasks.append(get_score(bei.get("task")))
+        bei_actions.append(get_score(bei.get("action")))
+        bei_results.append(get_score(bei.get("result")))
+
         # CBI 상세 데이터 추출
         cbi = eval_obj.cbi_score if isinstance(eval_obj.cbi_score, dict) else {}
-        if 'level' in cbi: cbi_levels.append(cbi['level'])
-        if 'score' in cbi: cbi_scores.append(cbi['score'])
+        if "assigned_level" in cbi:
+            cbi_levels.append(cbi["assigned_level"])
+        elif "level" in cbi:
+            cbi_levels.append(cbi["level"])
+
+        if "score" in cbi:
+            cbi_scores.append(cbi["score"])
 
     # 상위 최대 5개 태그 추출 및 최상위 1개 강조 분석 로직
     top_5_strengths = [item[0] for item in strength_counter.most_common(5)]
@@ -170,39 +180,74 @@ def generate_final_report(session):
             }
         }
 
+    tech_avg = round(sum(final_scores) / len(final_scores), 1) if final_scores else 0
+
+    standard_summary = {
+        "evaluation_metadata": {
+            "session_id": str(session.id),
+            "persona_type": session.persona,
+            "interview_mode": session.interview_mode,
+            "question_count": len(questions),
+            "answer_count": len(answers_list),
+            "evaluated_answer_count": n,
+        },
+        "score_summary": {
+            "overall_score": overall_score,
+            "bei_avg": detailed_stats.get("bei_metrics", {}).get("element_total_avg", 0),
+            "cbi_avg": detailed_stats.get("cbi_metrics", {}).get("average_score", 0),
+            "tech_avg": tech_avg,
+        },
+        "score_detail": {
+            "strength": strengths,
+            "weakness": weaknesses,
+            "improvement": recommendations,
+            "statistics": detailed_stats,
+            "speech_diagnostics": {
+                "total_filler_count": total_filler_count,
+                "avg_fillers_per_answer": round(avg_fillers_per_answer, 2),
+                "filler_word_distribution": dict(global_filler_words_counter),
+            },
+        },
+        "dynamically_triggered_tags": {
+            "weakness_tags": top_5_weaknesses,
+            "strength_tags": top_5_strengths,
+        },
+    }
+
     # 6. 최종 차트 및 프론트엔드 연동을 위한 raw_data 명세 결합
     raw_data = {
-        'question_count': len(questions),
-        'answer_count': len(answers_list),
-        'evaluated_answer_count': n,
-        'supported_scores': {
-            'final_tech_scores': final_scores,
-            'llm_concept_scores': [
-                ans.evaluation.llm_concept_score 
-                for ans in evaluated_answers 
-                if getattr(ans.evaluation, 'llm_concept_score', None) is not None
+        "question_count": len(questions),
+        "answer_count": len(answers_list),
+        "evaluated_answer_count": n,
+        "supported_scores": {
+            "final_tech_scores": final_scores,
+            "llm_concept_scores": [
+                ans.evaluation.llm_concept_score
+                for ans in evaluated_answers
+                if getattr(ans.evaluation, "llm_concept_score", None) is not None
             ],
         },
-        'tag_distribution': {
-            'strengths': dict(strength_counter),
-            'weaknesses': dict(weakness_counter)
+        "tag_distribution": {
+            "strengths": dict(strength_counter),
+            "weaknesses": dict(weakness_counter),
         },
-        'speech_diagnostics': {
-            'total_filler_count': total_filler_count,
-            'avg_fillers_per_answer': round(avg_fillers_per_answer, 2),
-            'filler_word_distribution': dict(global_filler_words_counter)
+        "speech_diagnostics": {
+            "total_filler_count": total_filler_count,
+            "avg_fillers_per_answer": round(avg_fillers_per_answer, 2),
+            "filler_word_distribution": dict(global_filler_words_counter),
         },
-        'detailed_statistics': detailed_stats  # BEI/CBI 평균 및 구조화 데이터 주입
+        "detailed_statistics": detailed_stats,
+        "summary": standard_summary,
     }
 
     return {
-        'overall_score': overall_score,
-        'summary': summary,
-        'strengths': strengths,
-        'weaknesses': weaknesses,
-        'recommendations': recommendations,
-        'question_count': len(questions),
-        'answer_count': len(answers_list),
-        'evaluated_answer_count': n,
-        'raw_data': raw_data,
+        "overall_score": overall_score,
+        "summary": summary,
+        "strengths": strengths,
+        "weaknesses": weaknesses,
+        "recommendations": recommendations,
+        "question_count": len(questions),
+        "answer_count": len(answers_list),
+        "evaluated_answer_count": n,
+        "raw_data": raw_data,
     }
