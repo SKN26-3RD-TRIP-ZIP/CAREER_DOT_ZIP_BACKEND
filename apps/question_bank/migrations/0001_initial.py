@@ -43,8 +43,5 @@ class Migration(migrations.Migration):
             model_name='questionbankitem',
             index=models.Index(fields=['source', 'source_file'], name='qbank_source_file_idx'),
         ),
-        migrations.AddConstraint(
-            model_name='questionbankitem',
-            constraint=models.UniqueConstraint(fields=('source', 'source_file', 'question_text'), name='unique_question_bank_source_file_text'),
-        ),
+        # MySQL은 TEXT 컬럼에 unique 인덱스 불가 → 0002 migration에서 hash 기반으로 대체
     ]
