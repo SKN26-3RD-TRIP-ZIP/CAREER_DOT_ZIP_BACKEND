@@ -194,7 +194,18 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 AUTH_USER_MODEL = 'accounts.User'
 
 # ===== CORS Settings =====
-CORS_ALLOW_ALL_ORIGINS = True
+# withCredentials(쿠키 기반 refresh) 요청은 와일드카드('*') Origin 과 함께 쓸 수 없다.
+# 따라서 특정 Origin 화이트리스트 + credentials 허용으로 구성한다.
+# 추가 Origin 은 .env 의 CORS_ALLOWED_ORIGINS(쉼표구분)로 주입한다.
+CORS_ALLOW_CREDENTIALS = True
+CORS_ALLOWED_ORIGINS = [
+    o.strip()
+    for o in os.getenv(
+        "CORS_ALLOWED_ORIGINS",
+        "http://localhost:5173,http://127.0.0.1:5173",
+    ).split(",")
+    if o.strip()
+]
 
 # ===== DRF Settings =====
 REST_FRAMEWORK = {
@@ -249,6 +260,7 @@ EMAIL_VERIFICATION_TOKEN_MAX_AGE = int(
 )
 
 # ===== 로깅 (메일/인증 실패 추적) =====
+
 LOGGING = {
     "version": 1,
     "disable_existing_loggers": False,
