@@ -18,7 +18,7 @@ from .serializers import (
     InterviewSessionDetailSerializer,
     InterviewSessionStatusSerializer,
 )
-from .models import InterviewQuestion
+from .models import InterviewQuestion, QuestionSourceTag
 from .serializers import InterviewQuestionSerializer
 from .services.question_generator import generate_interview_questions
 from .services.follow_up_generator import generate_follow_up_questions
@@ -270,6 +270,27 @@ class InterviewSessionTurnsView(APIView):
         )
 
 
+def _save_question_source_tags(question, source_tags):
+    normalized_tags = []
+
+    for tag in source_tags or []:
+        if not isinstance(tag, dict):
+            continue
+
+        normalized_tags.append(
+            QuestionSourceTag(
+                question=question,
+                source_type=tag.get('source_type') or question.source_type or 'general',
+                source_label=tag.get('source_label') or '',
+                source_text_excerpt=tag.get('source_text_excerpt') or '',
+                source_reference=tag.get('source_reference') or question.source_reference or '',
+            )
+        )
+
+    if normalized_tags:
+        QuestionSourceTag.objects.bulk_create(normalized_tags)
+
+
 class InterviewQuestionGenerateView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
@@ -304,9 +325,11 @@ class InterviewQuestionGenerateView(APIView):
                 order_index=q.get('order_index'),
                 question_type=q.get('question_type'),
                 question_text=q.get('question_text'),
+                difficulty=q.get('difficulty'),
                 source_type=q.get('source_type'),
                 source_reference=q.get('source_reference'),
             )
+            _save_question_source_tags(iq, q.get('source_tags'))
             created.append(iq)
 
         serializer = InterviewQuestionSerializer(created, many=True)
@@ -428,11 +451,13 @@ class FollowUpGenerateView(APIView):
                 order_index=next_index,
                 question_type='follow_up',
                 question_text=g.get('question_text'),
+                difficulty=g.get('difficulty'),
                 source_type=g.get('source_type'),
                 source_reference=g.get('source_reference'),
                 parent_question=answer.question,
                 source_answer=answer,
             )
+            _save_question_source_tags(iq, g.get('source_tags'))
             next_index += 1
             created.append(iq)
 

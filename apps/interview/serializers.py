@@ -3,8 +3,19 @@ from rest_framework import serializers
 from apps.common.choices import ANSWER_SOURCE_CHOICES
 from apps.evaluation.models import Evaluation
 from apps.input.models import JobDescription, ResumeMaster, CoverLetter
-from .models import InterviewSession, InterviewQuestion, InterviewAnswer
+from .models import InterviewSession, InterviewQuestion, InterviewAnswer, QuestionSourceTag
 from .services.ai_chain_persona_prompts import get_persona_options, normalize_persona_type
+
+
+class QuestionSourceTagSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = QuestionSourceTag
+        fields = (
+            'source_type',
+            'source_label',
+            'source_text_excerpt',
+            'source_reference',
+        )
 
 
 class InterviewSessionCreateSerializer(serializers.ModelSerializer):
@@ -149,6 +160,7 @@ class InterviewSessionCompleteSerializer(serializers.ModelSerializer):
 
 class InterviewTurnQuestionSerializer(serializers.ModelSerializer):
     question_id = serializers.UUIDField(source='id', read_only=True)
+    source_tags = serializers.SerializerMethodField()
 
     class Meta:
         model = InterviewQuestion
@@ -157,9 +169,14 @@ class InterviewTurnQuestionSerializer(serializers.ModelSerializer):
             'order_index',
             'question_type',
             'question_text',
+            'difficulty',
             'source_type',
             'source_reference',
+            'source_tags',
         )
+
+    def get_source_tags(self, obj):
+        return QuestionSourceTagSerializer(obj.source_tags.all(), many=True).data
 
 
 class InterviewTurnAnswerSerializer(serializers.ModelSerializer):
@@ -239,6 +256,7 @@ class InterviewTurnSerializer(serializers.Serializer):
 
 class InterviewQuestionSerializer(serializers.ModelSerializer):
     question_id = serializers.SerializerMethodField()
+    source_tags = serializers.SerializerMethodField()
 
     class Meta:
         model = InterviewQuestion
@@ -247,13 +265,18 @@ class InterviewQuestionSerializer(serializers.ModelSerializer):
             'order_index',
             'question_type',
             'question_text',
+            'difficulty',
             'source_type',
             'source_reference',
+            'source_tags',
             'created_at',
         )
 
     def get_question_id(self, obj):
         return str(obj.id)
+
+    def get_source_tags(self, obj):
+        return QuestionSourceTagSerializer(obj.source_tags.all(), many=True).data
 
 
 class InterviewAnswerCreateSerializer(serializers.Serializer):
