@@ -75,8 +75,9 @@ def generate_star_answers(
                     "- task        : 지원자 본인이 책임진 역할과 과제. 본인 주도성 강조 (1~2문장)\n"
                     "- action      : 실제로 취한 구체적 행동과 선택 이유 (3~4문장)\n"
                     "- result      : 정량 수치 우선, 없으면 정성 성과 + 배운 점 (2~3문장)\n"
-                    "- basis_source: 이 답변의 근거 출처\n"
-                    "  예: 'project:중고거래앱', 'coverletter', 'resume', 'jd'\n\n"
+                    "- basis_source: 이 답변의 근거 출처. 복수 출처는 '|'로 구분 (공백 없음)\n"
+                    "  단일 예: 'project:중고거래앱', 'coverletter', 'resume', 'jd'\n"
+                    "  복수 예: 'resume|coverletter', 'project:중고거래앱|jd'\n\n"
                     "공통 규칙:\n"
                     "- 이력서·자소서에 없는 내용 창작 금지\n"
                     "- 구어체 자연스러운 말투 사용\n"
@@ -89,7 +90,7 @@ def generate_star_answers(
                     '    "task":         "역할·과제",\n'
                     '    "action":       "구체적 행동 및 선택 근거",\n'
                     '    "result":       "결과 및 배운 점",\n'
-                    '    "basis_source": "project:중고거래앱"\n'
+                    '    "basis_source": "project:중고거래앱|resume"\n'
                     "  }\n"
                     "]"
                 ),
@@ -117,6 +118,9 @@ def generate_star_answers(
     result = []
     for i, q in enumerate(questions):
         ans = answer_map.get(i + 1, {})
+        basis_raw = ans.get("basis_source", "")
+        # LLM이 "resume, coverletter" 처럼 복수 값을 반환할 경우 "|" 구분자로 정규화
+        basis_source = "|".join(v.strip() for v in basis_raw.split(",")) if "," in basis_raw else basis_raw
         result.append({
             **q,
             "answer": {
@@ -125,7 +129,7 @@ def generate_star_answers(
                 "task":         ans.get("task", ""),
                 "action":       ans.get("action", ""),
                 "result":       ans.get("result", ""),
-                "basis_source": ans.get("basis_source", ""),
+                "basis_source": basis_source,
             },
         })
 
