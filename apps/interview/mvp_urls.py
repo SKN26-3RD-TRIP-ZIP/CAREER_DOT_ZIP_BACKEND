@@ -9,6 +9,8 @@ from .mvp_views import (
     MVPSessionCreateView,
     MVPSessionDetailView,
     MVPSessionStatusView,
+    MVPWhisperDevTranscribeView,
+    MVPWhisperTranscribeView,
 )
 
 
@@ -27,6 +29,8 @@ urlpatterns = [
         name='mvp-question-list',
     ),
     path('answers', MVPAnswerCreateView.as_view(), name='mvp-answer-create'),
+    path('stt/transcribe', MVPWhisperTranscribeView.as_view(), name='mvp-stt-transcribe'),
+    path('stt/transcribe/dev', MVPWhisperDevTranscribeView.as_view(), name='mvp-stt-transcribe-dev'),
     path(
         'answers/<uuid:answer_id>/stt',
         MVPSTTResultUpdateView.as_view(),

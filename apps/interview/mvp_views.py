@@ -1,5 +1,7 @@
 from django.shortcuts import get_object_or_404
+from django.conf import settings
 from django.utils import timezone
+from rest_framework import parsers
 from rest_framework import permissions, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -20,6 +22,7 @@ from .mvp_serializers import (
 from .services.question_generator import generate_interview_questions
 from .services.answer_service import AnswerService
 from .services.follow_up_generator import FollowupGenerator
+from .services.whisper_stt_service import transcribe_uploaded_audio
 
 
 def get_prompt_version_id(session):
@@ -217,6 +220,34 @@ class MVPSTTResultUpdateView(APIView):
             },
             status=status.HTTP_200_OK,
         )
+
+
+class MVPWhisperTranscribeView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+    parser_classes = [parsers.MultiPartParser, parsers.FormParser]
+
+    def post(self, request):
+        audio_file = request.FILES.get('audio')
+        language = request.data.get('language') or 'ko'
+        result = transcribe_uploaded_audio(audio_file, language=language)
+        return Response(result, status=status.HTTP_200_OK)
+
+
+class MVPWhisperDevTranscribeView(APIView):
+    permission_classes = [permissions.AllowAny]
+    parser_classes = [parsers.MultiPartParser, parsers.FormParser]
+
+    def post(self, request):
+        if not settings.DEBUG:
+            return Response(
+                {'detail': 'Development STT endpoint is disabled.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        audio_file = request.FILES.get('audio')
+        language = request.data.get('language') or 'ko'
+        result = transcribe_uploaded_audio(audio_file, language=language)
+        return Response(result, status=status.HTTP_200_OK)
 
 
 class MVPFollowupQuestionCreateView(APIView):

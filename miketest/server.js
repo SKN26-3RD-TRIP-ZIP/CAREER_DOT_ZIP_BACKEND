@@ -54,7 +54,12 @@ app.post('/api/stt', upload.single('audio'), async (req, res) => {
     const formData = new FormData();
     formData.append('file', new Blob([req.file.buffer], { type: req.file.mimetype }), req.file.originalname);
     formData.append('model', sttModel);
-    formData.append('language', process.env.OPENAI_STT_LANGUAGE || 'ko');
+    formData.append('language', sttModel === 'whisper-1' ? 'ko' : process.env.OPENAI_STT_LANGUAGE || 'ko');
+
+    if (sttModel === 'whisper-1') {
+      formData.append('response_format', 'verbose_json');
+      formData.append('timestamp_granularities[]', 'word');
+    }
 
     const response = await fetch('https://api.openai.com/v1/audio/transcriptions', {
       method: 'POST',
@@ -77,7 +82,17 @@ app.post('/api/stt', upload.single('audio'), async (req, res) => {
     }
 
     const data = await response.json();
-    return res.json({ text: data.text, model: sttModel });
+    return res.json({
+      text: data.text,
+      model: sttModel,
+      ...(sttModel === 'whisper-1'
+        ? {
+            duration: data.duration,
+            language: data.language,
+            words: Array.isArray(data.words) ? data.words : []
+          }
+        : {})
+    });
   } catch (error) {
     console.error('STT request error:', error);
     return res.status(500).json({ error: 'Failed to request STT from OpenAI' });
