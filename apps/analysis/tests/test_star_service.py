@@ -201,9 +201,10 @@ class TestGenerateStarAnswersByProfile:
         print(f"\n인성 STAR: {result[0]['answer']}")
         answer = result[0]["answer"]
         _assert_star_structure(answer)
-        # basis_source가 coverletter 또는 resume이어야 함
-        assert answer["basis_source"] in {"coverletter", "resume", "jd"} or \
-               answer["basis_source"].startswith("project"), \
+        # basis_source가 coverletter 또는 resume이어야 함 (복수값은 "|" 구분)
+        VALID = {"coverletter", "resume", "jd"}
+        parts = answer["basis_source"].split("|")
+        assert all(p in VALID or p.startswith("project:") for p in parts), \
                f"인성 질문의 basis_source가 이상함: {answer['basis_source']}"
 
 
@@ -320,6 +321,8 @@ class TestGenerateStarAnswersEdgeCases:
         )
         src = result[0]["answer"]["basis_source"]
         print(f"\nbasis_source: '{src}'")
-        # project:xxx 또는 resume / coverletter / jd 중 하나
-        valid = src.startswith("project:") or src in {"resume", "coverletter", "jd"}
+        # 각 파트가 project:xxx 또는 resume / coverletter / jd 이어야 함 (복수값은 "|" 구분)
+        VALID = {"resume", "coverletter", "jd"}
+        parts = src.split("|")
+        valid = all(p.startswith("project:") or p in VALID for p in parts)
         assert valid, f"basis_source 형식 이상: '{src}'"

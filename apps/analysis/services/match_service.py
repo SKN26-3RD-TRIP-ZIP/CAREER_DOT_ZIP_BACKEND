@@ -202,7 +202,7 @@ def _calc_rule_score(
     # 직군 일치 (30점) — JD job_type 키워드가 job_role에 포함되는지 비교
     req_job_type   = jd_requirements.get("job_type", "").lower()
     job_role_lower = job_role.lower()
-    job_match      = bool(req_job_type) and (
+    job_match      = bool(req_job_type) and bool(job_role) and (
         req_job_type in job_role_lower or job_role_lower in req_job_type
     )
     job_score = 30.0 if job_match else 0.0

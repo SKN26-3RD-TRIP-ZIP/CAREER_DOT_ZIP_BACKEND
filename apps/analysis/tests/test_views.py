@@ -20,6 +20,7 @@ import uuid
 import pprint
 from unittest.mock import MagicMock, patch
 
+from django.contrib.auth.models import AnonymousUser
 from django.test import SimpleTestCase
 from django.urls import reverse
 from rest_framework.test import APIClient
@@ -251,7 +252,7 @@ class TestAnalysisStartView(SimpleTestCase):
         print("\n[analyze] 백그라운드 스레드 실행 확인 ✓")
 
     def test_미인증_401(self, mock_create, mock_thread):
-        self.client.force_authenticate(user=None)
+        self.client.force_authenticate(user=AnonymousUser())
         res = self.client.post(self.url, {}, format="json")
 
         print(f"\n[analyze] 미인증 응답: {res.status_code}")
@@ -327,7 +328,7 @@ class TestAnalysisStatusView(SimpleTestCase):
         self.assertIn("error", res.data)
 
     def test_미인증_401(self, mock_get):
-        self.client.force_authenticate(user=None)
+        self.client.force_authenticate(user=AnonymousUser())
         res = self.client.post(self.url, {"session_id": MOCK_SESSION_ID}, format="json")
 
         self.assertEqual(res.status_code, 401)
@@ -514,7 +515,7 @@ class TestAnalysisMatchView(SimpleTestCase):
         self.assertEqual(res.status_code, 404)
 
     def test_미인증_401(self, mock_session_get, mock_jd_get):
-        self.client.force_authenticate(user=None)
+        self.client.force_authenticate(user=AnonymousUser())
         res = self.client.post(self.url, {"session_id": MOCK_SESSION_ID}, format="json")
 
         self.assertEqual(res.status_code, 401)
