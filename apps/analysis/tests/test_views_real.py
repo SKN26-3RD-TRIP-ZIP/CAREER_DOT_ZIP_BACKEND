@@ -312,11 +312,9 @@ def _run_pipeline(jd_text, resume_text, cl_text, job_role, company_name, career_
     # 4) 질문 생성
     raw_questions = generate_questions(
         job_role=job_role,
+        company_name=company_name,
         jd_keywords=jd_kw,
         resume_analysis=resume_summary,
-        jd_text=jd_text,
-        resume_text=resume_text,
-        cover_letter_text=cl_text,
     )
     merged    = merge_and_deduplicate(raw_questions, jd_kw, resume_summary)
     with_star = generate_star_answers(merged, job_role, company_name, resume_summary)

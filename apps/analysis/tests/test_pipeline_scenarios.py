@@ -69,10 +69,10 @@ class TestScenario_SameJD_DifferentCandidates:
         return results
 
     def test_senior_scores_highest(self, scores):
-        """시니어 점수 > 나머지"""
-        assert scores["senior"]["match_score"] >= scores["mid"]["match_score"]
-        assert scores["senior"]["match_score"] >= scores["junior"]["match_score"]
-        assert scores["senior"]["match_score"] >= scores["entry"]["match_score"]
+        """시니어 rule_score > 나머지 (연차·학력 기준 — tech_stack은 JD와 다를 수 있음)"""
+        assert scores["senior"]["rule_score"] >= scores["mid"]["rule_score"]
+        assert scores["senior"]["rule_score"] >= scores["junior"]["rule_score"]
+        assert scores["senior"]["rule_score"] >= scores["entry"]["rule_score"]
 
     def test_entry_scores_lowest_rule(self, scores):
         """신입은 rule_score(연차)가 가장 낮아야 한다"""
