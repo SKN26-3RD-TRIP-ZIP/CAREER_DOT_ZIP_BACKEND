@@ -224,3 +224,36 @@ SPEECH_CONFIG = {
     "FLOOR_SCORE": 20.0,                    # 최저 방어선 점수
     "EXCESSIVE_FILLER_LIMIT": 6            # 과락 기준 개수
 }
+# ===== 이메일 발송 설정 =====
+# 로컬/개발 기본값은 console backend(터미널 출력). 운영/QA 는 .env 에서 SMTP 로 전환.
+# 실제 SMTP 비밀번호 등은 .env(미커밋)에서만 주입한다.
+EMAIL_BACKEND = os.getenv(
+    "EMAIL_BACKEND", "django.core.mail.backends.console.EmailBackend"
+)
+EMAIL_HOST = os.getenv("EMAIL_HOST", "")
+EMAIL_PORT = int(os.getenv("EMAIL_PORT", "587"))
+EMAIL_HOST_USER = os.getenv("EMAIL_HOST_USER", "")
+EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD", "")
+EMAIL_USE_TLS = _env_bool("EMAIL_USE_TLS", True)
+DEFAULT_FROM_EMAIL = os.getenv("DEFAULT_FROM_EMAIL", "Career.zip <no-reply@career.zip>")
+
+# 관리자 신규가입 알림 수신 주소. 미설정 시 알림 생략.
+ADMIN_NOTIFICATION_EMAIL = os.getenv("ADMIN_NOTIFICATION_EMAIL", "")
+
+# 이메일 인증 링크 구성용 FE base URL
+FRONTEND_BASE_URL = os.getenv("FRONTEND_BASE_URL", "http://localhost:5173")
+
+# 이메일 인증 토큰 만료 (초) — 기본 24시간
+EMAIL_VERIFICATION_TOKEN_MAX_AGE = int(
+    os.getenv("EMAIL_VERIFICATION_TOKEN_MAX_AGE", str(60 * 60 * 24))
+)
+
+# ===== 로깅 (메일/인증 실패 추적) =====
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "handlers": {"console": {"class": "logging.StreamHandler"}},
+    "loggers": {
+        "apps.accounts": {"handlers": ["console"], "level": "INFO", "propagate": False},
+    },
+}
