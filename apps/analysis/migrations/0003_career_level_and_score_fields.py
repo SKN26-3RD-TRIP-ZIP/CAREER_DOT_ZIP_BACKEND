@@ -9,15 +9,15 @@ class Migration(migrations.Migration):
 
     operations = [
         # AnalysisSession: career_level 추가 => 기존 모델에 넣어서 주석처리
-        # migrations.AddField(
-        #     model_name='analysissession',
-        #     name='career_level',
-        #     field=models.CharField(
-        #         choices=[('entry', '신입'), ('experienced', '경력')],
-        #         default='entry',
-        #         max_length=20,
-        #     ),
-        # ), 
+        migrations.AddField(
+            model_name='analysissession',
+            name='career_level',
+            field=models.CharField(
+                choices=[('entry', '신입'), ('experienced', '경력')],
+                default='entry',
+                max_length=20,
+            ),
+        ), 
 
         # JdAnalysis: 점수 세분화 필드 추가
         migrations.AddField(
