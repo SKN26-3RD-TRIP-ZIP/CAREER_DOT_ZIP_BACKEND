@@ -1,27 +1,26 @@
 import uuid
 from django.db import models
-from django.conf import settings
 
 
 class FinalReport(models.Model):
+    """Session-level report. Stored per design doc as feedback_reports (summary JSONB)."""
+
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='final_reports')
-    session = models.OneToOneField('interview.InterviewSession', on_delete=models.CASCADE, related_name='final_report')
-    overall_score = models.PositiveIntegerField(default=0)
-    summary = models.TextField(blank=True)
-    strengths = models.JSONField(default=list)
-    weaknesses = models.JSONField(default=list)
-    recommendations = models.JSONField(default=list)
-    question_count = models.PositiveIntegerField(default=0)
-    answer_count = models.PositiveIntegerField(default=0)
-    evaluated_answer_count = models.PositiveIntegerField(default=0)
-    raw_data = models.JSONField(default=dict)
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
+    session = models.OneToOneField(
+        'interview.InterviewSession',
+        on_delete=models.CASCADE,
+        related_name='final_report',
+    )
+    summary = models.JSONField(default=dict)
+    generated_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
-        db_table = 'final_reports'
-        ordering = ['-created_at']
+        db_table = 'feedback_reports'
+        ordering = ['-generated_at']
 
     def __str__(self):
         return f"FinalReport for session {self.session.id}"
+
+    @property
+    def overall_score(self):
+        return (self.summary or {}).get('score_summary', {}).get('overall_score')

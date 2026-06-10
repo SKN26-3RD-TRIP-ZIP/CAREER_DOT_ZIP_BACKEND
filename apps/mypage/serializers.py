@@ -52,4 +52,6 @@ class InterviewHistorySerializer(serializers.ModelSerializer):
 
     def get_overall_score(self, obj):
         report = self.get_report(obj)
-        return report.overall_score if report else None
+        if not report:
+            return None
+        return report.overall_score

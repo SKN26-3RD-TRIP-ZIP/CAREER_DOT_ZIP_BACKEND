@@ -6,7 +6,7 @@ from kiwipiepy import Kiwi
 from django.conf import settings
 
 # 💡 동기식으로 매핑된 기존 파일 및 외부 유틸 반입
-from apps.evaluation.evaluation_chains import eval_grounding_chain, eval_competency_chain
+from apps.evaluation.evaluation_chains import eval_llm_chains_parallel
 from apps.evaluation.utils.tag_router import route_deterministic_tags
 
 # 💡 settings.py에 선언한 SPEECH_CONFIG를 안전하게 맵핑 (없을 경우를 대비한 Fallback 방어코드 포함)
@@ -35,7 +35,10 @@ class EvaluationService:
         filler_counts = {}
         total_filler = 0
         for word in FILLER_WORDS[0]:
-            count = len(re.findall(rf'\b{word}\b|{word}\.+', stt_text))
+            # Korean tokens do not work reliably with \b word boundaries.
+            plain_count = stt_text.count(word)
+            ellipsis_count = len(re.findall(rf'{re.escape(word)}\.+', stt_text))
+            count = max(plain_count, ellipsis_count)
             if count > 0:
                 filler_counts[word] = count
                 total_filler += count
@@ -76,11 +79,7 @@ class EvaluationService:
         # 3. [Django 동기화 개편]: 아키텍처 흐름에 맞춰 LLM 체인을 순차적으로 동기 호출 실행
         logger.info("📡 외부 LLM 동기 오케스트레이션(Task B & Task C) 순차 호출 시작...")
         
-        # [Task B] 구체성 검증 체인 동기 호출
-        grounding_res = eval_grounding_chain(answer_text)
-        
-        # [Task C] 역량 채점 루브릭 체인 동기 호출
-        cbi_res = eval_competency_chain(answer_text)
+        grounding_res, cbi_res = eval_llm_chains_parallel(answer_text)
         
         logger.info("📡 LLM 체인 응답 수신 완료")
 
