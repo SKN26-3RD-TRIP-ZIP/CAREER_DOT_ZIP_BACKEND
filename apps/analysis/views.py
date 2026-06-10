@@ -1,12 +1,21 @@
+import logging
 import threading
+from concurrent.futures import ThreadPoolExecutor
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from rest_framework import status
+from django.db import connection
 
 from .models import AnalysisSession, JdAnalysis, GeneratedQuestion
 from .services import extract_jd_keywords, analyze_resume, generate_all_questions
-from .services.match_service import calculate_match_score
+from .services.jd_service     import extract_jd_requirements
+from .services.match_service  import calculate_match_score
+from .services.result_service import build_match_result
+from .services.gap_service    import calculate_gap, build_gap_message
+from .services.question_output_service import to_db_records
+
+logger = logging.getLogger(__name__)
 
 
 def _run_analysis(session_id: int):
@@ -21,58 +30,84 @@ def _run_analysis(session_id: int):
     """
     session = AnalysisSession.objects.get(id=session_id)
     try:
-        # 1) JD 키워드 추출
-        keywords = extract_jd_keywords(session.jd_text)
-        session.jd_keywords = keywords
-        session.save(update_fields=["jd_keywords"])
+        # 1) JD 키워드 추출 / JD 자격 요건 추출 / 이력서 분석 — 3개 병렬 실행
+        with ThreadPoolExecutor(max_workers=3) as executor:
+            f_jd_kw  = executor.submit(extract_jd_keywords,    session.jd_text)
+            f_jd_req = executor.submit(extract_jd_requirements, session.jd_text)
+            f_resume = executor.submit(analyze_resume, session.resume_text, session.cover_letter_text)
+            jd_kw          = f_jd_kw.result()
+            jd_req         = f_jd_req.result()
+            resume_summary = f_resume.result()
 
-        # 2) 이력서·자소서 분석
-        resume_summary = analyze_resume(session.resume_text, session.cover_letter_text)
+        inferred_level = resume_summary.get("career_level", session.career_level)
+        session.jd_keywords     = {**jd_kw, "requirements": jd_req}
         session.resume_analysis = resume_summary
-        session.save(update_fields=["resume_analysis"])
+        session.career_level    = inferred_level
+        session.save(update_fields=["jd_keywords", "resume_analysis", "career_level"])
 
         # 3) 매칭 점수 및 강점/약점/자소서 포인트 계산
         match_result = calculate_match_score(
-            jd_keywords=keywords,
+            jd_keywords=jd_kw,
             resume_analysis=resume_summary,
             cover_letter_text=session.cover_letter_text,
+            career_level=inferred_level,
+            jd_requirements=jd_req,
+            job_role=session.job_role,
         )
+        match_result = build_match_result(match_result, inferred_level)
 
-        # 4) JdAnalysis 생성
+        # 4) 갭 분석
+        gap_result  = calculate_gap(
+            jd_keywords=jd_kw,
+            jd_requirements=jd_req,
+            resume_analysis=resume_summary,
+            unmatched_keywords=match_result["unmatched_keywords"],
+            trait_details=match_result.get("trait_details"),
+        )
+        gap_message = build_gap_message(gap_result, inferred_level)
+
+        # 5) JdAnalysis 생성
         jd_analysis = JdAnalysis.objects.create(
             user=session.user,
             jd_id=session.jd_id,
             resume_id=session.resume_id,
             cover_letter_id=session.cover_letter_id,
             match_score=match_result["match_score"],
-            jd_keywords=keywords,
-            resume_analysis=resume_summary,
+            tech_score=match_result["tech_score"],
+            trait_score=match_result["trait_score"],
+            matched_keywords=match_result["matched_keywords"],
+            unmatched_keywords=match_result["unmatched_keywords"],
+            jd_keywords={**jd_kw, "requirements": jd_req},
+            resume_analysis={**resume_summary, "gap": gap_result, "gap_message": gap_message},
             strengths=match_result["strengths"],
             weaknesses=match_result["weaknesses"],
             cl_points=match_result["cl_points"],
         )
 
-        # 5) 질문 + STAR 답안 생성
+        # 6) 질문 + STAR 답안 생성
         questions = generate_all_questions(
             job_role=session.job_role,
             company_name=session.company_name,
-            jd_keywords=keywords,
+            jd_keywords=jd_kw,
             resume_analysis=resume_summary,
             jd_text=session.jd_text,
             resume_text=session.resume_text,
             cover_letter_text=session.cover_letter_text,
         )
 
-        # 6) 질문 DB 저장
+        # 7) 질문 DB 저장
+        db_records = to_db_records(questions, str(jd_analysis.id))
         GeneratedQuestion.objects.bulk_create([
             GeneratedQuestion(
                 jd_analysis=jd_analysis,
-                question_type=q["type"],
-                question_text=q["text"],
-                answer=q.get("answer", {}),
-                order=i,
+                question_type=r["question_type"],
+                question_text=r["question_text"],
+                source=r["source"],
+                source_ref=r["source_ref"],
+                answer=r["answer"],
+                order=r["order"],
             )
-            for i, q in enumerate(questions)
+            for r in db_records
         ])
 
         # 세션에 jd_analysis_id 저장 후 완료
@@ -83,7 +118,9 @@ def _run_analysis(session_id: int):
     except Exception as e:
         session.status = "failed"
         session.save(update_fields=["status", "updated_at"])
-        raise e
+        logger.error("Analysis failed for session %s: %s", session_id, e, exc_info=True)
+    finally:
+        connection.close()
 
 
 class AnalysisStartView(APIView):
@@ -119,6 +156,7 @@ class AnalysisStartView(APIView):
             jd_text=request.data.get("jd_text", ""),
             resume_text=request.data.get("resume_text", ""),
             cover_letter_text=request.data.get("cover_letter_text", ""),
+            career_level=request.data.get("career_level", "entry"),  # "entry" | "experienced"
             status="analyzing",
         )
 
@@ -204,13 +242,20 @@ class AnalysisMatchView(APIView):
             )
         )
 
+        resume_meta = jd_analysis.resume_analysis
         return Response({
-            "jd_analysis_id":  str(jd_analysis.id),
-            "match_score":     jd_analysis.match_score,
-            "jd_keywords":     jd_analysis.jd_keywords,
-            "resume_analysis": jd_analysis.resume_analysis,
-            "strengths":       jd_analysis.strengths,
-            "weaknesses":      jd_analysis.weaknesses,
-            "cl_points":       jd_analysis.cl_points,
-            "questions":       questions,
+            "jd_analysis_id":      str(jd_analysis.id),
+            "match_score":         jd_analysis.match_score,
+            "tech_score":          jd_analysis.tech_score,
+            "trait_score":         jd_analysis.trait_score,
+            "matched_keywords":    jd_analysis.matched_keywords,
+            "unmatched_keywords":  jd_analysis.unmatched_keywords,
+            "jd_keywords":         jd_analysis.jd_keywords,
+            "resume_analysis":     resume_meta,
+            "gap":                 resume_meta.get("gap", {}),
+            "gap_message":         resume_meta.get("gap_message", {}),
+            "strengths":           jd_analysis.strengths,
+            "weaknesses":          jd_analysis.weaknesses,
+            "cl_points":           jd_analysis.cl_points,
+            "questions":           questions,
         })

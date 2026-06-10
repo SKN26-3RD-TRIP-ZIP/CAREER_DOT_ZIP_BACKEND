@@ -14,7 +14,8 @@ from django.urls import reverse
 from rest_framework import status
 from rest_framework.test import APITestCase
 
-from .models import AnalysisSession, GeneratedQuestion
+from apps.input.models import JobDescription, ResumeMaster
+from .models import AnalysisSession, JdAnalysis, GeneratedQuestion
 
 User = get_user_model()
 
@@ -33,6 +34,10 @@ MOCK_RESUME_ANALYSIS = {
         {"name": "커리어닷집", "role": "백엔드 개발", "result": "MVP 출시"}
     ],
 }
+
+MOCK_STRENGTHS  = ["Django 실무 경험", "REST API 설계 능력"]
+MOCK_WEAKNESSES = ["AWS 경험 부족", "Redis 활용 경험 없음"]
+MOCK_CL_POINTS  = ["커머스 프로젝트의 API 성능 개선 경험 강조"]
 
 MOCK_QUESTIONS = [
     {"type": "personality", "text": "팀 내 갈등이 생겼을 때 어떻게 해결하시나요?"},
@@ -273,19 +278,61 @@ class MatchAPITest(APITestCase):
         self.client.force_authenticate(self.user)
         self.url = reverse("analysis-match")
 
+        self.jd = JobDescription.objects.create(
+            user=self.user,
+            company_name="커리어닷집",
+            position="백엔드 개발자",
+            original_text="Python, Django 기반 백엔드 개발자 채용",
+        )
+        self.resume = ResumeMaster.objects.create(
+            user=self.user,
+            name="테스트유저",
+            email="match@example.com",
+        )
+
     def _create_ready_session(self, user=None):
+        target_user = user or self.user
+
+        jd = self.jd if target_user == self.user else JobDescription.objects.create(
+            user=target_user,
+            company_name="커리어닷집",
+            position="백엔드 개발자",
+            original_text="Python, Django 기반 백엔드 개발자 채용",
+        )
+        resume = self.resume if target_user == self.user else ResumeMaster.objects.create(
+            user=target_user,
+            name="다른유저",
+            email=target_user.email,
+        )
+
+        jd_analysis = JdAnalysis.objects.create(
+            user=target_user,
+            jd=jd,
+            resume=resume,
+            match_score=85.0,
+            jd_keywords=MOCK_JD_KEYWORDS,
+            resume_analysis=MOCK_RESUME_ANALYSIS,
+            strengths=MOCK_STRENGTHS,
+            weaknesses=MOCK_WEAKNESSES,
+            cl_points=MOCK_CL_POINTS,
+        )
+
         session = AnalysisSession.objects.create(
-            user=user or self.user,
+            user=target_user,
+            jd=jd,
+            resume=resume,
             job_role="백엔드 개발자",
             company_name="커리어닷집",
             jd_text="Python, Django 기반 백엔드 개발자 채용",
             status="ready",
             jd_keywords=MOCK_JD_KEYWORDS,
             resume_analysis=MOCK_RESUME_ANALYSIS,
+            jd_analysis=jd_analysis,
         )
+
         GeneratedQuestion.objects.bulk_create([
             GeneratedQuestion(
-                session=session,
+                jd_analysis=jd_analysis,
                 question_type=q["type"],
                 question_text=q["text"],
                 order=i,
@@ -305,12 +352,14 @@ class MatchAPITest(APITestCase):
         pprint.pprint(dict(response.data))
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data["session_id"],   session.id)
-        self.assertEqual(response.data["job_role"],     "백엔드 개발자")
-        self.assertEqual(response.data["company_name"], "커리어닷집")
-        self.assertEqual(response.data["jd_keywords"],  MOCK_JD_KEYWORDS)
+        self.assertIn("jd_analysis_id", response.data)
+        self.assertEqual(response.data["match_score"],     85.0)
+        self.assertEqual(response.data["jd_keywords"],     MOCK_JD_KEYWORDS)
         self.assertEqual(response.data["resume_analysis"], MOCK_RESUME_ANALYSIS)
-        self.assertEqual(len(response.data["questions"]), 10)
+        self.assertEqual(response.data["strengths"],       MOCK_STRENGTHS)
+        self.assertEqual(response.data["weaknesses"],      MOCK_WEAKNESSES)
+        self.assertEqual(response.data["cl_points"],       MOCK_CL_POINTS)
+        self.assertEqual(len(response.data["questions"]),  10)
 
     def test_질문_타입별_개수_확인(self):
         session = self._create_ready_session()

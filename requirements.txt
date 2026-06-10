@@ -14,6 +14,7 @@ requests==2.32.3
 
 # ===== 데이터베이스 =====
 mysqlclient==2.2.4
+pymysql
 
 # ===== Redis & 캐시 — Redis 준비 전 주석 처리 =====
 # redis==5.0
@@ -21,8 +22,6 @@ mysqlclient==2.2.4
 
 # ===== AI / LLM =====
 openai==1.59.2
-langchain-openai==0.3.18
-langchain-core==0.3.61
 langsmith==0.3.45
 
 # ===== Vector DB =====
@@ -34,3 +33,9 @@ python-docx==1.1
 
 # ===== 프로덕션 서버 =====
 gunicorn==22.0
+kiwipiepy==0.23.1
+httpx==0.27.2
+
+# ===== 테스트 =====
+pytest>=8.0
+pytest-django>=4.8

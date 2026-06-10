@@ -54,7 +54,7 @@ def parse_aihub_file(file_path: str) -> dict | None:
             payload.get('id')
             or dataset.get('id')
             or info.get('id')
-            or ''
+            or path.stem
         ),
         'raw_metadata': metadata,
     }
