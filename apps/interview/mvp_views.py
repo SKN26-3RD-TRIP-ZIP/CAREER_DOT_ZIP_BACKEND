@@ -5,7 +5,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.prompt.models import PersonaConfig
-from .models import InterviewAnswer, InterviewQuestion, InterviewSession
+from .models import InterviewAnswer, InterviewQuestion, InterviewSession, QuestionSourceTag
 from .mvp_serializers import (
     MVPQuestionGenerateSerializer,
     MVPQuestionSerializer,
@@ -85,6 +85,27 @@ class MVPSessionStatusView(APIView):
         )
 
 
+def _save_question_source_tags(question, source_tags):
+    source_tag_objects = []
+
+    for tag in source_tags or []:
+        if not isinstance(tag, dict):
+            continue
+
+        source_tag_objects.append(
+            QuestionSourceTag(
+                question=question,
+                source_type=tag.get('source_type') or question.source_type or 'general',
+                source_label=tag.get('source_label') or '',
+                source_text_excerpt=tag.get('source_text_excerpt') or '',
+                source_reference=tag.get('source_reference') or question.source_reference or '',
+            )
+        )
+
+    if source_tag_objects:
+        QuestionSourceTag.objects.bulk_create(source_tag_objects)
+
+
 class MVPQuestionGenerateView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
@@ -95,16 +116,32 @@ class MVPQuestionGenerateView(APIView):
             context={'request': request, 'session': session},
         )
         serializer.is_valid(raise_exception=True)
+
         existing = session.questions.filter(question_type='main').order_by('order_index')
         if existing.exists():
             return self._response(existing)
 
         session.total_question_count = serializer.validated_data['question_count']
         session.save(update_fields=('total_question_count', 'updated_at'))
-        created = [
-            InterviewQuestion.objects.create(session=session, **question)
-            for question in generate_interview_questions(session)
-        ]
+
+        generated = generate_interview_questions(session)
+        created = []
+
+        for question in generated:
+            source_tags = question.get('source_tags', [])
+
+            interview_question = InterviewQuestion.objects.create(
+                session=session,
+                question_text=question.get('question_text'),
+                question_type=question.get('question_type', 'main'),
+                order_index=question.get('order_index'),
+                difficulty=question.get('difficulty'),
+                source_type=question.get('source_type', 'general'),
+                source_reference=question.get('source_reference'),
+            )
+            _save_question_source_tags(interview_question, source_tags)
+            created.append(interview_question)
+
         return self._response(created)
 
     @staticmethod

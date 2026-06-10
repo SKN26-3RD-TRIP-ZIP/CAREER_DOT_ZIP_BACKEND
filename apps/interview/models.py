@@ -52,7 +52,12 @@ class InterviewQuestion(models.Model):
         ('resume', 'Resume'),
         ('cover_letter', 'Cover Letter'),
         ('project', 'Project'),
+        ('project_experience', 'Project Experience'),
+        ('combined', 'Combined'),
+        ('prepared_question', 'Prepared Question'),
+        ('question_bank', 'Question Bank'),
         ('profile', 'Profile'),
+        ('rule', 'Rule'),
         ('general', 'General'),
     ]
 
@@ -61,6 +66,7 @@ class InterviewQuestion(models.Model):
     order_index = models.PositiveIntegerField()
     question_type = models.CharField(max_length=20, choices=QUESTION_TYPE_CHOICES, default='main')
     question_text = models.TextField()
+    difficulty = models.CharField(max_length=20, blank=True, null=True)
     source_type = models.CharField(max_length=20, choices=SOURCE_TYPE_CHOICES, default='general')
     source_reference = models.CharField(max_length=100, blank=True, null=True)
     parent_question = models.ForeignKey('self', on_delete=models.CASCADE, null=True, blank=True, related_name='follow_up_questions')
@@ -77,6 +83,29 @@ class InterviewQuestion(models.Model):
 
     def __str__(self):
         return f"Q{self.order_index} for session {self.session.id}"
+
+
+class QuestionSourceTag(models.Model):
+    SOURCE_TYPE_CHOICES = InterviewQuestion.SOURCE_TYPE_CHOICES
+
+    id = models.BigAutoField(primary_key=True)
+    question = models.ForeignKey(
+        InterviewQuestion,
+        on_delete=models.CASCADE,
+        related_name='source_tags',
+    )
+    source_type = models.CharField(max_length=30, choices=SOURCE_TYPE_CHOICES, default='general')
+    source_label = models.CharField(max_length=100, blank=True, default='')
+    source_text_excerpt = models.TextField(blank=True, default='')
+    source_reference = models.CharField(max_length=255, blank=True, default='')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'question_source_tags'
+        ordering = ['id']
+
+    def __str__(self):
+        return f'{self.source_type} for question {self.question_id}'
 
 
 class InterviewAnswer(models.Model):

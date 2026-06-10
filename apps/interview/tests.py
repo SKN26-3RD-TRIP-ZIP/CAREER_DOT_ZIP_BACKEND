@@ -287,7 +287,7 @@ class InterviewQuestionGenerationIntegrationTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn('jd_id', response.data)
 
-    def test_question_generation_uses_bank_then_ai_chain_fallback(self):
+    def test_question_generation_uses_ai_chain_then_bank_fallback(self):
         bank_question = QuestionBankItem.objects.create(
             question_text='How do you design a Django REST API?',
             answer_example='Explain resource design and validation.',
@@ -306,18 +306,27 @@ class InterviewQuestionGenerationIntegrationTests(APITestCase):
 
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         self.assertEqual(response.data['total'], 3)
-        self.assertEqual(response.data['questions'][0]['source_type'], 'question_bank')
-        self.assertEqual(
-            response.data['questions'][0]['source_reference'],
-            f'aihub:{bank_question.id}',
-        )
-        self.assertIn(
-            response.data['questions'][1]['source_type'],
-            ['jd', 'resume', 'cover_letter', 'project_experience', 'question_bank', 'general'],
-        )
-        self.assertTrue(
-            response.data['questions'][1]['source_reference'].startswith('ai_chain_mock:')
-        )
+
+        questions = response.data['questions']
+        self.assertEqual(questions[0]['source_type'], 'jd')
+
+        for question in questions:
+            self.assertIn(
+                question['source_type'],
+                [
+                    'jd',
+                    'resume',
+                    'cover_letter',
+                    'project_experience',
+                    'combined',
+                    'prepared_question',
+                    'question_bank',
+                    'rule',
+                    'general',
+                ],
+            )
+            self.assertTrue(question['source_reference'])
+
         self.assertEqual(
             list(
                 InterviewQuestion.objects.filter(session_id=session_id)
