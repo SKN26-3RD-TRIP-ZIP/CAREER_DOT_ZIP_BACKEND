@@ -100,6 +100,19 @@ class SessionFinalReportView(APIView):
         summary=generate_final_report(session),
     )
 
+  def _check_evaluation_failure(self, report, session):
+    """평가 실패를 감지한다.
+
+    evaluated_answer_count == 0이면서 실제 답변이 존재하는 경우,
+    OpenAI 호출이 real mode에서 전부 실패한 것으로 판단한다.
+    (mock mode에서는 0점 fallback이 반환되므로 evaluated_answer_count > 0)
+    """
+    summary = report.summary or {}
+    metadata = summary.get("evaluation_metadata", {})
+    evaluated = metadata.get("evaluated_answer_count", 0)
+    answer_count = metadata.get("answer_count", 0)
+    return answer_count > 0 and evaluated == 0
+
   def get(self, request, session_id):
     session = self.get_session(session_id)
     if not session:
@@ -114,6 +127,21 @@ class SessionFinalReportView(APIView):
     report = self.get_existing_report(session)
     if not report:
       report = self.create_report(session)
+    elif self._check_evaluation_failure(report, session):
+      # 이전 요청에서 평가가 전부 실패한 채 리포트가 저장된 경우.
+      # Evaluation row가 없으므로 evaluate_session_answers는 멱등하게 재시도한다.
+      new_summary = generate_final_report(session)
+      report.summary = new_summary
+      report.save(update_fields=['summary'])
+
+    if self._check_evaluation_failure(report, session):
+      return Response(
+          {
+              'error': 'evaluation_failed',
+              'detail': 'AI 평가 중 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.',
+          },
+          status=status.HTTP_503_SERVICE_UNAVAILABLE,
+      )
 
     serializer = FinalReportSessionSerializer(report)
     return Response(serializer.data, status=status.HTTP_200_OK)

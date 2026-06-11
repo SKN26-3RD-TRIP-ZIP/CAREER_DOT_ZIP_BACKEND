@@ -12,11 +12,14 @@ from .evaluation_prompts import (
 
 logger = logging.getLogger("feedback_ai.evaluation_chains")
 
-# 💡 4번 요구사항 반영: Django settings 중심의 안전한 초기화
 openai_key = getattr(settings, "OPENAI_API_KEY", None)
 client = OpenAI(api_key=openai_key)
 
-# evaluation_chains.py 예시
+# OPENAI_USE_MOCK=True → 실패 시 mock fallback 허용 (개발/테스트용)
+# OPENAI_USE_MOCK=False(기본) → real mode: 실패 시 예외 전파, 0점 silent fallback 금지
+USE_MOCK = getattr(settings, "OPENAI_USE_MOCK", False)
+
+
 def fetch_grounding(answer_text: str) -> dict:
     try:
         res = client.chat.completions.create(
@@ -26,21 +29,26 @@ def fetch_grounding(answer_text: str) -> dict:
                 {"role": "system", "content": EVAL_GROUNDING_SYSTEM_PROMPT},
                 {"role": "user", "content": answer_text}
             ],
-            timeout=15.0 # 무한 대기 방지 타임아웃 설정 추천
+            timeout=15.0,
         )
         return json.loads(res.choices[0].message.content)
     except Exception as e:
         logger.error(f"OpenAI fetch_grounding failed: {str(e)}", exc_info=True)
+        if not USE_MOCK:
+            # real mode: 예외를 그대로 전파 → session_evaluation이 per-answer 격리 처리
+            raise
+        # mock mode에서만 fallback 허용
         return {
             "tech_stack": "확인 불가",
             "before_metric": "확인 불가",
             "after_metric": "확인 불가",
-            "is_grounded": False
+            "is_grounded": False,
         }
+
 
 def fetch_competency(answer_text: str) -> dict:
     full_system = f"{EVAL_COMPETENCY_SYSTEM_PROMPT}\n\n{EVAL_COMPETENCY_FORMAT_PROMPT}"
-    
+
     try:
         res = client.chat.completions.create(
             model="gpt-4o-mini",
@@ -49,15 +57,16 @@ def fetch_competency(answer_text: str) -> dict:
                 {"role": "system", "content": full_system},
                 {"role": "user", "content": answer_text}
             ],
-            timeout=15.0  # 외부 API 무한 대기 방지를 위한 타임아웃 설정 권장
+            timeout=15.0,
         )
         return json.loads(res.choices[0].message.content)
-        
+
     except Exception as e:
-        # 에러 로그를 남겨 추적할 수 있도록 합니다.
         logger.error(f"OpenAI fetch_competency failed: {str(e)}", exc_info=True)
-        
-        # 💡 Fallback 처리: 서비스가 터지지 않도록 기본 규격의 딕셔너리를 반환합니다.
+        if not USE_MOCK:
+            # real mode: 예외를 그대로 전파 → session_evaluation이 per-answer 격리 처리
+            raise
+        # mock mode에서만 fallback 허용
         return {
             "bei_star": {
                 "situation": {
