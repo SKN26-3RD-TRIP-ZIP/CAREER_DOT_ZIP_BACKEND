@@ -1,4 +1,5 @@
 import logging
+import re
 from collections import Counter
 
 from django.utils import timezone
@@ -69,6 +70,9 @@ def generate_final_report(session):
 
   strength_counter = Counter()
   weakness_counter = Counter()
+  # tag_name → 사람이 읽을 수 있는 설명 (summary_text 생성에 사용)
+  strength_desc_map: dict[str, str] = {}
+  weakness_desc_map: dict[str, str] = {}
   bei_situations, bei_tasks, bei_actions, bei_results = [], [], [], []
   cbi_levels, cbi_scores = [], []
   speech_scores = []
@@ -78,9 +82,15 @@ def generate_final_report(session):
     eval_obj = ans.evaluation
 
     for sm in ans.strength_mappings.all():
-      strength_counter[sm.strength_tag.tag_name] += 1
+      name = sm.strength_tag.tag_name
+      strength_counter[name] += 1
+      if name not in strength_desc_map:
+        strength_desc_map[name] = sm.strength_tag.description or name
     for wm in ans.weakness_mappings.all():
-      weakness_counter[wm.weakness_tag.tag_name] += 1
+      name = wm.weakness_tag.tag_name
+      weakness_counter[name] += 1
+      if name not in weakness_desc_map:
+        weakness_desc_map[name] = wm.weakness_tag.description or name
 
     # Technical 축(고도화: SBERT 유사도 기반 기술 질문 평가). 미구현 시 None -> 0 처리.
     sbert_sims = [
@@ -129,15 +139,30 @@ def generate_final_report(session):
   n = len(evaluated_answers)
   avg_fillers_per_answer = round(total_filler_count / n, 2) if n else 0
 
+  def _tag_display(tag_name: str, desc_map: dict) -> str:
+    """tag_name을 사람이 읽을 수 있는 짧은 레이블로 변환.
+
+    description이 있으면 앞의 [category] 접두사를 제거해 반환.
+    없으면 tag_name을 그대로 반환(raw 노출 방지 fallback).
+    """
+    raw = desc_map.get(tag_name) or tag_name
+    # "[technical] 어쩌구" → "어쩌구"
+    cleaned = re.sub(r'^\[[^\]]+\]\s*', '', raw).strip()
+    return cleaned or raw
+
   recommendations = []
   summary_text_parts = []
   if strength_counter:
+    top_s_name = strength_counter.most_common(1)[0][0]
+    top_s_label = _tag_display(top_s_name, strength_desc_map)
     summary_text_parts.append(
-        f"이번 세션에서 가장 강력하게 발휘된 역량은 [{strength_counter.most_common(1)[0][0]}] 입니다."
+        f"이번 세션에서 가장 강력하게 발휘된 역량은 '{top_s_label}' 입니다."
     )
   if weakness_counter:
+    top_w_name = weakness_counter.most_common(1)[0][0]
+    top_w_label = _tag_display(top_w_name, weakness_desc_map)
     summary_text_parts.append(
-        f"가장 빈번하게 노출된 보완점은 [{weakness_counter.most_common(1)[0][0]}] 항목으로 확인됩니다."
+        f"가장 빈번하게 노출된 보완점은 '{top_w_label}' 항목으로 확인됩니다."
     )
   if total_filler_count > 0:
     most_common_fillers = [word for word, _ in global_filler_words_counter.most_common(2)]
