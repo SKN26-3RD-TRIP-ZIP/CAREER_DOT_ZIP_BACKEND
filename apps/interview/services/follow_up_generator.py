@@ -1,3 +1,4 @@
+from django.conf import settings
 from django.db import transaction
 from django.db.models import Max, Q
 
@@ -16,7 +17,7 @@ class FollowupGenerator:
     추후 LLM Chain으로 교체하더라도 create_followup(answer)의 외부 계약은 유지한다.
     """
 
-    ai_chain_service = InterviewAIChainService()
+    ai_chain_service = None
 
     @classmethod
     def create_followup(cls, answer):
@@ -31,8 +32,10 @@ class FollowupGenerator:
         if existing:
             return existing, False
 
+        ai_chain_service = cls._get_ai_chain_service()
+
         sufficiency_payload = cls._build_sufficiency_payload(answer)
-        sufficiency_result = cls.ai_chain_service.judge_answer_sufficiency(
+        sufficiency_result = ai_chain_service.judge_answer_sufficiency(
             sufficiency_payload
         )
 
@@ -47,7 +50,7 @@ class FollowupGenerator:
             answer=answer,
             selected_weakness_tag=selected_weakness_tag,
         )
-        followup_result = cls.ai_chain_service.generate_followup_question(
+        followup_result = ai_chain_service.generate_followup_question(
             followup_payload
         )
         followup_data = followup_result.get("followup_question")
@@ -69,7 +72,11 @@ class FollowupGenerator:
                 question_text=followup_data["question_text"],
                 question_type="follow_up",
                 source_type="general",
-                source_reference=cls._build_source_reference(selected_weakness_tag),
+                source_reference=cls._build_source_reference(
+                    selected_weakness_tag,
+                    followup_data,
+                ),
+                difficulty=followup_data.get("difficulty"),
                 order_index=last_index + 1,
             )
 
@@ -179,11 +186,35 @@ class FollowupGenerator:
             return persona
         return "practical"
     
+    @classmethod
+    def _get_ai_chain_service(cls):
+        return cls.ai_chain_service or InterviewAIChainService()
+
     @staticmethod
-    def _build_source_reference(selected_weakness_tag):
+    def _is_real_call_mode():
+        return (
+            str(getattr(settings, "INTERVIEW_AI_CHAIN_ENGINE", "mock")).lower()
+            == "openai"
+            and bool(getattr(settings, "INTERVIEW_AI_OPENAI_ENABLE_REAL_CALL", False))
+        )
+
+    @classmethod
+    def _build_source_reference(cls, selected_weakness_tag, followup_data=None):
         tag_name = selected_weakness_tag.get("tag_name") or "unknown"
-        weakness_tag_id = selected_weakness_tag.get("weakness_tag_id") or "unknown"
-        return f"ai_chain_mock:{weakness_tag_id}:{tag_name}"
+        weakness_tag_id = (
+            selected_weakness_tag.get("weakness_tag_id")
+            or selected_weakness_tag.get("answer_weakness_tag_id")
+            or "unknown"
+        )
+        prefix = "ai_chain" if cls._is_real_call_mode() else "ai_chain_mock"
+        source_reference = f"{prefix}:{str(weakness_tag_id)[:36]}:{str(tag_name)[:40]}"
+
+        if followup_data and cls._is_real_call_mode():
+            reason = str(followup_data.get("generation_reason") or "").strip()
+            if reason:
+                source_reference = f"{source_reference}:{reason[:32]}"
+
+        return source_reference[:100]
 
 
 def generate_follow_up_questions(answer):

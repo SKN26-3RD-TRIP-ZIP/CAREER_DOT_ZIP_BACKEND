@@ -23,6 +23,7 @@ from .services.question_generator import generate_interview_questions
 from .services.answer_service import AnswerService
 from .services.follow_up_generator import FollowupGenerator
 from .services.whisper_stt_service import transcribe_uploaded_audio
+from .services.ai_chain_openai_engine import AIChainOpenAIError
 
 
 def get_prompt_version_id(session):
@@ -34,6 +35,19 @@ def get_prompt_version_id(session):
     if persona and persona.active_template:
         return persona.active_template.default_version_id
     return None
+
+
+def ai_generation_failed_response(*, detail, code, exc=None, http_status=status.HTTP_502_BAD_GATEWAY):
+    data = {
+        'detail': detail,
+        'code': code,
+        'error_code': code,
+        'retryable': True,
+    }
+    chain_name = getattr(exc, 'chain_name', None)
+    if chain_name:
+        data['chain'] = chain_name
+    return Response(data, status=http_status)
 
 
 class MVPSessionCreateView(APIView):
@@ -127,7 +141,14 @@ class MVPQuestionGenerateView(APIView):
         session.total_question_count = serializer.validated_data['question_count']
         session.save(update_fields=('total_question_count', 'updated_at'))
 
-        generated = generate_interview_questions(session)
+        try:
+            generated = generate_interview_questions(session)
+        except AIChainOpenAIError as exc:
+            return ai_generation_failed_response(
+                detail='질문 생성에 실패했습니다. 잠시 후 다시 시도해 주세요.',
+                code='AI_QUESTION_GENERATION_FAILED',
+                exc=exc,
+            )
         created = []
 
         for question in generated:
@@ -255,7 +276,16 @@ class MVPFollowupQuestionCreateView(APIView):
 
     def post(self, request, answer_id):
         answer = AnswerService.get_owned_answer(answer_id=answer_id, user=request.user)
-        followup, created = FollowupGenerator.create_followup(answer)
+
+        try:
+            followup, created = FollowupGenerator.create_followup(answer)
+        except AIChainOpenAIError as exc:
+            return ai_generation_failed_response(
+                detail='꼬리질문 생성에 실패했습니다. 잠시 후 다시 시도해 주세요.',
+                code='AI_FOLLOWUP_GENERATION_FAILED',
+                exc=exc,
+            )
+
         if followup is None:
             return Response(
                 {
@@ -265,6 +295,7 @@ class MVPFollowupQuestionCreateView(APIView):
                 },
                 status=status.HTTP_200_OK,
             )
+
         return Response(
             {
                 'answer_id': str(answer.id),

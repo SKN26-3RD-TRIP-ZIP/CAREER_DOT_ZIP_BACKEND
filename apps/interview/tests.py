@@ -1,9 +1,11 @@
 from datetime import timedelta
 import uuid
+from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
 from django.urls import reverse
 from django.utils import timezone
+from django.test import override_settings
 from rest_framework import status
 from rest_framework.test import APITestCase
 
@@ -14,6 +16,7 @@ from apps.common.choices import (
 from apps.evaluation.models import Evaluation
 from apps.input.models import JobDescription, ResumeMaster
 from apps.question_bank.models import QuestionBankItem
+from apps.interview.services.ai_chain_openai_engine import AIChainOpenAIError
 
 from .models import InterviewAnswer, InterviewQuestion, InterviewSession
 
@@ -511,6 +514,30 @@ class MVPTextInterviewFlowTests(APITestCase):
             [1, 2, 3],
         )
 
+    @override_settings(
+        INTERVIEW_AI_CHAIN_ENGINE='openai',
+        INTERVIEW_AI_OPENAI_ENABLE_REAL_CALL=True,
+    )
+    @patch('apps.interview.mvp_views.generate_interview_questions')
+    def test_question_generation_failure_returns_retryable_502_without_rows(self, mock_generate):
+        mock_generate.side_effect = AIChainOpenAIError(
+            'question_generation',
+            'question generation failed',
+        )
+        created = self.create_session()
+        session_id = created.data['session_id']
+
+        response = self.client.post(
+            reverse('mvp-question-generate', kwargs={'session_id': session_id}),
+            {},
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_502_BAD_GATEWAY)
+        self.assertEqual(response.data['code'], 'AI_QUESTION_GENERATION_FAILED')
+        self.assertTrue(response.data['retryable'])
+        self.assertEqual(InterviewQuestion.objects.filter(session_id=session_id).count(), 0)
+
     def test_other_users_session_returns_not_found(self):
         session = InterviewSession.objects.create(
             user=self.other_user,
@@ -532,6 +559,10 @@ class MVPTextInterviewFlowTests(APITestCase):
         self.assertEqual(generate.status_code, status.HTTP_404_NOT_FOUND)
 
 
+@override_settings(
+    INTERVIEW_AI_CHAIN_ENGINE='mock',
+    INTERVIEW_AI_OPENAI_ENABLE_REAL_CALL=False,
+)
 class MVPAnswerFollowupAPITests(APITestCase):
     def setUp(self):
         user_model = get_user_model()
@@ -693,3 +724,111 @@ class MVPAnswerFollowupAPITests(APITestCase):
         )
 
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+
+class FakeFollowupAIChainService:
+    def __init__(self, *, fail=False):
+        self.fail = fail
+
+    def judge_answer_sufficiency(self, payload):
+        if self.fail:
+            raise AIChainOpenAIError('followup_generation', 'followup failed')
+        return {
+            'next_action': 'GENERATE_FOLLOWUP',
+            'selected_weakness_tag': {
+                'weakness_tag_id': 'specificity',
+                'tag_name': 'answer_specificity',
+                'reason': 'needs more detail',
+            },
+        }
+
+    def generate_followup_question(self, payload):
+        if self.fail:
+            raise AIChainOpenAIError('followup_generation', 'followup failed')
+        return {
+            'followup_question': {
+                'question_text': 'Which concrete decision proves that contribution?',
+                'difficulty': 'medium',
+                'generation_reason': 'OpenAI followup generated from answer',
+            }
+        }
+
+
+@override_settings(
+    INTERVIEW_AI_CHAIN_ENGINE='openai',
+    INTERVIEW_AI_OPENAI_ENABLE_REAL_CALL=True,
+)
+class MVPAnswerFollowupRealModeAPITests(APITestCase):
+    def setUp(self):
+        user_model = get_user_model()
+        self.user = user_model.objects.create_user(
+            email='real-followup-owner@example.com',
+            password='password123',
+            name='Real Followup Owner',
+        )
+        self.session = InterviewSession.objects.create(
+            user=self.user,
+            interview_type='technical',
+            persona='verifier',
+        )
+        self.question = InterviewQuestion.objects.create(
+            session=self.session,
+            order_index=1,
+            question_type='main',
+            question_text='Explain your project contribution.',
+            source_type='jd',
+            source_reference='ai_chain:q_001:jd',
+        )
+        self.answer = InterviewAnswer.objects.create(
+            session=self.session,
+            question=self.question,
+            answer_text='I implemented the API.',
+        )
+        self.client.force_authenticate(self.user)
+
+    def followup_url(self):
+        return reverse(
+            'mvp-answer-followup-create',
+            kwargs={'answer_id': self.answer.id},
+        )
+
+    @patch(
+        'apps.interview.services.follow_up_generator.FollowupGenerator._get_ai_chain_service',
+        return_value=FakeFollowupAIChainService(),
+    )
+    def test_real_mode_followup_success_does_not_store_mock_reference(self, _mock_service):
+        response = self.client.post(self.followup_url(), {}, format='json')
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data['next_action'], 'GENERATE_FOLLOWUP')
+        followup = InterviewQuestion.objects.get(
+            id=response.data['followup_question']['question_id'],
+        )
+        self.assertEqual(followup.parent_question, self.question)
+        self.assertEqual(followup.source_answer, self.answer)
+        self.assertFalse(followup.source_reference.startswith('ai_chain_mock:'))
+        self.assertTrue(followup.source_reference.startswith('ai_chain:'))
+
+    @patch(
+        'apps.interview.services.follow_up_generator.FollowupGenerator._get_ai_chain_service',
+        return_value=FakeFollowupAIChainService(fail=True),
+    )
+    def test_real_mode_followup_failure_returns_retryable_502_without_rows(self, _mock_service):
+        response = self.client.post(self.followup_url(), {}, format='json')
+
+        self.assertEqual(response.status_code, status.HTTP_502_BAD_GATEWAY)
+        self.assertEqual(response.data['code'], 'AI_FOLLOWUP_GENERATION_FAILED')
+        self.assertTrue(response.data['retryable'])
+        self.assertEqual(
+            InterviewQuestion.objects.filter(
+                session=self.session,
+                question_type='follow_up',
+            ).count(),
+            0,
+        )
+        self.assertFalse(
+            InterviewQuestion.objects.filter(
+                session=self.session,
+                source_reference__startswith='ai_chain_mock:',
+            ).exists()
+        )

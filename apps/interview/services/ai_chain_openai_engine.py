@@ -58,6 +58,14 @@ QUESTION_SOURCE_TYPE_ALIASES = {
 }
 
 
+class AIChainOpenAIError(RuntimeError):
+    """OpenAI real call 실패를 명확히 전달하기 위한 예외."""
+
+    def __init__(self, chain_name: str, message: str):
+        self.chain_name = chain_name
+        super().__init__(message)
+
+
 class AIChainOpenAIEngine:
     """OpenAI 기반 AI Chain engine.
 
@@ -96,14 +104,8 @@ class AIChainOpenAIEngine:
         return self.fallback_engine.get_weakness_tags()
 
     def generate_questions(self, payload: dict[str, Any]) -> dict[str, Any]:
-        """질문 생성.
-
-        enable_real_call=True일 때 OpenAI 호출을 시도한다.
-        호출 실패, JSON 파싱 실패, 필수 필드 누락 시 mock fallback을 반환한다.
-        """
-        fallback = self.fallback_engine.generate_questions(payload)
         if not self.enable_real_call:
-            return fallback
+            return self.fallback_engine.generate_questions(payload)
 
         try:
             raw_response = self._request_text(
@@ -112,24 +114,26 @@ class AIChainOpenAIEngine:
                 temperature=0.3,
                 max_tokens=1600,
             )
-            parsed = self._parse_response_object(raw_response, fallback=fallback)
+            parsed = self._parse_response_object(raw_response)
+
+            if not parsed:
+                raise ValueError("OpenAI question generation response is empty or invalid JSON.")
+
             return self._normalize_question_generation_result(
                 parsed,
                 payload=payload,
-                fallback=fallback,
+                fallback=None,
             )
-        except Exception:
-            return fallback
+
+        except Exception as exc:
+            raise AIChainOpenAIError(
+                "question_generation",
+                "OpenAI 질문 생성에 실패했습니다. API Key, 모델 설정, 응답 JSON 형식을 확인해주세요.",
+            ) from exc
 
     def judge_answer_sufficiency(self, payload: dict[str, Any]) -> dict[str, Any]:
-        """답변 충족도 판단.
-
-        enable_real_call=True일 때 OpenAI 호출을 시도한다.
-        호출 실패, JSON 파싱 실패, 필수 필드 누락 시 mock fallback을 반환한다.
-        """
-        fallback = self.fallback_engine.judge_answer_sufficiency(payload)
         if not self.enable_real_call:
-            return fallback
+            return self.fallback_engine.judge_answer_sufficiency(payload)
 
         try:
             raw_response = self._request_text(
@@ -138,20 +142,22 @@ class AIChainOpenAIEngine:
                 temperature=0.1,
                 max_tokens=1000,
             )
-            parsed = self._parse_response_object(raw_response, fallback=fallback)
-            return self._normalize_sufficiency_result(parsed, fallback=fallback)
-        except Exception:
-            return fallback
+            parsed = self._parse_response_object(raw_response)
+
+            if not parsed:
+                raise ValueError("OpenAI sufficiency response is empty or invalid JSON.")
+
+            return self._normalize_sufficiency_result(parsed, fallback=None)
+
+        except Exception as exc:
+            raise AIChainOpenAIError(
+                "answer_sufficiency",
+                "OpenAI 답변 충족도 판단에 실패했습니다. API Key, 모델 설정, 응답 JSON 형식을 확인해주세요.",
+            ) from exc
 
     def generate_followup_question(self, payload: dict[str, Any]) -> dict[str, Any]:
-        """꼬리질문 생성.
-
-        enable_real_call=True일 때 OpenAI 호출을 시도한다.
-        호출 실패, JSON 파싱 실패, 필수 필드 누락 시 mock fallback을 반환한다.
-        """
-        fallback = self.fallback_engine.generate_followup_question(payload)
         if not self.enable_real_call:
-            return fallback
+            return self.fallback_engine.generate_followup_question(payload)
 
         try:
             raw_response = self._request_text(
@@ -160,17 +166,30 @@ class AIChainOpenAIEngine:
                 temperature=0.3,
                 max_tokens=800,
             )
-            parsed = self._parse_response_object(raw_response, fallback=fallback)
+            parsed = self._parse_response_object(raw_response)
+
+            if not parsed:
+                raise ValueError("OpenAI follow-up response is empty or invalid JSON.")
+
             return self._normalize_followup_result(
                 parsed,
                 payload=payload,
-                fallback=fallback,
+                fallback=None,
             )
-        except Exception:
-            return fallback
+
+        except Exception as exc:
+            raise AIChainOpenAIError(
+                "followup_generation",
+                "OpenAI 꼬리질문 생성에 실패했습니다. API Key, 모델 설정, 응답 JSON 형식을 확인해주세요.",
+            ) from exc
 
     def generate_followup_mock(self, payload: dict[str, Any]) -> dict[str, Any]:
         return self.fallback_engine.generate_followup_mock(payload)
+
+    def _fallback_or_raise(self, fallback: dict[str, Any] | None, message: str) -> dict[str, Any]:
+        if fallback is not None:
+            return fallback
+        raise ValueError(message)
 
     def _get_client(self):
         """OpenAI client를 lazy initialization 방식으로 생성한다."""
@@ -245,11 +264,11 @@ class AIChainOpenAIEngine:
     ) -> dict[str, Any]:
         """OpenAI 질문 생성 결과를 기존 service 계약에 맞게 보정한다."""
         if not isinstance(parsed, dict):
-            return fallback
+            return self._fallback_or_raise(fallback, "Invalid OpenAI question generation result.")
 
         questions = parsed.get("questions")
         if not isinstance(questions, list):
-            return fallback
+            return self._fallback_or_raise(fallback, "Invalid OpenAI question generation result.")
 
         options = payload.get("generation_options") or {}
         question_count = int(options.get("question_count") or len(questions) or 3)
@@ -285,7 +304,7 @@ class AIChainOpenAIEngine:
             )
 
         if not normalized_questions:
-            return fallback
+            return self._fallback_or_raise(fallback, "Invalid OpenAI question generation result.")
 
         return {
             "session_id": parsed.get("session_id", payload.get("session_id")),
@@ -327,18 +346,22 @@ class AIChainOpenAIEngine:
     def _normalize_sufficiency_result(
         self,
         parsed: dict[str, Any],
-        fallback: dict[str, Any],
+        fallback: dict[str, Any] | None,
     ) -> dict[str, Any]:
-        """OpenAI 답변 충족도 판단 결과를 기존 service 계약에 맞게 보정한다."""
+        fallback = fallback or {}
+
         if not isinstance(parsed, dict):
-            return fallback
+            return self._fallback_or_raise(
+                fallback,
+                "Invalid OpenAI answer sufficiency result.",
+            )
 
         next_action = parsed.get("next_action")
         if next_action not in {
             NextAction.NEXT_QUESTION.value,
             NextAction.GENERATE_FOLLOWUP.value,
         }:
-            return fallback
+            return self._fallback_or_raise(fallback, "Invalid OpenAI question generation result.")
 
         answer_weakness_tags = parsed.get("answer_weakness_tags")
         if not isinstance(answer_weakness_tags, list):
@@ -361,7 +384,7 @@ class AIChainOpenAIEngine:
                 }
 
         if should_generate_followup and selected_weakness_tag is None:
-            return fallback
+            return self._fallback_or_raise(fallback, "Invalid OpenAI question generation result.")
 
         return {
             "answer_id": parsed.get("answer_id", fallback.get("answer_id")),
@@ -384,15 +407,15 @@ class AIChainOpenAIEngine:
     ) -> dict[str, Any]:
         """OpenAI 꼬리질문 생성 결과를 기존 service 계약에 맞게 보정한다."""
         if not isinstance(parsed, dict):
-            return fallback
+            return self._fallback_or_raise(fallback, "Invalid OpenAI question generation result.")
 
         followup_question = parsed.get("followup_question")
         if not isinstance(followup_question, dict):
-            return fallback
+            return self._fallback_or_raise(fallback, "Invalid OpenAI question generation result.")
 
         question_text = (followup_question.get("question_text") or "").strip()
         if not question_text:
-            return fallback
+            return self._fallback_or_raise(fallback, "Invalid OpenAI question generation result.")
 
         parent_question = payload.get("parent_question") or {}
         answer = payload.get("answer") or {}
