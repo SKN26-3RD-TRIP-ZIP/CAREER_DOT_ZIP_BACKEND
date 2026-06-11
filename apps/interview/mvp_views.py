@@ -1,5 +1,6 @@
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
+from django.db.models import Max
 from rest_framework import permissions, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -20,6 +21,8 @@ from .mvp_serializers import (
 from .services.question_generator import generate_interview_questions
 from .services.answer_service import AnswerService
 from .services.follow_up_generator import FollowupGenerator
+from .services.ai_chain_service import InterviewAIChainService
+from .services.ai_chain_openai_engine import AIChainOpenAIError
 
 
 def get_prompt_version_id(session):
@@ -224,8 +227,69 @@ class MVPFollowupQuestionCreateView(APIView):
 
     def post(self, request, answer_id):
         answer = AnswerService.get_owned_answer(answer_id=answer_id, user=request.user)
-        followup, created = FollowupGenerator.create_followup(answer)
-        if followup is None:
+
+        existing = (
+            InterviewQuestion.objects.filter(
+                source_answer=answer,
+                question_type='follow_up',
+            )
+            .order_by('order_index')
+            .first()
+        )
+        if existing:
+            return Response(
+                {
+                    'answer_id': str(answer.id),
+                    'next_action': 'GENERATE_FOLLOWUP',
+                    'followup_question': MVPFollowupQuestionSerializer(existing).data,
+                },
+                status=status.HTTP_200_OK,
+            )
+
+        previous_question_count = InterviewQuestion.objects.filter(
+            session=answer.session,
+        ).count()
+        previous_followup_count = InterviewQuestion.objects.filter(
+            parent_question=answer.question,
+            question_type='follow_up',
+        ).count()
+
+        payload = {
+            'session_id': str(answer.session.id),
+            'question': {
+                'question_id': str(answer.question.id),
+                'question_text': answer.question.question_text,
+                'question_type': answer.question.question_type,
+                'source_tags': [],
+            },
+            'answer': {
+                'answer_id': str(answer.id),
+                'answer_text': answer.answer_text,
+            },
+            'persona': {
+                'persona_type': answer.session.persona,
+            },
+            'prompt_version_id': None,
+            'conversation_context': {
+                'previous_question_count': previous_question_count,
+                'previous_followup_count_for_parent': previous_followup_count,
+            },
+        }
+
+        try:
+            result = InterviewAIChainService().generate_followup_mock(payload)
+        except AIChainOpenAIError as exc:
+            return Response(
+                {
+                    'detail': str(exc),
+                    'error_code': 'llm_generation_failed',
+                    'chain': exc.chain_name,
+                    'retryable': True,
+                },
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
+
+        if result.get('next_action') == 'NEXT_QUESTION' or not result.get('followup_question'):
             return Response(
                 {
                     'answer_id': str(answer.id),
@@ -234,11 +298,36 @@ class MVPFollowupQuestionCreateView(APIView):
                 },
                 status=status.HTTP_200_OK,
             )
+
+        followup_data = result['followup_question']
+        last_order_index = (
+            InterviewQuestion.objects.filter(session=answer.session)
+            .aggregate(last=Max('order_index'))
+            .get('last')
+            or 0
+        )
+
+        source_reference = followup_data.get('generation_reason') or 'followup'
+        if not str(source_reference).startswith('ai_chain_mock:'):
+            source_reference = f'ai_chain_mock:{source_reference}'
+
+        followup = InterviewQuestion.objects.create(
+            session=answer.session,
+            parent_question=answer.question,
+            source_answer=answer,
+            order_index=last_order_index + 1,
+            question_type='follow_up',
+            question_text=followup_data.get('question_text'),
+            difficulty=followup_data.get('difficulty'),
+            source_type='general',
+            source_reference=source_reference,
+        )
+
         return Response(
             {
                 'answer_id': str(answer.id),
                 'next_action': 'GENERATE_FOLLOWUP',
                 'followup_question': MVPFollowupQuestionSerializer(followup).data,
             },
-            status=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
+            status=status.HTTP_201_CREATED,
         )

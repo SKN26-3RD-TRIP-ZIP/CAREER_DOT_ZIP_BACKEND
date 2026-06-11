@@ -4,6 +4,7 @@ import uuid
 from django.contrib.auth import get_user_model
 from django.urls import reverse
 from django.utils import timezone
+from django.test import override_settings
 from rest_framework import status
 from rest_framework.test import APITestCase
 
@@ -532,6 +533,10 @@ class MVPTextInterviewFlowTests(APITestCase):
         self.assertEqual(generate.status_code, status.HTTP_404_NOT_FOUND)
 
 
+@override_settings(
+    INTERVIEW_AI_CHAIN_ENGINE='mock',
+    INTERVIEW_AI_OPENAI_ENABLE_REAL_CALL=False,
+)
 class MVPAnswerFollowupAPITests(APITestCase):
     def setUp(self):
         user_model = get_user_model()

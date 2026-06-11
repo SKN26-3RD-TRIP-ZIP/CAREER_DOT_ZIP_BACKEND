@@ -1,7 +1,10 @@
 from django.test import SimpleTestCase, override_settings
 
 from apps.interview.ai_chain_contracts import NextAction
-from apps.interview.services.ai_chain_openai_engine import AIChainOpenAIEngine
+from apps.interview.services.ai_chain_openai_engine import (
+    AIChainOpenAIEngine,
+    AIChainOpenAIError,
+)
 
 
 class FakeOpenAIMessage:
@@ -42,7 +45,10 @@ class FakeOpenAIClient:
 
 class AIChainOpenAIEngineTest(SimpleTestCase):
     def setUp(self):
-        self.engine = AIChainOpenAIEngine(api_key="test-api-key")
+        self.engine = AIChainOpenAIEngine(
+            api_key="test-api-key",
+            enable_real_call=False,
+        )
 
     def _question_generation_payload(self):
         return {
@@ -163,7 +169,7 @@ class AIChainOpenAIEngineTest(SimpleTestCase):
         self.assertEqual(question["question_text"], "Django REST API를 설계할 때 본인이 직접 맡은 역할을 설명해주세요.")
         self.assertEqual(question["source_tags"][0]["source_type"], "jd")
 
-    def test_openai_engine_falls_back_when_question_generation_returns_invalid_json(self):
+    def test_openai_engine_raises_error_when_question_generation_returns_invalid_json(self):
         fake_client = FakeOpenAIClient("JSON이 아닌 응답")
         engine = AIChainOpenAIEngine(
             api_key="test-api-key",
@@ -171,9 +177,8 @@ class AIChainOpenAIEngineTest(SimpleTestCase):
             enable_real_call=True,
         )
 
-        result = engine.generate_questions(self._question_generation_payload())
-
-        self.assertEqual(len(result["questions"]), 2)
+        with self.assertRaises(AIChainOpenAIError):
+            engine.generate_questions(self._question_generation_payload())
 
     def test_openai_engine_keeps_answer_sufficiency_contract_with_fallback(self):
         result = self.engine.judge_answer_sufficiency(self._sufficiency_payload())
@@ -206,7 +211,7 @@ class AIChainOpenAIEngineTest(SimpleTestCase):
         self.assertFalse(result["should_generate_followup"])
         self.assertTrue(result["is_sufficient"])
 
-    def test_openai_engine_falls_back_when_real_call_returns_invalid_json(self):
+    def test_openai_engine_raises_error_when_sufficiency_returns_invalid_json(self):
         fake_client = FakeOpenAIClient("JSON이 아닌 응답")
         engine = AIChainOpenAIEngine(
             api_key="test-api-key",
@@ -214,10 +219,8 @@ class AIChainOpenAIEngineTest(SimpleTestCase):
             enable_real_call=True,
         )
 
-        result = engine.judge_answer_sufficiency(self._sufficiency_payload())
-
-        self.assertEqual(result["next_action"], NextAction.GENERATE_FOLLOWUP.value)
-        self.assertTrue(result["should_generate_followup"])
+        with self.assertRaises(AIChainOpenAIError):
+            engine.judge_answer_sufficiency(self._sufficiency_payload())
 
     def test_openai_engine_uses_real_call_when_enabled_for_followup_generation(self):
         raw_response = """```json
@@ -254,7 +257,7 @@ class AIChainOpenAIEngineTest(SimpleTestCase):
         self.assertEqual(followup["generated_from_answer_id"], "33333333-3333-3333-3333-333333333333")
         self.assertEqual(followup["answer_weakness_tag_id"], "44444444-4444-4444-4444-444444444444")
 
-    def test_openai_engine_falls_back_when_followup_real_call_returns_invalid_json(self):
+    def test_openai_engine_raises_error_when_followup_returns_invalid_json(self):
         fake_client = FakeOpenAIClient("JSON이 아닌 응답")
         engine = AIChainOpenAIEngine(
             api_key="test-api-key",
@@ -262,10 +265,8 @@ class AIChainOpenAIEngineTest(SimpleTestCase):
             enable_real_call=True,
         )
 
-        result = engine.generate_followup_question(self._followup_payload())
-
-        self.assertIn("followup_question", result)
-        self.assertIn("question_text", result["followup_question"])
+        with self.assertRaises(AIChainOpenAIError):
+            engine.generate_followup_question(self._followup_payload())
 
     def test_openai_engine_keeps_question_generation_contract_with_fallback(self):
         payload = {
