@@ -57,6 +57,44 @@ QUESTION_SOURCE_TYPE_ALIASES = {
     "general": "general",
 }
 
+FOLLOWUP_ACTION_ALIASES = {
+    "FOLLOWUP",
+    "FOLLOW_UP",
+    "FOLLOWUP_QUESTION",
+    "FOLLOW_UP_QUESTION",
+    "GENERATE",
+    "GENERATE_FOLLOWUP",
+    "GENERATE_FOLLOW_UP",
+    "GENERATE_FOLLOWUP_QUESTION",
+    "GENERATE_FOLLOW_UP_QUESTION",
+    "NEEDS_FOLLOWUP",
+    "NEEDS_FOLLOW_UP",
+    "INSUFFICIENT",
+    "NOT_SUFFICIENT",
+}
+
+NEXT_QUESTION_ACTION_ALIASES = {
+    "NEXT",
+    "NEXT_QUESTION",
+    "PASS",
+    "SKIP",
+    "SUFFICIENT",
+    "ENOUGH",
+}
+
+FOLLOWUP_TRIGGER_DEFINITIONS = {
+    "TOO_SHORT": "The answer is too short to verify the candidate's actual experience.",
+    "ABSTRACT_ANSWER": "The answer is abstract and lacks concrete evidence.",
+    "MISSING_REASON": "The answer does not explain the reason or rationale.",
+    "UNCLEAR_ROLE": "The candidate's own role is unclear.",
+    "NO_RESULT": "The answer does not include a result or measurable outcome.",
+    "TECH_DEPTH_LOW": "The technical explanation is too shallow.",
+    "WEAK_JD_LINK": "The answer is weakly connected to the job description.",
+    "STAR_MISSING": "The answer lacks a clear situation, task, action, and result structure.",
+    "NO_ALTERNATIVE": "The answer does not compare alternatives or trade-offs.",
+    "OFF_TOPIC": "The answer does not address the question.",
+}
+
 
 class AIChainOpenAIError(RuntimeError):
     """OpenAI real call 실패를 명확히 전달하기 위한 예외."""
@@ -147,7 +185,14 @@ class AIChainOpenAIEngine:
             if not parsed:
                 raise ValueError("OpenAI sufficiency response is empty or invalid JSON.")
 
-            return self._normalize_sufficiency_result(parsed, fallback=None)
+            normalized = self._normalize_sufficiency_result(
+                parsed,
+                fallback=None,
+            )
+            return self._apply_local_insufficiency_guardrail(
+                normalized,
+                payload,
+            )
 
         except Exception as exc:
             raise AIChainOpenAIError(
@@ -356,23 +401,54 @@ class AIChainOpenAIEngine:
                 "Invalid OpenAI answer sufficiency result.",
             )
 
-        next_action = parsed.get("next_action")
-        if next_action not in {
-            NextAction.NEXT_QUESTION.value,
-            NextAction.GENERATE_FOLLOWUP.value,
-        }:
+        next_action = self._extract_next_action(parsed)
+        if not next_action:
             return self._fallback_or_raise(fallback, "Invalid OpenAI question generation result.")
 
-        answer_weakness_tags = parsed.get("answer_weakness_tags")
-        if not isinstance(answer_weakness_tags, list):
-            answer_weakness_tags = []
+        answer_weakness_tags = self._normalize_weakness_tags(
+            self._first_present(
+                parsed,
+                (
+                    "answer_weakness_tags",
+                    "weakness_tags",
+                    "weakness_triggers",
+                    "triggers",
+                ),
+                default=[],
+            )
+        )
 
-        selected_weakness_tag = parsed.get("selected_weakness_tag")
-        if selected_weakness_tag is not None and not isinstance(selected_weakness_tag, dict):
-            selected_weakness_tag = None
+        selected_weakness_tag = self._normalize_selected_weakness_tag(
+            self._first_present(
+                parsed,
+                (
+                    "selected_weakness_tag",
+                    "selected_trigger",
+                    "trigger",
+                    "followup_trigger",
+                    "follow_up_trigger",
+                    "answer_judgement",
+                    "answer_judgment",
+                ),
+            )
+        )
 
         should_generate_followup = next_action == NextAction.GENERATE_FOLLOWUP.value
-        is_sufficient = bool(parsed.get("is_sufficient", not should_generate_followup))
+        parsed_is_sufficient = self._coerce_bool(
+            self._first_present(
+                parsed,
+                (
+                    "is_sufficient",
+                    "answer_sufficient",
+                    "sufficient",
+                ),
+            )
+        )
+        is_sufficient = (
+            parsed_is_sufficient
+            if parsed_is_sufficient is not None
+            else not should_generate_followup
+        )
 
         if should_generate_followup and selected_weakness_tag is None and answer_weakness_tags:
             first_tag = answer_weakness_tags[0]
@@ -384,7 +460,11 @@ class AIChainOpenAIEngine:
                 }
 
         if should_generate_followup and selected_weakness_tag is None:
-            return self._fallback_or_raise(fallback, "Invalid OpenAI question generation result.")
+            selected_weakness_tag = self._build_weakness_tag(
+                "ABSTRACT_ANSWER",
+                "The model requested a follow-up but did not provide a selected weakness tag.",
+            )
+            answer_weakness_tags = [selected_weakness_tag]
 
         return {
             "answer_id": parsed.get("answer_id", fallback.get("answer_id")),
@@ -398,6 +478,297 @@ class AIChainOpenAIEngine:
             "should_generate_followup": should_generate_followup,
             "next_action": next_action,
         }
+
+    @staticmethod
+    def _first_present(
+        source: dict[str, Any],
+        keys: tuple[str, ...],
+        default: Any = None,
+    ) -> Any:
+        for key in keys:
+            if key in source and source.get(key) is not None:
+                return source.get(key)
+        return default
+
+    @staticmethod
+    def _coerce_bool(value: Any) -> bool | None:
+        if isinstance(value, bool):
+            return value
+        if value is None:
+            return None
+
+        normalized = str(value).strip().lower()
+        if normalized in {"true", "1", "yes", "y"}:
+            return True
+        if normalized in {"false", "0", "no", "n"}:
+            return False
+        return None
+
+    def _extract_next_action(self, parsed: dict[str, Any]) -> str | None:
+        for key in (
+            "next_action",
+            "follow_up_decision",
+            "followup_decision",
+            "followup_action",
+            "follow_up_action",
+            "decision",
+            "action",
+        ):
+            action = self._normalize_action(parsed.get(key))
+            if action:
+                return action
+
+        should_generate_followup = self._coerce_bool(
+            self._first_present(
+                parsed,
+                (
+                    "should_generate_followup",
+                    "should_generate_follow_up",
+                    "generate_followup",
+                    "generate_follow_up",
+                    "needs_followup",
+                    "needs_follow_up",
+                ),
+            )
+        )
+        if should_generate_followup is not None:
+            return (
+                NextAction.GENERATE_FOLLOWUP.value
+                if should_generate_followup
+                else NextAction.NEXT_QUESTION.value
+            )
+
+        is_sufficient = self._coerce_bool(
+            self._first_present(
+                parsed,
+                (
+                    "is_sufficient",
+                    "answer_sufficient",
+                    "sufficient",
+                ),
+            )
+        )
+        if is_sufficient is not None:
+            return (
+                NextAction.NEXT_QUESTION.value
+                if is_sufficient
+                else NextAction.GENERATE_FOLLOWUP.value
+            )
+
+        return None
+
+    @staticmethod
+    def _normalize_action(value: Any) -> str | None:
+        if value is None:
+            return None
+
+        normalized = str(value).strip().upper().replace("-", "_").replace(" ", "_")
+        if normalized == NextAction.GENERATE_FOLLOWUP.value:
+            return NextAction.GENERATE_FOLLOWUP.value
+        if normalized == NextAction.NEXT_QUESTION.value:
+            return NextAction.NEXT_QUESTION.value
+        if normalized in FOLLOWUP_ACTION_ALIASES:
+            return NextAction.GENERATE_FOLLOWUP.value
+        if normalized in NEXT_QUESTION_ACTION_ALIASES:
+            return NextAction.NEXT_QUESTION.value
+        return None
+
+    def _normalize_weakness_tags(self, raw_tags: Any) -> list[dict[str, Any]]:
+        if raw_tags is None:
+            return []
+        if isinstance(raw_tags, (str, dict)):
+            raw_tags = [raw_tags]
+        if not isinstance(raw_tags, list):
+            return []
+
+        normalized_tags = []
+        for index, tag in enumerate(raw_tags, start=1):
+            normalized = self._normalize_selected_weakness_tag(tag)
+            if normalized:
+                normalized["priority_rank"] = normalized.get("priority_rank") or index
+                normalized_tags.append(normalized)
+        return normalized_tags
+
+    def _normalize_selected_weakness_tag(self, raw_tag: Any) -> dict[str, Any] | None:
+        if raw_tag is None:
+            return None
+
+        if isinstance(raw_tag, str):
+            return self._build_weakness_tag(raw_tag)
+
+        if not isinstance(raw_tag, dict):
+            return None
+
+        trigger = (
+            raw_tag.get("trigger")
+            or raw_tag.get("tag_name")
+            or raw_tag.get("name")
+            or raw_tag.get("code")
+            or raw_tag.get("weakness_tag_id")
+        )
+        if not trigger:
+            return None
+
+        normalized = self._build_weakness_tag(
+            trigger,
+            reason=raw_tag.get("reason") or raw_tag.get("description"),
+        )
+        normalized["weakness_tag_id"] = (
+            raw_tag.get("weakness_tag_id")
+            or raw_tag.get("answer_weakness_tag_id")
+            or normalized["weakness_tag_id"]
+        )
+        return normalized
+
+    @staticmethod
+    def _normalize_trigger_name(value: Any) -> str:
+        normalized = str(value or "ABSTRACT_ANSWER").strip().upper()
+        normalized = normalized.replace("-", "_").replace(" ", "_")
+        return normalized or "ABSTRACT_ANSWER"
+
+    def _build_weakness_tag(self, trigger: Any, reason: str | None = None) -> dict[str, Any]:
+        trigger_name = self._normalize_trigger_name(trigger)
+        if trigger_name not in FOLLOWUP_TRIGGER_DEFINITIONS:
+            trigger_name = "ABSTRACT_ANSWER"
+
+        return {
+            "weakness_tag_id": trigger_name,
+            "tag_name": trigger_name,
+            "reason": reason or FOLLOWUP_TRIGGER_DEFINITIONS[trigger_name],
+        }
+
+    def _apply_local_insufficiency_guardrail(
+        self,
+        result: dict[str, Any],
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        if result.get("next_action") == NextAction.GENERATE_FOLLOWUP.value:
+            return result
+
+        triggers = self._detect_local_followup_triggers(payload)
+        if not triggers:
+            return result
+
+        weakness_tags = [
+            self._build_weakness_tag(trigger)
+            for trigger in triggers
+        ]
+        selected_weakness_tag = weakness_tags[0]
+
+        return {
+            **result,
+            "is_sufficient": False,
+            "sufficiency_reason": selected_weakness_tag["reason"],
+            "answer_weakness_tags": weakness_tags,
+            "selected_weakness_tag": selected_weakness_tag,
+            "should_generate_followup": True,
+            "next_action": NextAction.GENERATE_FOLLOWUP.value,
+        }
+
+    def _detect_local_followup_triggers(self, payload: dict[str, Any]) -> list[str]:
+        answer = payload.get("answer") or {}
+        question = payload.get("question") or {}
+        answer_text = str(answer.get("answer_text") or "").strip()
+        question_text = str(question.get("question_text") or "").strip()
+
+        if not answer_text:
+            return ["TOO_SHORT"]
+
+        normalized_answer = answer_text.lower()
+        compact_answer = "".join(answer_text.split())
+        triggers = []
+
+        if len(compact_answer) < 40:
+            triggers.append("TOO_SHORT")
+
+        if any(token in normalized_answer for token in ("i do not know", "not sure", "잘 모르", "모르겠습니다")):
+            triggers.append("OFF_TOPIC")
+
+        concrete_markers = (
+            "because",
+            "therefore",
+            "result",
+            "measured",
+            "implemented",
+            "designed",
+            "compared",
+            "tradeoff",
+            "장애",
+            "원인",
+            "결과",
+            "성과",
+            "지표",
+            "선택",
+            "이유",
+            "비교",
+            "대안",
+            "구현",
+            "설계",
+            "개선",
+            "감소",
+            "증가",
+            "측정",
+            "제가",
+            "직접",
+            "담당",
+            "기여",
+        )
+        if len(compact_answer) < 90 and not any(marker in answer_text for marker in concrete_markers):
+            triggers.append("ABSTRACT_ANSWER")
+
+        role_markers = ("제가", "직접", "담당", "주도", "기여", "I ", "my ", "implemented", "designed", "led")
+        if len(compact_answer) < 120 and not any(marker in answer_text for marker in role_markers):
+            triggers.append("UNCLEAR_ROLE")
+
+        result_markers = ("결과", "성과", "지표", "개선", "감소", "증가", "해결", "result", "improved", "reduced", "increased")
+        if len(compact_answer) < 120 and not any(marker in answer_text for marker in result_markers):
+            triggers.append("NO_RESULT")
+
+        reason_markers = ("이유", "때문", "근거", "선택", "비교", "대안", "because", "why", "reason", "tradeoff")
+        if len(compact_answer) < 120 and not any(marker in answer_text for marker in reason_markers):
+            triggers.append("MISSING_REASON")
+
+        technical_question_markers = (
+            "기술",
+            "API",
+            "Django",
+            "OpenAI",
+            "장애",
+            "설계",
+            "구현",
+            "technical",
+            "architecture",
+        )
+        technical_answer_markers = (
+            "API",
+            "DB",
+            "SQL",
+            "Django",
+            "OpenAI",
+            "transaction",
+            "rollback",
+            "retry",
+            "cache",
+            "queue",
+            "구현",
+            "설계",
+            "트랜잭션",
+            "재시도",
+        )
+        if (
+            any(marker in question_text for marker in technical_question_markers)
+            and len(compact_answer) < 120
+            and not any(marker in answer_text for marker in technical_answer_markers)
+        ):
+            triggers.append("TECH_DEPTH_LOW")
+
+        seen = set()
+        unique_triggers = []
+        for trigger in triggers:
+            if trigger not in seen:
+                seen.add(trigger)
+                unique_triggers.append(trigger)
+        return unique_triggers
 
     def _normalize_followup_result(
         self,

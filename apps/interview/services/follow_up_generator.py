@@ -39,7 +39,7 @@ class FollowupGenerator:
             sufficiency_payload
         )
 
-        if sufficiency_result.get("next_action") == NextAction.NEXT_QUESTION.value:
+        if not cls._should_generate_followup(sufficiency_result):
             return None, False
 
         selected_weakness_tag = sufficiency_result.get("selected_weakness_tag")
@@ -189,6 +189,20 @@ class FollowupGenerator:
     @classmethod
     def _get_ai_chain_service(cls):
         return cls.ai_chain_service or InterviewAIChainService()
+
+    @staticmethod
+    def _should_generate_followup(sufficiency_result):
+        next_action = sufficiency_result.get("next_action")
+        if next_action == NextAction.GENERATE_FOLLOWUP.value:
+            return True
+        if next_action == NextAction.NEXT_QUESTION.value:
+            return False
+
+        should_generate_followup = sufficiency_result.get("should_generate_followup")
+        if isinstance(should_generate_followup, bool):
+            return should_generate_followup
+
+        return False
 
     @staticmethod
     def _is_real_call_mode():

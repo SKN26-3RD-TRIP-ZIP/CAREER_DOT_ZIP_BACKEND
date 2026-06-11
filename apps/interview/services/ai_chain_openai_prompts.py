@@ -68,6 +68,25 @@ def build_answer_sufficiency_user_prompt(payload: dict[str, Any]) -> str:
         "weakness_tag_candidates": (
             payload.get("weakness_tag_candidates") or DEFAULT_WEAKNESS_TAG_CANDIDATES
         ),
+        "followup_decision_rules": {
+            "generate_followup_when": [
+                "TOO_SHORT",
+                "ABSTRACT_ANSWER",
+                "MISSING_REASON",
+                "UNCLEAR_ROLE",
+                "NO_RESULT",
+                "TECH_DEPTH_LOW",
+                "WEAK_JD_LINK",
+                "STAR_MISSING",
+                "NO_ALTERNATIVE",
+                "OFF_TOPIC",
+            ],
+            "next_question_only_when": (
+                "The answer has concrete situation, action, reason, "
+                "personal contribution, and result."
+            ),
+            "selected_weakness_tag_tag_name_must_be_one_of_generate_followup_when": True,
+        },
     }
     return json.dumps(compact_payload, ensure_ascii=False)
 
