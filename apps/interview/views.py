@@ -21,9 +21,8 @@ from .serializers import (
 from .models import InterviewQuestion, QuestionSourceTag
 from .serializers import InterviewQuestionSerializer
 from .services.question_generator import generate_interview_questions
-from .services.follow_up_generator import generate_follow_up_questions
+from .services.follow_up_generator import FollowupGenerator
 from .services.ai_chain_openai_engine import AIChainOpenAIError
-from .services.ai_chain_service import InterviewAIChainService
 from .serializers import FollowUpQuestionSerializer
 from django.db import models
 from django.db.models import Prefetch
@@ -464,50 +463,21 @@ class FollowUpGenerateView(APIView):
         if force:
             existing.delete()
 
-        previous_question_count = InterviewQuestion.objects.filter(
-            session=session,
-        ).count()
-        previous_followup_count = InterviewQuestion.objects.filter(
-            parent_question=answer.question,
-            question_type='follow_up',
-        ).count()
-
-        payload = {
-            'session_id': str(session.id),
-            'question': {
-                'question_id': str(answer.question.id),
-                'question_text': answer.question.question_text,
-                'question_type': answer.question.question_type,
-                'source_tags': [],
-            },
-            'answer': {
-                'answer_id': str(answer.id),
-                'answer_text': answer.answer_text,
-            },
-            'persona': {
-                'persona_type': session.persona,
-            },
-            'prompt_version_id': None,
-            'conversation_context': {
-                'previous_question_count': previous_question_count,
-                'previous_followup_count_for_parent': previous_followup_count,
-            },
-        }
-
         try:
-            result = InterviewAIChainService().generate_followup_mock(payload)
+            followup, created = FollowupGenerator.create_followup(answer)
         except AIChainOpenAIError as exc:
             return Response(
                 {
-                    'detail': str(exc),
-                    'error_code': 'llm_generation_failed',
+                    'detail': '꼬리질문 생성에 실패했습니다. 잠시 후 다시 시도해 주세요.',
+                    'code': 'AI_FOLLOWUP_GENERATION_FAILED',
+                    'error_code': 'AI_FOLLOWUP_GENERATION_FAILED',
                     'chain': exc.chain_name,
                     'retryable': True,
                 },
                 status=status.HTTP_502_BAD_GATEWAY,
             )
 
-        if result.get('next_action') == 'NEXT_QUESTION' or not result.get('followup_question'):
+        if followup is None:
             return Response(
                 {
                     'session_id': str(session.id),
@@ -519,27 +489,6 @@ class FollowUpGenerateView(APIView):
                 status=status.HTTP_200_OK,
             )
 
-        followup_data = result['followup_question']
-
-        last_q = InterviewQuestion.objects.filter(session=session).order_by('-order_index').first()
-        next_index = last_q.order_index + 1 if last_q else 1
-
-        source_reference = followup_data.get('generation_reason') or 'followup'
-        if not str(source_reference).startswith('ai_chain_mock:'):
-            source_reference = f'ai_chain_mock:{source_reference}'
-
-        followup = InterviewQuestion.objects.create(
-            session=session,
-            order_index=next_index,
-            question_type='follow_up',
-            question_text=followup_data.get('question_text'),
-            difficulty=followup_data.get('difficulty'),
-            source_type='general',
-            source_reference=source_reference,
-            parent_question=answer.question,
-            source_answer=answer,
-        )
-
         serializer = FollowUpQuestionSerializer([followup], many=True)
         return Response(
             {
@@ -549,7 +498,7 @@ class FollowUpGenerateView(APIView):
                 'follow_up_questions': serializer.data,
                 'next_action': 'GENERATE_FOLLOWUP',
             },
-            status=status.HTTP_201_CREATED,
+            status=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
         )
 
 
