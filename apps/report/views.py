@@ -32,6 +32,51 @@ def report_generation_failed_response():
   )
 
 
+def _get_existing_report(session):
+  try:
+    return session.final_report
+  except (FinalReport.DoesNotExist, AttributeError):
+    return None
+
+
+def _check_evaluation_failure(report):
+  """evaluated_answer_count == 0이면서 실제 답변이 존재 -> 평가 실패 판정."""
+  summary = report.summary or {}
+  metadata = summary.get('evaluation_metadata', {})
+  return metadata.get('answer_count', 0) > 0 and metadata.get('evaluated_answer_count', 0) == 0
+
+
+def _create_report(session):
+  with transaction.atomic():
+    summary = generate_final_report(session)
+    if is_failed_report_summary(summary):
+      raise ReportGenerationFailed()
+    return FinalReport.objects.create(session=session, summary=summary)
+
+
+def _build_session_report_response(session):
+  """session 객체를 받아 리포트를 조회/생성 후 Response를 반환하는 공통 헬퍼.
+
+  LatestSessionReportView와 SessionFinalReportView가 공유한다.
+  session 소유권 검증은 호출부에서 완료된 것으로 가정한다.
+  """
+  report = _get_existing_report(session)
+  if report and _check_evaluation_failure(report):
+    report.delete()
+    report = None
+
+  if not report:
+    try:
+      report = _create_report(session)
+    except ReportGenerationFailed:
+      return report_generation_failed_response()
+    except Exception:
+      return report_generation_failed_response()
+
+  serializer = FinalReportSessionSerializer(report)
+  return Response(serializer.data, status=status.HTTP_200_OK)
+
+
 class FinalReportGenerateView(APIView):
   permission_classes = [permissions.IsAuthenticated]
 
@@ -116,6 +161,25 @@ class FinalReportListView(APIView):
     return Response({'total': reports.count(), 'results': serializer.data}, status=status.HTTP_200_OK)
 
 
+class LatestSessionReportView(APIView):
+  """GET /sessions/latest/report -- 가장 최근 completed 세션의 리포트를 반환."""
+  permission_classes = [permissions.IsAuthenticated]
+
+  def get(self, request):
+    session = (
+        InterviewSession.objects
+        .filter(user=request.user, status='completed')
+        .order_by('-created_at')
+        .first()
+    )
+    if not session:
+      return Response(
+          {'detail': 'No completed session found.'},
+          status=status.HTTP_404_NOT_FOUND,
+      )
+    return _build_session_report_response(session)
+
+
 class SessionFinalReportView(APIView):
   permission_classes = [permissions.IsAuthenticated]
 
@@ -124,35 +188,6 @@ class SessionFinalReportView(APIView):
       return InterviewSession.objects.get(id=session_id, user=self.request.user)
     except InterviewSession.DoesNotExist:
       return None
-
-  def get_existing_report(self, session):
-    try:
-      return session.final_report
-    except (FinalReport.DoesNotExist, AttributeError):
-      return None
-
-  def create_report(self, session):
-    with transaction.atomic():
-      summary = generate_final_report(session)
-      if is_failed_report_summary(summary):
-        raise ReportGenerationFailed()
-      return FinalReport.objects.create(
-          session=session,
-          summary=summary,
-      )
-
-  def _check_evaluation_failure(self, report, session):
-    """평가 실패를 감지한다.
-
-    evaluated_answer_count == 0이면서 실제 답변이 존재하는 경우,
-    OpenAI 호출이 real mode에서 전부 실패한 것으로 판단한다.
-    (mock mode에서는 0점 fallback이 반환되므로 evaluated_answer_count > 0)
-    """
-    summary = report.summary or {}
-    metadata = summary.get("evaluation_metadata", {})
-    evaluated = metadata.get("evaluated_answer_count", 0)
-    answer_count = metadata.get("answer_count", 0)
-    return answer_count > 0 and evaluated == 0
 
   def get(self, request, session_id):
     session = self.get_session(session_id)
@@ -165,18 +200,4 @@ class SessionFinalReportView(APIView):
           status=status.HTTP_404_NOT_FOUND,
       )
 
-    report = self.get_existing_report(session)
-    if report and self._check_evaluation_failure(report, session):
-      report.delete()
-      report = None
-
-    if not report:
-      try:
-        report = self.create_report(session)
-      except ReportGenerationFailed:
-        return report_generation_failed_response()
-      except Exception:
-        return report_generation_failed_response()
-
-    serializer = FinalReportSessionSerializer(report)
-    return Response(serializer.data, status=status.HTTP_200_OK)
+    return _build_session_report_response(session)

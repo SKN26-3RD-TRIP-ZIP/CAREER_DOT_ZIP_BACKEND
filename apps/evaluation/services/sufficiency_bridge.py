@@ -1,5 +1,7 @@
 """Bridge evaluation pipeline with interview team's answer sufficiency chain."""
 
+from django.conf import settings
+
 from apps.interview.services.ai_chain_service import InterviewAIChainService
 from apps.interview.services.follow_up_generator import FollowupGenerator
 
@@ -20,6 +22,10 @@ def resolve_answer_sufficiency(answer, request_sufficiency=None):
     tags = request_sufficiency.get('answer_weakness_tags')
     if tags is not None:
       return tags, request_sufficiency.get('selected_weakness_tag')
+
+  # OPENAI_USE_MOCK=True 이면 OpenAI API Key 없는 로컬 환경 → sufficiency 호출 스킵
+  if getattr(settings, 'OPENAI_USE_MOCK', False):
+    return [], None
 
   service = InterviewAIChainService()
   payload = FollowupGenerator._build_sufficiency_payload(answer)
