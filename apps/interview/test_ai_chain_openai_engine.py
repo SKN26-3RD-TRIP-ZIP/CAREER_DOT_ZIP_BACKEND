@@ -341,6 +341,109 @@ class AIChainOpenAIEngineTest(SimpleTestCase):
         self.assertTrue(result["is_sufficient"])
         self.assertIsNone(result["selected_weakness_tag"])
 
+    def test_openai_engine_suppresses_overzealous_followup_for_korean_sufficient_answer(self):
+        raw_response = """```json
+        {
+          "answer_id": "33333333-3333-3333-3333-333333333333",
+          "is_sufficient": false,
+          "sufficiency_reason": "Model missed Korean sufficiency markers.",
+          "selected_weakness_tag": {
+            "weakness_tag_id": "NO_RESULT",
+            "tag_name": "NO_RESULT",
+            "reason": "Needs measurable outcome."
+          },
+          "should_generate_followup": true,
+          "next_action": "GENERATE_FOLLOWUP"
+        }
+        ```"""
+        fake_client = FakeOpenAIClient(raw_response)
+        engine = AIChainOpenAIEngine(
+            api_key="test-api-key",
+            client_factory=lambda api_key: fake_client,
+            enable_real_call=True,
+        )
+        payload = self._sufficiency_payload()
+        payload["question"]["question_text"] = (
+            "해당 프로젝트에서 본인이 맡은 역할과 기술 선택 이유를 설명해 주세요."
+        )
+        payload["answer"]["answer_text"] = (
+            "해당 프로젝트에서 저는 백엔드 API 설계와 배포를 담당했습니다. "
+            "초기에는 응답 속도가 느린 문제가 있었고, 원인은 중복 쿼리와 인덱스 부재였습니다. "
+            "저는 Django ORM 쿼리를 분석해서 select_related와 prefetch_related를 적용했고, "
+            "조회 조건에 맞춰 MySQL 인덱스를 추가했습니다. "
+            "그 결과 목록 조회 응답 시간이 약 1.8초에서 0.6초로 줄었습니다. "
+            "Redis 캐싱도 검토했지만 데이터 갱신 빈도가 높아 우선 쿼리 최적화를 선택했습니다."
+        )
+
+        result = engine.judge_answer_sufficiency(payload)
+
+        self.assertEqual(result["next_action"], NextAction.NEXT_QUESTION.value)
+        self.assertFalse(result["should_generate_followup"])
+        self.assertTrue(result["is_sufficient"])
+        self.assertIsNone(result["selected_weakness_tag"])
+
+    def test_openai_engine_keeps_followup_for_korean_abstract_answer(self):
+        raw_response = """```json
+        {
+          "answer_id": "33333333-3333-3333-3333-333333333333",
+          "is_sufficient": true,
+          "sufficiency_reason": "Model was too permissive.",
+          "answer_weakness_tags": [],
+          "selected_weakness_tag": null,
+          "should_generate_followup": false,
+          "next_action": "NEXT_QUESTION"
+        }
+        ```"""
+        fake_client = FakeOpenAIClient(raw_response)
+        engine = AIChainOpenAIEngine(
+            api_key="test-api-key",
+            client_factory=lambda api_key: fake_client,
+            enable_real_call=True,
+        )
+        payload = self._sufficiency_payload()
+        payload["question"]["question_text"] = (
+            "해당 프로젝트에서 본인이 맡은 역할과 기술 선택 이유를 설명해 주세요."
+        )
+        payload["answer"]["answer_text"] = "프로젝트에서 백엔드를 열심히 했습니다."
+
+        result = engine.judge_answer_sufficiency(payload)
+
+        self.assertEqual(result["next_action"], NextAction.GENERATE_FOLLOWUP.value)
+        self.assertTrue(result["should_generate_followup"])
+        self.assertFalse(result["is_sufficient"])
+
+    def test_openai_engine_keeps_high_severity_followup_for_korean_off_topic_answer(self):
+        raw_response = """```json
+        {
+          "answer_id": "33333333-3333-3333-3333-333333333333",
+          "followup_decision": "GENERATE_FOLLOWUP",
+          "trigger": "OFF_TOPIC",
+          "sufficiency_reason": "The answer is long but unrelated to the technical question."
+        }
+        ```"""
+        fake_client = FakeOpenAIClient(raw_response)
+        engine = AIChainOpenAIEngine(
+            api_key="test-api-key",
+            client_factory=lambda api_key: fake_client,
+            enable_real_call=True,
+        )
+        payload = self._sufficiency_payload()
+        payload["question"]["question_text"] = (
+            "Django API 성능 문제를 어떻게 분석하고 해결했는지 설명해 주세요."
+        )
+        payload["answer"]["answer_text"] = (
+            "동아리 행사에서 저는 홍보 문구 작성과 현장 안내를 담당했습니다. "
+            "초기에는 참석자가 적은 문제가 있었고, 원인은 공지 시간이 늦었기 때문이었습니다. "
+            "저는 안내 문구를 개선하고 채널별 발송 시간을 비교했습니다. "
+            "그 결과 참석자가 늘었고, 다음 행사에서는 우선 홍보 일정을 앞당기는 방식을 선택했습니다."
+        )
+
+        result = engine.judge_answer_sufficiency(payload)
+
+        self.assertEqual(result["next_action"], NextAction.GENERATE_FOLLOWUP.value)
+        self.assertTrue(result["should_generate_followup"])
+        self.assertEqual(result["selected_weakness_tag"]["tag_name"], "OFF_TOPIC")
+
     def test_openai_engine_keeps_high_severity_followup_for_off_topic_answer(self):
         raw_response = """```json
         {
