@@ -42,7 +42,7 @@ OPENAI_API_KEY = os.getenv('OPENAI_API_KEY', '')
 PINECONE_API_KEY    = os.getenv('PINECONE_API_KEY', '')
 PINECONE_INDEX_NAME = os.getenv('PINECONE_INDEX_NAME', '')
 INTERVIEW_AI_CHAIN_ENGINE = os.getenv('INTERVIEW_AI_CHAIN_ENGINE', 'mock').strip().lower()
-INTERVIEW_AI_OPENAI_MODEL = os.getenv('INTERVIEW_AI_OPENAI_MODEL', 'gpt-4o-mini')
+INTERVIEW_AI_OPENAI_MODEL = os.getenv('INTERVIEW_AI_OPENAI_MODEL', 'gpt-4o')
 INTERVIEW_AI_OPENAI_ENABLE_REAL_CALL = _env_bool(
     'INTERVIEW_AI_OPENAI_ENABLE_REAL_CALL',
     False,
@@ -198,7 +198,18 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 AUTH_USER_MODEL = 'accounts.User'
 
 # ===== CORS Settings =====
-CORS_ALLOW_ALL_ORIGINS = True
+# withCredentials(쿠키 기반 refresh) 요청은 와일드카드('*') Origin 과 함께 쓸 수 없다.
+# 따라서 특정 Origin 화이트리스트 + credentials 허용으로 구성한다.
+# 추가 Origin 은 .env 의 CORS_ALLOWED_ORIGINS(쉼표구분)로 주입한다.
+CORS_ALLOW_CREDENTIALS = True
+CORS_ALLOWED_ORIGINS = [
+    o.strip()
+    for o in os.getenv(
+        "CORS_ALLOWED_ORIGINS",
+        "http://localhost:5173,http://127.0.0.1:5173",
+    ).split(",")
+    if o.strip()
+]
 
 # ===== DRF Settings =====
 REST_FRAMEWORK = {
@@ -227,4 +238,38 @@ SPEECH_CONFIG = {
     "FILLER_PENALTY_PER_COUNT": 5.0,        # 필러워드 개당 감점 수치
     "FLOOR_SCORE": 20.0,                    # 최저 방어선 점수
     "EXCESSIVE_FILLER_LIMIT": 6            # 과락 기준 개수
+}
+# ===== 이메일 발송 설정 =====
+# 로컬/개발 기본값은 console backend(터미널 출력). 운영/QA 는 .env 에서 SMTP 로 전환.
+# 실제 SMTP 비밀번호 등은 .env(미커밋)에서만 주입한다.
+EMAIL_BACKEND = os.getenv(
+    "EMAIL_BACKEND", "django.core.mail.backends.console.EmailBackend"
+)
+EMAIL_HOST = os.getenv("EMAIL_HOST", "")
+EMAIL_PORT = int(os.getenv("EMAIL_PORT", "587"))
+EMAIL_HOST_USER = os.getenv("EMAIL_HOST_USER", "")
+EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD", "")
+EMAIL_USE_TLS = _env_bool("EMAIL_USE_TLS", True)
+DEFAULT_FROM_EMAIL = os.getenv("DEFAULT_FROM_EMAIL", "Career.zip <no-reply@career.zip>")
+
+# 관리자 신규가입 알림 수신 주소. 미설정 시 알림 생략.
+ADMIN_NOTIFICATION_EMAIL = os.getenv("ADMIN_NOTIFICATION_EMAIL", "")
+
+# 이메일 인증 링크 구성용 FE base URL
+FRONTEND_BASE_URL = os.getenv("FRONTEND_BASE_URL", "http://localhost:5173")
+
+# 이메일 인증 토큰 만료 (초) — 기본 24시간
+EMAIL_VERIFICATION_TOKEN_MAX_AGE = int(
+    os.getenv("EMAIL_VERIFICATION_TOKEN_MAX_AGE", str(60 * 60 * 24))
+)
+
+# ===== 로깅 (메일/인증 실패 추적) =====
+
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "handlers": {"console": {"class": "logging.StreamHandler"}},
+    "loggers": {
+        "apps.accounts": {"handlers": ["console"], "level": "INFO", "propagate": False},
+    },
 }

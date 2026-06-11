@@ -1,6 +1,11 @@
+import logging
 from collections import Counter
 
 from django.utils import timezone
+
+from apps.evaluation.services.session_evaluation import evaluate_session_answers
+
+logger = logging.getLogger("feedback_ai.report_generator")
 
 
 def get_score(value):
@@ -35,6 +40,14 @@ def generate_final_report(session):
   Build the canonical feedback_reports.summary JSONB payload
   (evaluation_metadata, score_summary, score_detail, dynamically_triggered_tags).
   """
+  # 미평가 답변 자동 백필: 실제 면접 플로우(MVP)에서는 답변 저장만 일어나고
+  # 평가가 트리거되지 않으므로, 리포트 생성 시점에 누락된 평가를 채운다.
+  # 멱등이며(이미 평가된 답변은 건너뜀) 답변별로 예외가 격리되어 실패해도 리포트는 계속 생성된다.
+  try:
+    evaluate_session_answers(session)
+  except Exception:  # noqa: BLE001 - 백필 실패가 리포트 생성을 막지 않도록 방어
+    logger.exception('evaluate_session_answers backfill failed for session %s', getattr(session, 'id', '?'))
+
   answers = session.answers.all().select_related('evaluation', 'question').prefetch_related(
       'strength_mappings__strength_tag',
       'weakness_mappings__weakness_tag',
@@ -69,7 +82,7 @@ def generate_final_report(session):
     for wm in ans.weakness_mappings.all():
       weakness_counter[wm.weakness_tag.tag_name] += 1
 
-    # Technical 축(고도화: SBERT 유사도 기반 기술 질문 평가). 미구현 시 None → 0 처리.
+    # Technical 축(고도화: SBERT 유사도 기반 기술 질문 평가). 미구현 시 None -> 0 처리.
     sbert_sims = [
         s for s in (
             getattr(eval_obj, 'sbert_db_similarity', None),
@@ -173,13 +186,13 @@ def generate_final_report(session):
 
   # Grounding 축: 현재 기술 질문 평가방식(final_tech_score = grounding 기반 종합 점수)
   grounding_avg = round(sum(final_scores) / len(final_scores), 1) if final_scores else 0
-  # Technical 축: 고도화 SBERT 유사도 평가(0~1 → 0~100 환산). 미구현 시 0.
+  # Technical 축: 고도화 SBERT 유사도 평가(0~1 -> 0~100 환산). 미구현 시 0.
   technical_avg = round((sum(sbert_scores) / len(sbert_scores)) * 100, 1) if sbert_scores else 0
   strength_tags = _aggregate_tag_objects(evaluated_answers, 'strength_mappings', 'strength_tag')
   weakness_tags = _aggregate_tag_objects(evaluated_answers, 'weakness_mappings', 'weakness_tag')
 
   # 질문별 평가 경량 배열 (리포트 메인 '질문별 AI 평가' 테이블용 스냅샷).
-  # generate 시점에 함께 집계 → 별도 쿼리/추가 API 없이 리포트 1회 호출로 노출.
+  # generate 시점에 함께 집계 -> 별도 쿼리/추가 API 없이 리포트 1회 호출로 노출.
   question_breakdown = []
   for ans in evaluated_answers:
     q = ans.question
