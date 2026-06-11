@@ -7,6 +7,10 @@ from apps.interview.services.ai_chain_service import InterviewAIChainService
 
 
 class AIChainEngineFactoryTest(SimpleTestCase):
+    @override_settings(
+        INTERVIEW_AI_CHAIN_ENGINE='mock',
+        INTERVIEW_AI_OPENAI_ENABLE_REAL_CALL=False,
+    )
     def test_get_ai_chain_engine_returns_mock_engine_by_default(self):
         engine = get_ai_chain_engine()
 
@@ -38,6 +42,10 @@ class AIChainEngineFactoryTest(SimpleTestCase):
         with self.assertRaises(ValueError):
             get_ai_chain_engine("unsupported")
 
+    @override_settings(
+        INTERVIEW_AI_CHAIN_ENGINE='mock',
+        INTERVIEW_AI_OPENAI_ENABLE_REAL_CALL=False,
+    )
     def test_interview_ai_chain_service_uses_factory_engine_by_default(self):
         service = InterviewAIChainService()
 
