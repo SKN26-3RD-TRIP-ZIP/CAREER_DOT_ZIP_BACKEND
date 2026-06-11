@@ -32,6 +32,7 @@ class MemberDetailView(AdminAPIView):
             'is_staff': member.is_staff,
             'created_at': member.created_at,
             'last_login': member.last_login,
+            'practice_count': completed.count(),
             'interview_count': sessions.count(),
             'completed_interview_count': completed.count(),
             'report_count': report_count,

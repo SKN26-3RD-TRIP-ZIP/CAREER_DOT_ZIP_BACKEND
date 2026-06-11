@@ -30,10 +30,18 @@ class AdminQueryAPITests(APITestCase):
         self.client.force_authenticate(self.admin_user)
 
     def test_member_list_filters_and_returns_practice_count(self):
+        # 완료된 세션 1개 + 미완료 세션 1개 → practice_count 는 완료된 1개만 집계
         InterviewSession.objects.create(
             user=self.member,
             interview_type='technical',
             persona='coach',
+            status='completed',
+        )
+        InterviewSession.objects.create(
+            user=self.member,
+            interview_type='technical',
+            persona='coach',
+            status='created',
         )
 
         response = self.client.get(

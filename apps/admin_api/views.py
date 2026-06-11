@@ -1,11 +1,13 @@
 from django.contrib.auth import get_user_model
 from django.db import transaction
-from django.db.models import Count
+from django.db.models import Count, Q
 from django.shortcuts import get_object_or_404
 from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework_simplejwt.authentication import JWTAuthentication
+
+from apps.common.choices import INTERVIEW_SESSION_STATUS_COMPLETED
 
 from .models import AuditLog
 from .permissions import IsAdminUserOrRole
@@ -38,7 +40,11 @@ class MemberListView(AdminAPIView):
         params = query_serializer.validated_data
 
         members = User.objects.annotate(
-            practice_count=Count('interview_sessions', distinct=True)
+            practice_count=Count(
+                'interview_sessions',
+                filter=Q(interview_sessions__status=INTERVIEW_SESSION_STATUS_COMPLETED),
+                distinct=True,
+            )
         ).order_by('-created_at')
         if params.get('status'):
             members = members.filter(status=params['status'])
