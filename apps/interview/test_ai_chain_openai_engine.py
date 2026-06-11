@@ -204,12 +204,100 @@ class AIChainOpenAIEngineTest(SimpleTestCase):
             client_factory=lambda api_key: fake_client,
             enable_real_call=True,
         )
+        payload = self._sufficiency_payload()
+        payload["answer"]["answer_text"] = (
+            "I designed the Django API retry flow because OpenAI calls can fail "
+            "transiently. I separated 502 retryable errors from validation errors, "
+            "used transaction rollback to prevent failed rows, and verified the "
+            "result with failure-rate metrics after deployment."
+        )
 
-        result = engine.judge_answer_sufficiency(self._sufficiency_payload())
+        result = engine.judge_answer_sufficiency(payload)
 
         self.assertEqual(result["next_action"], NextAction.NEXT_QUESTION.value)
         self.assertFalse(result["should_generate_followup"])
         self.assertTrue(result["is_sufficient"])
+
+    def test_openai_engine_overrides_short_answer_next_question_to_followup(self):
+        raw_response = """```json
+        {
+          "answer_id": "33333333-3333-3333-3333-333333333333",
+          "is_sufficient": true,
+          "sufficiency_reason": "Model was too permissive.",
+          "answer_weakness_tags": [],
+          "selected_weakness_tag": null,
+          "should_generate_followup": false,
+          "next_action": "NEXT_QUESTION"
+        }
+        ```"""
+        fake_client = FakeOpenAIClient(raw_response)
+        engine = AIChainOpenAIEngine(
+            api_key="test-api-key",
+            client_factory=lambda api_key: fake_client,
+            enable_real_call=True,
+        )
+        payload = self._sufficiency_payload()
+        payload["answer"]["answer_text"] = "I implemented the API."
+
+        result = engine.judge_answer_sufficiency(payload)
+
+        self.assertEqual(result["next_action"], NextAction.GENERATE_FOLLOWUP.value)
+        self.assertTrue(result["should_generate_followup"])
+        self.assertFalse(result["is_sufficient"])
+        self.assertEqual(result["selected_weakness_tag"]["tag_name"], "TOO_SHORT")
+
+    def test_openai_engine_overrides_abstract_answer_next_question_to_followup(self):
+        raw_response = """```json
+        {
+          "answer_id": "33333333-3333-3333-3333-333333333333",
+          "is_sufficient": true,
+          "sufficiency_reason": "Model was too permissive.",
+          "answer_weakness_tags": [],
+          "selected_weakness_tag": null,
+          "should_generate_followup": false,
+          "next_action": "NEXT_QUESTION"
+        }
+        ```"""
+        fake_client = FakeOpenAIClient(raw_response)
+        engine = AIChainOpenAIEngine(
+            api_key="test-api-key",
+            client_factory=lambda api_key: fake_client,
+            enable_real_call=True,
+        )
+        payload = self._sufficiency_payload()
+        payload["answer"]["answer_text"] = (
+            "I worked on several improvements and made the service better for users."
+        )
+
+        result = engine.judge_answer_sufficiency(payload)
+
+        self.assertEqual(result["next_action"], NextAction.GENERATE_FOLLOWUP.value)
+        self.assertEqual(
+            result["selected_weakness_tag"]["tag_name"],
+            "ABSTRACT_ANSWER",
+        )
+
+    def test_openai_engine_accepts_sufficiency_decision_aliases(self):
+        raw_response = """```json
+        {
+          "answer_id": "33333333-3333-3333-3333-333333333333",
+          "followup_decision": "follow_up",
+          "trigger": "TECH_DEPTH_LOW",
+          "sufficiency_reason": "Technical depth is too shallow."
+        }
+        ```"""
+        fake_client = FakeOpenAIClient(raw_response)
+        engine = AIChainOpenAIEngine(
+            api_key="test-api-key",
+            client_factory=lambda api_key: fake_client,
+            enable_real_call=True,
+        )
+
+        result = engine.judge_answer_sufficiency(self._sufficiency_payload())
+
+        self.assertEqual(result["next_action"], NextAction.GENERATE_FOLLOWUP.value)
+        self.assertTrue(result["should_generate_followup"])
+        self.assertEqual(result["selected_weakness_tag"]["tag_name"], "TECH_DEPTH_LOW")
 
     def test_openai_engine_raises_error_when_sufficiency_returns_invalid_json(self):
         fake_client = FakeOpenAIClient("JSON이 아닌 응답")

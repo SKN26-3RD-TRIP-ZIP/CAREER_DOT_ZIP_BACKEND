@@ -727,12 +727,15 @@ class MVPAnswerFollowupAPITests(APITestCase):
 
 
 class FakeFollowupAIChainService:
-    def __init__(self, *, fail=False):
+    def __init__(self, *, fail=False, sufficiency_result=None):
         self.fail = fail
+        self.sufficiency_result = sufficiency_result
 
     def judge_answer_sufficiency(self, payload):
         if self.fail:
             raise AIChainOpenAIError('followup_generation', 'followup failed')
+        if self.sufficiency_result is not None:
+            return self.sufficiency_result
         return {
             'next_action': 'GENERATE_FOLLOWUP',
             'selected_weakness_tag': {
@@ -808,6 +811,30 @@ class MVPAnswerFollowupRealModeAPITests(APITestCase):
         self.assertEqual(followup.source_answer, self.answer)
         self.assertFalse(followup.source_reference.startswith('ai_chain_mock:'))
         self.assertTrue(followup.source_reference.startswith('ai_chain:'))
+
+    @patch(
+        'apps.interview.services.follow_up_generator.FollowupGenerator._get_ai_chain_service',
+        return_value=FakeFollowupAIChainService(
+            sufficiency_result={
+                'next_action': 'NEXT_QUESTION',
+                'should_generate_followup': False,
+                'selected_weakness_tag': None,
+            },
+        ),
+    )
+    def test_real_mode_sufficient_answer_keeps_next_question_without_rows(self, _mock_service):
+        response = self.client.post(self.followup_url(), {}, format='json')
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['next_action'], 'NEXT_QUESTION')
+        self.assertIsNone(response.data['followup_question'])
+        self.assertEqual(
+            InterviewQuestion.objects.filter(
+                session=self.session,
+                question_type='follow_up',
+            ).count(),
+            0,
+        )
 
     @patch(
         'apps.interview.services.follow_up_generator.FollowupGenerator._get_ai_chain_service',
