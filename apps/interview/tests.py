@@ -909,6 +909,110 @@ class MVPAnswerFollowupRealModeAPITests(APITestCase):
 
     @patch(
         'apps.interview.services.follow_up_generator.FollowupGenerator._get_ai_chain_service',
+        return_value=GuardrailBackedFollowupAIChainService(
+            """{
+              "answer_id": "answer-id",
+              "is_sufficient": false,
+              "sufficiency_reason": "Model missed Korean sufficiency markers.",
+              "selected_weakness_tag": {
+                "weakness_tag_id": "NO_RESULT",
+                "tag_name": "NO_RESULT",
+                "reason": "Needs measurable outcome."
+              },
+              "should_generate_followup": true,
+              "next_action": "GENERATE_FOLLOWUP"
+            }"""
+        ),
+    )
+    def test_real_mode_korean_sufficient_answer_suppresses_overzealous_followup(
+        self,
+        _mock_service,
+    ):
+        self.answer.answer_text = (
+            '해당 프로젝트에서 저는 백엔드 API 설계와 배포를 담당했습니다. '
+            '초기에는 응답 속도가 느린 문제가 있었고, 원인은 중복 쿼리와 인덱스 부재였습니다. '
+            '저는 Django ORM 쿼리를 분석해서 select_related와 prefetch_related를 적용했고, '
+            '조회 조건에 맞춰 MySQL 인덱스를 추가했습니다. '
+            '그 결과 목록 조회 응답 시간이 약 1.8초에서 0.6초로 줄었습니다. '
+            'Redis 캐싱도 검토했지만 데이터 갱신 빈도가 높아 우선 쿼리 최적화를 선택했습니다.'
+        )
+        self.answer.save(update_fields=['answer_text'])
+
+        response = self.client.post(self.followup_url(), {}, format='json')
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['next_action'], 'NEXT_QUESTION')
+        self.assertIsNone(response.data['followup_question'])
+        self.assertEqual(
+            InterviewQuestion.objects.filter(
+                session=self.session,
+                question_type='follow_up',
+            ).count(),
+            0,
+        )
+
+    @patch(
+        'apps.interview.services.follow_up_generator.FollowupGenerator._get_ai_chain_service',
+        return_value=GuardrailBackedFollowupAIChainService(
+            """{
+              "answer_id": "answer-id",
+              "is_sufficient": true,
+              "sufficiency_reason": "Model was too permissive.",
+              "answer_weakness_tags": [],
+              "selected_weakness_tag": null,
+              "should_generate_followup": false,
+              "next_action": "NEXT_QUESTION"
+            }"""
+        ),
+    )
+    def test_real_mode_korean_weak_answer_guardrail_creates_followup(self, _mock_service):
+        self.answer.answer_text = '잘 모르겠습니다.'
+        self.answer.save(update_fields=['answer_text'])
+
+        response = self.client.post(self.followup_url(), {}, format='json')
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data['next_action'], 'GENERATE_FOLLOWUP')
+        followup = InterviewQuestion.objects.get(
+            id=response.data['followup_question']['question_id'],
+        )
+        self.assertEqual(followup.parent_question, self.question)
+        self.assertEqual(followup.source_answer, self.answer)
+        self.assertTrue(followup.source_reference.startswith('ai_chain:'))
+        self.assertFalse(followup.source_reference.startswith('ai_chain_mock:'))
+
+    @patch(
+        'apps.interview.services.follow_up_generator.FollowupGenerator._get_ai_chain_service',
+        return_value=GuardrailBackedFollowupAIChainService(
+            """{
+              "answer_id": "answer-id",
+              "is_sufficient": true,
+              "sufficiency_reason": "Model was too permissive.",
+              "answer_weakness_tags": [],
+              "selected_weakness_tag": null,
+              "should_generate_followup": false,
+              "next_action": "NEXT_QUESTION"
+            }"""
+        ),
+    )
+    def test_real_mode_korean_abstract_answer_guardrail_creates_followup(self, _mock_service):
+        self.answer.answer_text = '프로젝트에서 백엔드를 열심히 했습니다.'
+        self.answer.save(update_fields=['answer_text'])
+
+        response = self.client.post(self.followup_url(), {}, format='json')
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data['next_action'], 'GENERATE_FOLLOWUP')
+        followup = InterviewQuestion.objects.get(
+            id=response.data['followup_question']['question_id'],
+        )
+        self.assertEqual(followup.parent_question, self.question)
+        self.assertEqual(followup.source_answer, self.answer)
+        self.assertTrue(followup.source_reference.startswith('ai_chain:'))
+        self.assertFalse(followup.source_reference.startswith('ai_chain_mock:'))
+
+    @patch(
+        'apps.interview.services.follow_up_generator.FollowupGenerator._get_ai_chain_service',
         return_value=FakeFollowupAIChainService(
             sufficiency_result={
                 'next_action': 'NEXT_QUESTION',
