@@ -16,7 +16,10 @@ from apps.common.choices import (
 from apps.evaluation.models import Evaluation
 from apps.input.models import JobDescription, ResumeMaster
 from apps.question_bank.models import QuestionBankItem
-from apps.interview.services.ai_chain_openai_engine import AIChainOpenAIError
+from apps.interview.services.ai_chain_openai_engine import (
+    AIChainOpenAIEngine,
+    AIChainOpenAIError,
+)
 
 from .models import InterviewAnswer, InterviewQuestion, InterviewSession
 
@@ -757,6 +760,29 @@ class FakeFollowupAIChainService:
         }
 
 
+class GuardrailBackedFollowupAIChainService:
+    def __init__(self, sufficiency_response):
+        self.sufficiency_response = sufficiency_response
+        self.engine = AIChainOpenAIEngine(
+            api_key='test-api-key',
+            enable_real_call=True,
+        )
+
+    def judge_answer_sufficiency(self, payload):
+        parsed = self.engine._parse_response_object(self.sufficiency_response)
+        normalized = self.engine._normalize_sufficiency_result(parsed, fallback=None)
+        return self.engine._apply_local_followup_guardrails(normalized, payload)
+
+    def generate_followup_question(self, payload):
+        return {
+            'followup_question': {
+                'question_text': 'Which concrete decision should we verify next?',
+                'difficulty': 'medium',
+                'generation_reason': 'OpenAI followup generated from guardrail-backed service',
+            }
+        }
+
+
 @override_settings(
     INTERVIEW_AI_CHAIN_ENGINE='openai',
     INTERVIEW_AI_OPENAI_ENABLE_REAL_CALL=True,
@@ -811,6 +837,75 @@ class MVPAnswerFollowupRealModeAPITests(APITestCase):
         self.assertEqual(followup.source_answer, self.answer)
         self.assertFalse(followup.source_reference.startswith('ai_chain_mock:'))
         self.assertTrue(followup.source_reference.startswith('ai_chain:'))
+
+    @patch(
+        'apps.interview.services.follow_up_generator.FollowupGenerator._get_ai_chain_service',
+        return_value=GuardrailBackedFollowupAIChainService(
+            """{
+              "answer_id": "answer-id",
+              "is_sufficient": true,
+              "sufficiency_reason": "Model was too permissive.",
+              "answer_weakness_tags": [],
+              "selected_weakness_tag": null,
+              "should_generate_followup": false,
+              "next_action": "NEXT_QUESTION"
+            }"""
+        ),
+    )
+    def test_real_mode_weak_answer_guardrail_creates_linked_followup(self, _mock_service):
+        response = self.client.post(self.followup_url(), {}, format='json')
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data['next_action'], 'GENERATE_FOLLOWUP')
+        followup = InterviewQuestion.objects.get(
+            id=response.data['followup_question']['question_id'],
+        )
+        self.assertEqual(followup.parent_question, self.question)
+        self.assertEqual(followup.source_answer, self.answer)
+        self.assertTrue(followup.source_reference.startswith('ai_chain:'))
+        self.assertFalse(followup.source_reference.startswith('ai_chain_mock:'))
+
+    @patch(
+        'apps.interview.services.follow_up_generator.FollowupGenerator._get_ai_chain_service',
+        return_value=GuardrailBackedFollowupAIChainService(
+            """{
+              "answer_id": "answer-id",
+              "is_sufficient": false,
+              "sufficiency_reason": "Model was too aggressive.",
+              "selected_weakness_tag": {
+                "weakness_tag_id": "NO_ALTERNATIVE",
+                "tag_name": "NO_ALTERNATIVE",
+                "reason": "Needs more trade-off explanation."
+              },
+              "should_generate_followup": true,
+              "next_action": "GENERATE_FOLLOWUP"
+            }"""
+        ),
+    )
+    def test_real_mode_sufficient_answer_suppresses_overzealous_followup(self, _mock_service):
+        self.answer.answer_text = (
+            'In that project, I owned the backend API design and deployment. '
+            'The initial problem was slow list responses caused by duplicate ORM '
+            'queries and missing MySQL indexes. I analyzed the Django query plan, '
+            'applied select_related and prefetch_related, and added an index for '
+            'the main lookup condition. As a result, response time improved from '
+            'about 1.8 seconds to 0.6 seconds. I also compared Redis caching, but '
+            'because the data changed frequently, I chose query optimization first.'
+        )
+        self.answer.save(update_fields=['answer_text'])
+
+        response = self.client.post(self.followup_url(), {}, format='json')
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['next_action'], 'NEXT_QUESTION')
+        self.assertIsNone(response.data['followup_question'])
+        self.assertEqual(
+            InterviewQuestion.objects.filter(
+                session=self.session,
+                question_type='follow_up',
+            ).count(),
+            0,
+        )
 
     @patch(
         'apps.interview.services.follow_up_generator.FollowupGenerator._get_ai_chain_service',

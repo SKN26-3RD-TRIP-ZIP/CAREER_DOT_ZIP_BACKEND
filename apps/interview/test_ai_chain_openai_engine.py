@@ -266,7 +266,7 @@ class AIChainOpenAIEngineTest(SimpleTestCase):
         )
         payload = self._sufficiency_payload()
         payload["answer"]["answer_text"] = (
-            "I worked on several improvements and made the service better for users."
+            "I improved the Django API and made the backend service better for users."
         )
 
         result = engine.judge_answer_sufficiency(payload)
@@ -298,6 +298,79 @@ class AIChainOpenAIEngineTest(SimpleTestCase):
         self.assertEqual(result["next_action"], NextAction.GENERATE_FOLLOWUP.value)
         self.assertTrue(result["should_generate_followup"])
         self.assertEqual(result["selected_weakness_tag"]["tag_name"], "TECH_DEPTH_LOW")
+
+    def test_openai_engine_suppresses_overzealous_followup_for_sufficient_answer(self):
+        raw_response = """```json
+        {
+          "answer_id": "33333333-3333-3333-3333-333333333333",
+          "is_sufficient": false,
+          "sufficiency_reason": "Model was too aggressive.",
+          "selected_weakness_tag": {
+            "weakness_tag_id": "NO_ALTERNATIVE",
+            "tag_name": "NO_ALTERNATIVE",
+            "reason": "Needs more trade-off explanation."
+          },
+          "should_generate_followup": true,
+          "next_action": "GENERATE_FOLLOWUP"
+        }
+        ```"""
+        fake_client = FakeOpenAIClient(raw_response)
+        engine = AIChainOpenAIEngine(
+            api_key="test-api-key",
+            client_factory=lambda api_key: fake_client,
+            enable_real_call=True,
+        )
+        payload = self._sufficiency_payload()
+        payload["question"]["question_text"] = (
+            "Explain how you optimized a Django API and why you chose that approach."
+        )
+        payload["answer"]["answer_text"] = (
+            "In that project, I owned the backend API design and deployment. "
+            "The initial problem was slow list responses caused by duplicate ORM "
+            "queries and missing MySQL indexes. I analyzed the Django query plan, "
+            "applied select_related and prefetch_related, and added an index for "
+            "the main lookup condition. As a result, response time improved from "
+            "about 1.8 seconds to 0.6 seconds. I also compared Redis caching, but "
+            "because the data changed frequently, I chose query optimization first."
+        )
+
+        result = engine.judge_answer_sufficiency(payload)
+
+        self.assertEqual(result["next_action"], NextAction.NEXT_QUESTION.value)
+        self.assertFalse(result["should_generate_followup"])
+        self.assertTrue(result["is_sufficient"])
+        self.assertIsNone(result["selected_weakness_tag"])
+
+    def test_openai_engine_keeps_high_severity_followup_for_off_topic_answer(self):
+        raw_response = """```json
+        {
+          "answer_id": "33333333-3333-3333-3333-333333333333",
+          "follow_up_decision": "GENERATE_FOLLOWUP",
+          "selected_trigger": "OFF_TOPIC",
+          "sufficiency_reason": "The answer does not address the technical question."
+        }
+        ```"""
+        fake_client = FakeOpenAIClient(raw_response)
+        engine = AIChainOpenAIEngine(
+            api_key="test-api-key",
+            client_factory=lambda api_key: fake_client,
+            enable_real_call=True,
+        )
+        payload = self._sufficiency_payload()
+        payload["question"]["question_text"] = (
+            "Explain how you designed Django API error handling and database consistency."
+        )
+        payload["answer"]["answer_text"] = (
+            "In a cooking contest, I organized ingredients, led the plating process, "
+            "compared two garnish options, and won a small team award because the "
+            "presentation looked cleaner. This gave me confidence in teamwork."
+        )
+
+        result = engine.judge_answer_sufficiency(payload)
+
+        self.assertEqual(result["next_action"], NextAction.GENERATE_FOLLOWUP.value)
+        self.assertTrue(result["should_generate_followup"])
+        self.assertEqual(result["selected_weakness_tag"]["tag_name"], "OFF_TOPIC")
 
     def test_openai_engine_raises_error_when_sufficiency_returns_invalid_json(self):
         fake_client = FakeOpenAIClient("JSON이 아닌 응답")

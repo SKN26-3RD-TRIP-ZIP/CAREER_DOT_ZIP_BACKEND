@@ -95,6 +95,15 @@ FOLLOWUP_TRIGGER_DEFINITIONS = {
     "OFF_TOPIC": "The answer does not address the question.",
 }
 
+HIGH_SEVERITY_FOLLOWUP_TRIGGERS = {
+    "OFF_TOPIC",
+    "TECH_DEPTH_LOW",
+    "MISSING_REASON",
+    "UNCLEAR_ROLE",
+    "NO_RESULT",
+    "WEAK_JD_LINK",
+}
+
 
 class AIChainOpenAIError(RuntimeError):
     """OpenAI real call 실패를 명확히 전달하기 위한 예외."""
@@ -189,7 +198,7 @@ class AIChainOpenAIEngine:
                 parsed,
                 fallback=None,
             )
-            return self._apply_local_insufficiency_guardrail(
+            return self._apply_local_followup_guardrails(
                 normalized,
                 payload,
             )
@@ -637,18 +646,38 @@ class AIChainOpenAIEngine:
             "reason": reason or FOLLOWUP_TRIGGER_DEFINITIONS[trigger_name],
         }
 
-    def _apply_local_insufficiency_guardrail(
+    def _apply_local_followup_guardrails(
         self,
         result: dict[str, Any],
         payload: dict[str, Any],
     ) -> dict[str, Any]:
-        if result.get("next_action") == NextAction.GENERATE_FOLLOWUP.value:
-            return result
+        local_triggers = self._detect_local_followup_triggers(payload)
 
-        triggers = self._detect_local_followup_triggers(payload)
-        if not triggers:
-            return result
+        if result.get("next_action") != NextAction.GENERATE_FOLLOWUP.value:
+            if not local_triggers:
+                return result
+            return self._force_followup_result(result, local_triggers)
 
+        if self._should_suppress_followup(result, payload, local_triggers):
+            return {
+                **result,
+                "is_sufficient": True,
+                "sufficiency_reason": (
+                    "Answer has enough concrete situation, role, action, reason, "
+                    "result, and job relevance to continue."
+                ),
+                "selected_weakness_tag": None,
+                "should_generate_followup": False,
+                "next_action": NextAction.NEXT_QUESTION.value,
+            }
+
+        return result
+
+    def _force_followup_result(
+        self,
+        result: dict[str, Any],
+        triggers: list[str],
+    ) -> dict[str, Any]:
         weakness_tags = [
             self._build_weakness_tag(trigger)
             for trigger in triggers
@@ -665,102 +694,313 @@ class AIChainOpenAIEngine:
             "next_action": NextAction.GENERATE_FOLLOWUP.value,
         }
 
-    def _detect_local_followup_triggers(self, payload: dict[str, Any]) -> list[str]:
+    def _should_suppress_followup(
+        self,
+        result: dict[str, Any],
+        payload: dict[str, Any],
+        local_triggers: list[str],
+    ) -> bool:
+        signals = self._calculate_answer_sufficiency_signals(payload)
+        if not signals["is_sufficient"]:
+            return False
+
+        llm_triggers = self._get_result_trigger_names(result)
+        if not llm_triggers:
+            return True
+
+        local_trigger_set = set(local_triggers)
+        high_severity_triggers = {
+            trigger
+            for trigger in llm_triggers
+            if trigger in HIGH_SEVERITY_FOLLOWUP_TRIGGERS
+        }
+        if high_severity_triggers & local_trigger_set:
+            return False
+
+        return True
+
+    def _get_result_trigger_names(self, result: dict[str, Any]) -> set[str]:
+        trigger_names = set()
+
+        def add_trigger(raw_trigger: Any) -> None:
+            if raw_trigger is not None:
+                trigger_names.add(self._normalize_trigger_name(raw_trigger))
+
+        selected = result.get("selected_weakness_tag")
+        if isinstance(selected, dict):
+            add_trigger(selected.get("tag_name"))
+            add_trigger(selected.get("weakness_tag_id"))
+
+        for tag in result.get("answer_weakness_tags") or []:
+            if not isinstance(tag, dict):
+                continue
+            add_trigger(tag.get("tag_name"))
+            add_trigger(tag.get("weakness_tag_id"))
+
+        trigger_names.discard("")
+        return {trigger for trigger in trigger_names if trigger}
+
+    def _calculate_answer_sufficiency_signals(self, payload: dict[str, Any]) -> dict[str, Any]:
         answer = payload.get("answer") or {}
         question = payload.get("question") or {}
         answer_text = str(answer.get("answer_text") or "").strip()
         question_text = str(question.get("question_text") or "").strip()
+        source_tags = question.get("source_tags") or []
+        source_text = " ".join(
+            str(tag.get("source_text_excerpt") or "")
+            for tag in source_tags
+            if isinstance(tag, dict)
+        )
 
-        if not answer_text:
-            return ["TOO_SHORT"]
-
-        normalized_answer = answer_text.lower()
         compact_answer = "".join(answer_text.split())
+        normalized_answer = answer_text.lower()
+        context_text = f"{question_text} {source_text}"
+
+        too_short = len(compact_answer) < 40
+        uncertainty = self._contains_any(
+            normalized_answer,
+            (
+                "i do not know",
+                "i don't know",
+                "not sure",
+                "잘 모르",
+                "모르겠습니다",
+                "그냥 했",
+                "열심히 했",
+            ),
+        )
+
+        technical_question = self._contains_any(
+            context_text,
+            (
+                "기술",
+                "api",
+                "django",
+                "mysql",
+                "openai",
+                "장애",
+                "설계",
+                "구현",
+                "technical",
+                "architecture",
+                "backend",
+            ),
+        )
+        technical_depth_count = self._count_markers(
+            answer_text,
+            (
+                "api",
+                "db",
+                "sql",
+                "django",
+                "mysql",
+                "openai",
+                "transaction",
+                "rollback",
+                "retry",
+                "cache",
+                "queue",
+                "orm",
+                "index",
+                "select_related",
+                "prefetch_related",
+                "redis",
+                "query",
+                "트랜잭션",
+                "재시도",
+                "롤백",
+                "인덱스",
+                "쿼리",
+                "캐시",
+                "백엔드",
+                "장애",
+                "구현",
+                "설계",
+            ),
+        )
+
+        signals = {
+            "length_ok": len(compact_answer) >= 160,
+            "direct_answer": not uncertainty and (
+                technical_depth_count > 0
+                or not technical_question
+                or self._has_context_overlap(answer_text, context_text)
+            ),
+            "situation_or_problem": self._contains_any(
+                answer_text,
+                (
+                    "상황",
+                    "문제",
+                    "원인",
+                    "초기",
+                    "장애",
+                    "느린",
+                    "느렸",
+                    "실패",
+                    "issue",
+                    "problem",
+                    "failure",
+                    "latency",
+                    "slow",
+                ),
+            ),
+            "role_clear": self._contains_any(
+                answer_text,
+                (
+                    "제가",
+                    "저는",
+                    "직접",
+                    "담당",
+                    "역할",
+                    "주도",
+                    "기여",
+                    "i ",
+                    "my ",
+                    "implemented",
+                    "designed",
+                    "led",
+                ),
+            ),
+            "concrete_action": self._contains_any(
+                answer_text,
+                (
+                    "분석",
+                    "적용",
+                    "추가",
+                    "구현",
+                    "설계",
+                    "분리",
+                    "개선",
+                    "확인",
+                    "선택",
+                    "검토",
+                    "analyzed",
+                    "applied",
+                    "added",
+                    "implemented",
+                    "designed",
+                    "separated",
+                    "verified",
+                ),
+            ),
+            "result_present": self._contains_any(
+                answer_text,
+                (
+                    "결과",
+                    "성과",
+                    "지표",
+                    "개선",
+                    "감소",
+                    "증가",
+                    "줄",
+                    "확인",
+                    "초",
+                    "%",
+                    "result",
+                    "improved",
+                    "reduced",
+                    "increased",
+                    "from",
+                    "to",
+                ),
+            ),
+            "reason_present": self._contains_any(
+                answer_text,
+                (
+                    "이유",
+                    "때문",
+                    "근거",
+                    "선택",
+                    "원인",
+                    "because",
+                    "why",
+                    "reason",
+                    "chose",
+                ),
+            ),
+            "alternative_present": self._contains_any(
+                answer_text,
+                (
+                    "대안",
+                    "비교",
+                    "검토",
+                    "하지만",
+                    "우선",
+                    "대신",
+                    "alternative",
+                    "compared",
+                    "tradeoff",
+                    "instead",
+                    "but",
+                ),
+            ),
+            "technical_depth": technical_depth_count >= 2 if technical_question else True,
+            "jd_link": (
+                technical_depth_count > 0
+                or self._has_context_overlap(answer_text, context_text)
+                or not technical_question
+            ),
+            "not_abstract_only": len(compact_answer) >= 90 and technical_depth_count > 0,
+            "off_topic": uncertainty or (
+                technical_question
+                and technical_depth_count == 0
+                and not self._has_context_overlap(answer_text, context_text)
+            ),
+            "too_short": too_short,
+        }
+
+        positive_signal_keys = (
+            "direct_answer",
+            "situation_or_problem",
+            "role_clear",
+            "concrete_action",
+            "result_present",
+            "reason_present",
+            "alternative_present",
+            "technical_depth",
+            "jd_link",
+            "not_abstract_only",
+        )
+        score = sum(1 for key in positive_signal_keys if signals[key])
+        signals["score"] = score
+        signals["is_sufficient"] = (
+            signals["length_ok"]
+            and score >= 7
+            and not signals["off_topic"]
+            and not signals["too_short"]
+        )
+        return signals
+
+    def _detect_local_followup_triggers(self, payload: dict[str, Any]) -> list[str]:
+        signals = self._calculate_answer_sufficiency_signals(payload)
         triggers = []
 
-        if len(compact_answer) < 40:
+        if signals["too_short"]:
             triggers.append("TOO_SHORT")
 
-        if any(token in normalized_answer for token in ("i do not know", "not sure", "잘 모르", "모르겠습니다")):
+        if signals["off_topic"]:
             triggers.append("OFF_TOPIC")
 
-        concrete_markers = (
-            "because",
-            "therefore",
-            "result",
-            "measured",
-            "implemented",
-            "designed",
-            "compared",
-            "tradeoff",
-            "장애",
-            "원인",
-            "결과",
-            "성과",
-            "지표",
-            "선택",
-            "이유",
-            "비교",
-            "대안",
-            "구현",
-            "설계",
-            "개선",
-            "감소",
-            "증가",
-            "측정",
-            "제가",
-            "직접",
-            "담당",
-            "기여",
-        )
-        if len(compact_answer) < 90 and not any(marker in answer_text for marker in concrete_markers):
+        if not signals["not_abstract_only"] and not signals["too_short"]:
             triggers.append("ABSTRACT_ANSWER")
 
-        role_markers = ("제가", "직접", "담당", "주도", "기여", "I ", "my ", "implemented", "designed", "led")
-        if len(compact_answer) < 120 and not any(marker in answer_text for marker in role_markers):
+        if not signals["role_clear"]:
             triggers.append("UNCLEAR_ROLE")
 
-        result_markers = ("결과", "성과", "지표", "개선", "감소", "증가", "해결", "result", "improved", "reduced", "increased")
-        if len(compact_answer) < 120 and not any(marker in answer_text for marker in result_markers):
+        if not signals["result_present"]:
             triggers.append("NO_RESULT")
 
-        reason_markers = ("이유", "때문", "근거", "선택", "비교", "대안", "because", "why", "reason", "tradeoff")
-        if len(compact_answer) < 120 and not any(marker in answer_text for marker in reason_markers):
+        if not signals["reason_present"]:
             triggers.append("MISSING_REASON")
 
-        technical_question_markers = (
-            "기술",
-            "API",
-            "Django",
-            "OpenAI",
-            "장애",
-            "설계",
-            "구현",
-            "technical",
-            "architecture",
-        )
-        technical_answer_markers = (
-            "API",
-            "DB",
-            "SQL",
-            "Django",
-            "OpenAI",
-            "transaction",
-            "rollback",
-            "retry",
-            "cache",
-            "queue",
-            "구현",
-            "설계",
-            "트랜잭션",
-            "재시도",
-        )
-        if (
-            any(marker in question_text for marker in technical_question_markers)
-            and len(compact_answer) < 120
-            and not any(marker in answer_text for marker in technical_answer_markers)
-        ):
+        if not signals["technical_depth"]:
             triggers.append("TECH_DEPTH_LOW")
+
+        if not signals["jd_link"]:
+            triggers.append("WEAK_JD_LINK")
+
+        if signals["score"] < 6 and not signals["too_short"]:
+            triggers.append("STAR_MISSING")
 
         seen = set()
         unique_triggers = []
@@ -769,6 +1009,31 @@ class AIChainOpenAIEngine:
                 seen.add(trigger)
                 unique_triggers.append(trigger)
         return unique_triggers
+
+    @staticmethod
+    def _contains_any(text: str, markers: tuple[str, ...]) -> bool:
+        lowered = text.lower()
+        return any(str(marker).lower() in lowered for marker in markers)
+
+    def _count_markers(self, text: str, markers: tuple[str, ...]) -> int:
+        lowered = text.lower()
+        return sum(1 for marker in markers if str(marker).lower() in lowered)
+
+    def _has_context_overlap(self, answer_text: str, context_text: str) -> bool:
+        if not context_text.strip():
+            return False
+
+        normalized_answer = answer_text.lower()
+        normalized_context = context_text.lower()
+        context_terms = {
+            term.strip(".,;:()[]{}")
+            for term in normalized_context.split()
+            if len(term.strip(".,;:()[]{}")) >= 4
+        }
+        if not context_terms:
+            return False
+
+        return any(term in normalized_answer for term in context_terms)
 
     def _normalize_followup_result(
         self,
