@@ -1,10 +1,40 @@
+from unittest.mock import patch
+
 from django.contrib.auth import get_user_model
 from django.urls import reverse
 from rest_framework import status
 from rest_framework.test import APITestCase
 
-from apps.interview.models import InterviewSession
+from apps.interview.models import InterviewAnswer, InterviewQuestion, InterviewSession
 from apps.report.models import FinalReport
+
+
+def failed_summary(session):
+  return {
+      'evaluation_metadata': {
+          'session_id': str(session.id),
+          'answer_count': 1,
+          'evaluated_answer_count': 0,
+          'summary_text': 'AI evaluation failed before completion.',
+      },
+      'score_summary': {'overall_score': 0, 'metrics': {}},
+      'score_detail': {},
+      'dynamically_triggered_tags': {},
+  }
+
+
+def success_summary(session):
+  return {
+      'evaluation_metadata': {
+          'session_id': str(session.id),
+          'answer_count': 1,
+          'evaluated_answer_count': 1,
+          'summary_text': 'Evaluation completed.',
+      },
+      'score_summary': {'overall_score': 82, 'metrics': {}},
+      'score_detail': {},
+      'dynamically_triggered_tags': {},
+  }
 
 
 class SessionFinalReportAPITests(APITestCase):
@@ -29,6 +59,22 @@ class SessionFinalReportAPITests(APITestCase):
         persona='practical',
         status=status_value,
     )
+
+  def create_answered_session(self):
+    session = self.create_session()
+    question = InterviewQuestion.objects.create(
+        session=session,
+        order_index=1,
+        question_type='main',
+        question_text='Explain transaction handling.',
+        source_type='jd',
+    )
+    InterviewAnswer.objects.create(
+        session=session,
+        question=question,
+        answer_text='I use atomic transactions.',
+    )
+    return session
 
   def report_url(self, session):
     return reverse('session-final-report', kwargs={'session_id': session.id})
@@ -96,3 +142,30 @@ class SessionFinalReportAPITests(APITestCase):
     response = self.client.get(self.report_url(session))
 
     self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+
+  @patch('apps.report.views.generate_final_report')
+  def test_failed_report_summary_is_not_saved_and_returns_retryable_503(self, mock_generate):
+    session = self.create_answered_session()
+    mock_generate.return_value = failed_summary(session)
+
+    response = self.client.get(self.report_url(session))
+
+    self.assertEqual(response.status_code, status.HTTP_503_SERVICE_UNAVAILABLE)
+    self.assertEqual(response.data['code'], 'AI_REPORT_GENERATION_FAILED')
+    self.assertTrue(response.data['retryable'])
+    self.assertFalse(FinalReport.objects.filter(session=session).exists())
+
+  @patch('apps.report.views.generate_final_report')
+  def test_failed_report_can_be_retried_without_reusing_zero_score_row(self, mock_generate):
+    session = self.create_answered_session()
+    mock_generate.side_effect = [failed_summary(session), success_summary(session)]
+
+    first = self.client.get(self.report_url(session))
+    second = self.client.get(self.report_url(session))
+
+    self.assertEqual(first.status_code, status.HTTP_503_SERVICE_UNAVAILABLE)
+    self.assertEqual(second.status_code, status.HTTP_200_OK)
+    self.assertEqual(FinalReport.objects.filter(session=session).count(), 1)
+    report = FinalReport.objects.get(session=session)
+    self.assertEqual(report.summary['score_summary']['overall_score'], 82)
+    self.assertEqual(report.summary['evaluation_metadata']['evaluated_answer_count'], 1)
