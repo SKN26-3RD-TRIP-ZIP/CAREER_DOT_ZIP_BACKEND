@@ -8,6 +8,7 @@ from rest_framework_simplejwt.serializers import TokenRefreshSerializer
 from rest_framework_simplejwt.exceptions import InvalidToken, TokenError
 
 from django.core import signing
+from django.contrib.auth.models import update_last_login
 
 from .serializers import SignupSerializer, LoginSerializer, SignupResponseSerializer
 from .models import User
@@ -98,12 +99,14 @@ class VerifyEmailView(APIView):
 class LoginView(APIView):
     """로그인. 인증된 계정에 access token + refresh cookie 발급."""
     permission_classes = [permissions.AllowAny]
+    authentication_classes = []  # 로그인 요청엔 JWT 인증 제외 (만료 토큰으로 인한 401 방지)
 
     def post(self, request):
         serializer = LoginSerializer(data=request.data)
 
         if serializer.is_valid():
             user = serializer.validated_data['user']
+            update_last_login(None, user)
             refresh = RefreshToken.for_user(user)
             access_token = str(refresh.access_token)
 
