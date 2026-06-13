@@ -48,6 +48,18 @@ UPLOAD_MAX_SIZE = 10 * 1024 * 1024  # 10MB
 UPLOAD_ALLOWED_TYPES = {'pdf', 'docx'}
 
 
+def _existing_order_fields(model, *field_names):
+    available = {field.name for field in model._meta.get_fields()}
+    order_fields = []
+
+    for field_name in field_names:
+        normalized = field_name.lstrip('-')
+        if normalized in available:
+            order_fields.append(field_name)
+
+    return order_fields
+
+
 def _validate_upload(file_obj, allowed_types=None):
     """업로드 파일 공통 검증. 통과 시 (file_type, filename) 반환, 실패 시 ValueError(메시지)."""
     allowed_types = allowed_types or UPLOAD_ALLOWED_TYPES
@@ -158,7 +170,9 @@ class UserSummaryView(APIView):
         interviews = InterviewSession.objects.filter(user=user)
         reports = FinalReport.objects.filter(session__user=user).select_related('session')
         latest_jd = jds.order_by('-created_at').first()
-        latest_resume = resumes.order_by('-updated_at').first()
+        latest_resume = resumes.order_by(
+            *_existing_order_fields(ResumeMaster, '-updated_at', '-created_at', '-id')
+        ).first()
         latest_interview = interviews.order_by('-created_at').first()
         latest_report = reports.order_by('-generated_at').first()
         return Response(
