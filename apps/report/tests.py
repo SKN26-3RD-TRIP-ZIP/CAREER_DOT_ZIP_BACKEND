@@ -119,6 +119,24 @@ class SessionFinalReportAPITests(APITestCase):
     self.assertEqual(response.data['report_id'], str(report.id))
     self.assertEqual(FinalReport.objects.filter(session=session).count(), 1)
     self.assertEqual(response.data['summary']['score_summary']['overall_score'], 77)
+    self.assertEqual(response.data['overall_score'], 77)
+
+  def test_report_overall_score_supports_fallback_shapes(self):
+    session = self.create_session()
+    report = FinalReport.objects.create(
+        session=session,
+        summary={
+            'raw_data': {
+                'summary': {
+                    'score_summary': {'overall_score': 64},
+                },
+            },
+        },
+    )
+
+    self.assertEqual(report.overall_score, 64)
+    report.summary = {'overall_score': 0}
+    self.assertEqual(report.overall_score, 0)
 
   def test_in_progress_session_returns_not_found(self):
     session = self.create_session(status_value='in_progress')

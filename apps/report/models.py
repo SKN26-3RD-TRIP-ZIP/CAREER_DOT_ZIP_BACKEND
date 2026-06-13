@@ -23,4 +23,21 @@ class FinalReport(models.Model):
 
     @property
     def overall_score(self):
-        return (self.summary or {}).get('score_summary', {}).get('overall_score')
+        summary = self.summary or {}
+
+        def score_from(container):
+            if not isinstance(container, dict):
+                return None
+            score_summary = container.get('score_summary')
+            if not isinstance(score_summary, dict):
+                return None
+            return score_summary.get('overall_score')
+
+        raw_data = summary.get('raw_data') if isinstance(summary, dict) else {}
+        candidates = (
+            score_from(summary),
+            score_from(summary.get('summary') if isinstance(summary, dict) else None),
+            score_from(raw_data.get('summary') if isinstance(raw_data, dict) else None),
+            summary.get('overall_score') if isinstance(summary, dict) else None,
+        )
+        return next((score for score in candidates if score is not None), None)

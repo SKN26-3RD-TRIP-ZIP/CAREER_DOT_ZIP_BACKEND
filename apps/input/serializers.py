@@ -328,7 +328,14 @@ class CoverLetterDetailSerializer(serializers.ModelSerializer):
         return CoverLetterItemDetailSerializer(obj.items.all().order_by('order_index'), many=True).data
 
 
+CAREER_TYPE_INPUT_CHOICES = ('new', 'career')
+MAJOR_TYPE_INPUT_CHOICES = ('major', 'non_major')
+
+
 class UserProfileCreateSerializer(serializers.ModelSerializer):
+    career_type = serializers.ChoiceField(choices=CAREER_TYPE_INPUT_CHOICES)
+    major_type = serializers.ChoiceField(choices=MAJOR_TYPE_INPUT_CHOICES)
+
     class Meta:
         model = UserProfile
         fields = ('career_type', 'major_type', 'desired_job', 'career_year')
@@ -354,6 +361,9 @@ class UserProfileDetailSerializer(serializers.ModelSerializer):
 
 
 class UserProfilePatchSerializer(serializers.ModelSerializer):
+    career_type = serializers.ChoiceField(choices=CAREER_TYPE_INPUT_CHOICES, required=False)
+    major_type = serializers.ChoiceField(choices=MAJOR_TYPE_INPUT_CHOICES, required=False)
+
     class Meta:
         model = UserProfile
         fields = ('career_type', 'major_type', 'desired_job', 'career_year', 'github_url')

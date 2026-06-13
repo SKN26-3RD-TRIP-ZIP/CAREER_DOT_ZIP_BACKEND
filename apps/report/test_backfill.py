@@ -9,6 +9,7 @@ generate_final_report 가 누락된 평가를 자동 생성(백필)하고,
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
+from django.test import override_settings
 from django.urls import reverse
 from rest_framework import status
 from rest_framework.test import APITestCase
@@ -38,6 +39,7 @@ def _mock_llm_chains():
   return grounding, competency
 
 
+@override_settings(OPENAI_USE_MOCK=True)
 class ReportBackfillTests(APITestCase):
   def setUp(self):
     User = get_user_model()

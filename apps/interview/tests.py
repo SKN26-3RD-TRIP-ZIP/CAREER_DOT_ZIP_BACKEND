@@ -214,6 +214,10 @@ class InterviewSessionTurnsAPITests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
 
 
+@override_settings(
+    INTERVIEW_AI_CHAIN_ENGINE='mock',
+    INTERVIEW_AI_OPENAI_ENABLE_REAL_CALL=False,
+)
 class InterviewQuestionGenerationIntegrationTests(APITestCase):
     def setUp(self):
         user_model = get_user_model()
@@ -379,6 +383,10 @@ class InterviewQuestionGenerationIntegrationTests(APITestCase):
         self.assertEqual(list_response.data['total'], 2)
 
 
+@override_settings(
+    INTERVIEW_AI_CHAIN_ENGINE='mock',
+    INTERVIEW_AI_OPENAI_ENABLE_REAL_CALL=False,
+)
 class MVPTextInterviewFlowTests(APITestCase):
     def setUp(self):
         user_model = get_user_model()

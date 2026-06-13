@@ -81,6 +81,7 @@ class FinalReportSessionSerializer(serializers.ModelSerializer):
   report_id = serializers.SerializerMethodField()
   session_id = serializers.SerializerMethodField()
   status = serializers.SerializerMethodField()
+  overall_score = serializers.SerializerMethodField()
 
   class Meta:
     model = FinalReport
@@ -88,6 +89,7 @@ class FinalReportSessionSerializer(serializers.ModelSerializer):
         'report_id',
         'session_id',
         'status',
+        'overall_score',
         'summary',
         'generated_at',
     )
@@ -100,3 +102,6 @@ class FinalReportSessionSerializer(serializers.ModelSerializer):
 
   def get_status(self, obj):
     return 'completed'
+
+  def get_overall_score(self, obj):
+    return obj.overall_score

@@ -149,11 +149,18 @@ class UserSummaryView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request):
+        from apps.interview.models import InterviewSession
+        from apps.report.models import FinalReport
+
         user = request.user
         jds = JobDescription.objects.filter(user=user)
         resumes = ResumeMaster.objects.filter(user=user)
+        interviews = InterviewSession.objects.filter(user=user)
+        reports = FinalReport.objects.filter(session__user=user).select_related('session')
         latest_jd = jds.order_by('-created_at').first()
         latest_resume = resumes.order_by('-updated_at').first()
+        latest_interview = interviews.order_by('-created_at').first()
+        latest_report = reports.order_by('-generated_at').first()
         return Response(
             {
                 'jd_count': jds.count(),
@@ -183,6 +190,29 @@ class UserSummaryView(APIView):
                 'latest_resume_updated_at': latest_resume.updated_at if latest_resume else None,
                 'cover_letter_count': CoverLetter.objects.filter(user=user).count(),
                 'project_count': ProjectExperience.objects.filter(user=user).count(),
+                'interview_count': interviews.count(),
+                'latest_interview': (
+                    {
+                        'session_id': str(latest_interview.id),
+                        'interview_type': latest_interview.interview_type,
+                        'persona': latest_interview.persona,
+                        'status': latest_interview.status,
+                        'created_at': latest_interview.created_at,
+                        'ended_at': latest_interview.ended_at,
+                    }
+                    if latest_interview
+                    else None
+                ),
+                'latest_report': (
+                    {
+                        'report_id': str(latest_report.id),
+                        'session_id': str(latest_report.session_id),
+                        'overall_score': latest_report.overall_score,
+                        'generated_at': latest_report.generated_at,
+                    }
+                    if latest_report
+                    else None
+                ),
             },
             status=status.HTTP_200_OK,
         )
