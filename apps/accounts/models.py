@@ -63,6 +63,40 @@ class User(AbstractBaseUser, PermissionsMixin):
         verbose_name = 'User'
         verbose_name_plural = 'Users'
         ordering = ['-created_at']
-    
+
     def __str__(self):
         return self.email
+
+
+class EmailVerificationCode(models.Model):
+    """
+    회원가입 이메일 인증용 6자리 인증번호 저장.
+
+    - 평문 코드는 저장하지 않고 해시(code_hash)만 보관한다.
+    - 만료(expires_at), 입력 시도 횟수(attempt_count), 사용 여부(is_used)로
+      만료/무차별 대입 방지/재발송 쿨다운을 제어한다.
+    """
+    id = models.BigAutoField(primary_key=True)
+    user = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name='email_codes',
+    )
+    code_hash = models.CharField(max_length=128)
+    expires_at = models.DateTimeField()
+    attempt_count = models.PositiveSmallIntegerField(default=0)
+    is_used = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'accounts_email_verification_code'
+        verbose_name = 'Email Verification Code'
+        verbose_name_plural = 'Email Verification Codes'
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['user', 'is_used'], name='evc_user_isused_idx'),
+            models.Index(fields=['expires_at'], name='evc_expires_idx'),
+        ]
+
+    def __str__(self):
+        return f'EmailVerificationCode(user_id={self.user_id}, used={self.is_used})'

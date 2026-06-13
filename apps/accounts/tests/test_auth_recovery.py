@@ -19,8 +19,20 @@ from django.test import override_settings
 from rest_framework import status
 from rest_framework.test import APITestCase
 
+import re
+
 from apps.accounts.models import User
-from apps.accounts.tokens import generate_email_verification_token
+
+
+def _code_from_outbox(email):
+    """locmem outbox 에서 해당 수신자 메일의 6자리 인증번호를 추출."""
+    for message in reversed(mail.outbox):
+        if email in message.to:
+            found = re.search(r"(\d{6})", message.body)
+            if found:
+                return found.group(1)
+    return None
+
 
 LOCMEM_EMAIL = "django.core.mail.backends.locmem.EmailBackend"
 PASSWORD = "QaTestPw!234"  # 테스트 전용 더미 (운영/실계정 아님)
@@ -67,14 +79,16 @@ class SignupVerifyLoginFlowTests(APITestCase):
         res = self.client.post(self.login_url, {"email": "qa.user@example.com", "password": PASSWORD})
         self.assertEqual(res.status_code, status.HTTP_403_FORBIDDEN)
 
-    def test_verify_email_success_then_login_issues_token_and_cookie(self):
+    def test_verify_code_success_then_login_issues_token_and_cookie(self):
         self._signup()
-        user = User.objects.get(email="qa.user@example.com")
-        token = generate_email_verification_token(user)
+        code = _code_from_outbox("qa.user@example.com")
+        self.assertIsNotNone(code)
 
-        vres = self.client.get(self.verify_url, {"token": token})
+        vres = self.client.post(
+            self.verify_url, {"email": "qa.user@example.com", "code": code}
+        )
         self.assertEqual(vres.status_code, status.HTTP_200_OK)
-        user.refresh_from_db()
+        user = User.objects.get(email="qa.user@example.com")
         self.assertTrue(user.is_verified)
 
         lres = self.client.post(self.login_url, {"email": "qa.user@example.com", "password": PASSWORD})
@@ -84,29 +98,36 @@ class SignupVerifyLoginFlowTests(APITestCase):
         # refresh cookie 는 HttpOnly
         self.assertTrue(lres.cookies["refresh_token"]["httponly"])
 
-    def test_verify_email_already_verified(self):
+    def test_verify_code_already_verified(self):
         self._signup()
-        user = User.objects.get(email="qa.user@example.com")
-        token = generate_email_verification_token(user)
-        self.client.get(self.verify_url, {"token": token})
-        # 두 번째 호출도 200 (이미 인증됨)
-        res = self.client.get(self.verify_url, {"token": token})
+        code = _code_from_outbox("qa.user@example.com")
+        self.client.post(self.verify_url, {"email": "qa.user@example.com", "code": code})
+        # 이미 인증된 계정 — 임의 코드로도 200(이미 인증)
+        res = self.client.post(self.verify_url, {"email": "qa.user@example.com", "code": "000000"})
         self.assertEqual(res.status_code, status.HTTP_200_OK)
 
-    def test_verify_email_invalid_token_400(self):
-        res = self.client.get(self.verify_url, {"token": "not-a-valid-token"})
+    def test_verify_invalid_code_400(self):
+        self._signup()
+        code = _code_from_outbox("qa.user@example.com")
+        wrong = "111111" if code != "111111" else "222222"
+        res = self.client.post(self.verify_url, {"email": "qa.user@example.com", "code": wrong})
         self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)
 
-    def test_verify_email_missing_token_400(self):
-        res = self.client.get(self.verify_url)
+    def test_verify_missing_fields_400(self):
+        res = self.client.post(self.verify_url, {"email": "qa.user@example.com"})
         self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)
 
-    @override_settings(EMAIL_VERIFICATION_TOKEN_MAX_AGE=-1)
-    def test_verify_email_expired_token_400(self):
-        # 토큰 생성 후 max_age=-1 로 즉시 만료 처리
-        user = User.objects.create_user(email="exp@example.com", name="exp", password=PASSWORD)
-        token = generate_email_verification_token(user)
-        res = self.client.get(self.verify_url, {"token": token})
+    def test_verify_expired_code_400(self):
+        from datetime import timedelta
+        from django.utils import timezone
+        from apps.accounts.models import EmailVerificationCode
+
+        self._signup()
+        code = _code_from_outbox("qa.user@example.com")
+        EmailVerificationCode.objects.filter(
+            user__email="qa.user@example.com", is_used=False
+        ).update(expires_at=timezone.now() - timedelta(seconds=1))
+        res = self.client.post(self.verify_url, {"email": "qa.user@example.com", "code": code})
         self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)
 
     def test_token_refresh_success(self):

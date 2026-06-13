@@ -71,6 +71,73 @@ def send_welcome_email(user) -> None:
     logger.info("welcome email sent to user_id=%s", user.id)
 
 
+def send_verification_code_email(user, code: str) -> None:
+    """6자리 이메일 인증번호를 발송한다. (코드 방식) 코드는 로그에 남기지 않는다."""
+    subject = "[Career.zip] 이메일 인증번호 안내"
+    from_email = getattr(settings, "DEFAULT_FROM_EMAIL", "no-reply@career.zip")
+
+    text_body = (
+        f"{user.name}님, Career.zip 이메일 인증번호를 안내드립니다.\n\n"
+        f"인증번호: {code}\n\n"
+        f"인증 화면에 위 6자리 번호를 입력해 주세요. (유효시간 5분)\n"
+        f"본인이 요청하지 않았다면 이 메일을 무시하셔도 됩니다.\n\n"
+        f"문의: {SUPPORT_EMAIL}\n"
+    )
+
+    html_body = f"""\
+<div style="font-family:Apple SD Gothic Neo,Malgun Gothic,sans-serif;max-width:560px;margin:0 auto;color:#1f2937">
+  <h2 style="color:#253900">이메일 인증번호 안내</h2>
+  <p><strong>{user.name}</strong>님, 아래 6자리 인증번호를 인증 화면에 입력해 주세요. (유효시간 5분)</p>
+  <p style="margin:24px 0;text-align:center">
+    <span style="display:inline-block;background:#EEEEEE;color:#253900;font-size:32px;font-weight:700;letter-spacing:8px;padding:16px 24px;border-radius:12px">{code}</span>
+  </p>
+  <p style="font-size:13px;color:#6b7280">본인이 요청하지 않았다면 이 메일을 무시하셔도 됩니다.</p>
+  <p style="font-size:13px;color:#6b7280">문의: <a href="mailto:{SUPPORT_EMAIL}">{SUPPORT_EMAIL}</a></p>
+</div>
+"""
+
+    msg = EmailMultiAlternatives(subject, text_body, from_email, [user.email])
+    msg.attach_alternative(html_body, "text/html")
+    msg.send(fail_silently=False)
+    logger.info("verification code email sent to user_id=%s", user.id)
+
+
+def send_verification_email(user) -> None:
+    """[deprecated] 링크 방식 인증 메일. 코드 방식(send_verification_code_email)으로 대체됨."""
+    verify_url = build_verification_url(user)
+    subject = "[Career.zip] 이메일 인증을 완료해 주세요"
+    from_email = getattr(settings, "DEFAULT_FROM_EMAIL", "no-reply@career.zip")
+
+    text_body = (
+        f"{user.name}님, 이메일 인증 링크를 다시 보내드립니다.\n\n"
+        f"아래 링크를 눌러 이메일 인증을 완료해 주세요 (24시간 이내):\n{verify_url}\n\n"
+        f"본인이 요청하지 않았다면 이 메일을 무시하셔도 됩니다.\n\n"
+        f"문의: {SUPPORT_EMAIL}\n"
+    )
+
+    html_body = f"""\
+<div style="font-family:Apple SD Gothic Neo,Malgun Gothic,sans-serif;max-width:560px;margin:0 auto;color:#1f2937">
+  <h2 style="color:#253900">이메일 인증을 완료해 주세요</h2>
+  <p><strong>{user.name}</strong>님, 이메일 인증 링크를 다시 보내드립니다.</p>
+  <p>아래 버튼을 눌러 <strong>이메일 인증</strong>을 완료해 주세요. (링크는 24시간 동안 유효합니다.)</p>
+  <p style="margin:24px 0">
+    <a href="{verify_url}"
+       style="background:#08CB00;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:600">
+       이메일 인증하기
+    </a>
+  </p>
+  <p style="font-size:13px;color:#6b7280">버튼이 동작하지 않으면 아래 주소를 복사해 접속하세요:<br>{verify_url}</p>
+  <p style="font-size:13px;color:#6b7280">본인이 요청하지 않았다면 이 메일을 무시하셔도 됩니다.</p>
+  <p style="font-size:13px;color:#6b7280">문의: <a href="mailto:{SUPPORT_EMAIL}">{SUPPORT_EMAIL}</a></p>
+</div>
+"""
+
+    msg = EmailMultiAlternatives(subject, text_body, from_email, [user.email])
+    msg.attach_alternative(html_body, "text/html")
+    msg.send(fail_silently=False)
+    logger.info("verification email resent to user_id=%s", user.id)
+
+
 def send_admin_signup_notification(user, signup_method: str = "email") -> None:
     """관리자에게 신규 가입 알림 메일을 발송한다. (민감정보 미포함)"""
     admin_email = getattr(settings, "ADMIN_NOTIFICATION_EMAIL", "")
