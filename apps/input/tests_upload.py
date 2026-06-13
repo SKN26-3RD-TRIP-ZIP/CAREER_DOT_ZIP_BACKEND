@@ -21,6 +21,8 @@ from apps.input.models import (
     CoverLetter,
     ProjectExperience,
 )
+from apps.interview.models import InterviewSession
+from apps.report.models import FinalReport
 
 PASSWORD = "QaTestPw!234"
 
@@ -187,6 +189,16 @@ class UserSummaryTests(_AuthMixin, APITestCase):
         ResumeMaster.objects.create(user=user, name="n2", email=user.email)
         CoverLetter.objects.create(user=user, title="cl")
         ProjectExperience.objects.create(user=user, project_name="proj", description="d")
+        session = InterviewSession.objects.create(
+            user=user,
+            interview_type="technical",
+            persona="practical",
+            status="completed",
+        )
+        report = FinalReport.objects.create(
+            session=session,
+            summary={"score_summary": {"overall_score": 88}},
+        )
 
         res = self.client.get(self.url)
         self.assertEqual(res.status_code, status.HTTP_200_OK)
@@ -200,6 +212,10 @@ class UserSummaryTests(_AuthMixin, APITestCase):
         self.assertIn("created_at", res.data["latest_jd"])
         self.assertEqual(res.data["latest_resume"]["name"], "n2")
         self.assertIsNotNone(res.data["latest_resume_updated_at"])
+        self.assertEqual(res.data["interview_count"], 1)
+        self.assertEqual(res.data["latest_interview"]["session_id"], str(session.id))
+        self.assertEqual(res.data["latest_report"]["report_id"], str(report.id))
+        self.assertEqual(res.data["latest_report"]["overall_score"], 88)
 
     def test_summary_only_counts_own_data(self):
         user = self._auth("summary-owner@example.com")
@@ -210,6 +226,16 @@ class UserSummaryTests(_AuthMixin, APITestCase):
         ProjectExperience.objects.create(user=other, project_name="other", description="d")
         JobDescription.objects.create(user=other, company_name="other", position="p", original_text="t")
         ResumeMaster.objects.create(user=other, name="other", email=other.email, original_text="t")
+        other_session = InterviewSession.objects.create(
+            user=other,
+            interview_type="technical",
+            persona="practical",
+            status="completed",
+        )
+        FinalReport.objects.create(
+            session=other_session,
+            summary={"score_summary": {"overall_score": 91}},
+        )
 
         res = self.client.get(self.url)
 
@@ -218,8 +244,11 @@ class UserSummaryTests(_AuthMixin, APITestCase):
         self.assertEqual(res.data["resume_count"], 1)
         self.assertEqual(res.data["cover_letter_count"], 0)
         self.assertEqual(res.data["project_count"], 0)
+        self.assertEqual(res.data["interview_count"], 0)
         self.assertEqual(res.data["latest_jd"]["company_name"], "own")
         self.assertEqual(res.data["latest_resume"]["name"], "own")
+        self.assertIsNone(res.data["latest_interview"])
+        self.assertIsNone(res.data["latest_report"])
 
     def test_summary_empty_state(self):
         self._auth("empty-summary@example.com")
@@ -229,7 +258,51 @@ class UserSummaryTests(_AuthMixin, APITestCase):
         self.assertEqual(res.data["resume_count"], 0)
         self.assertIsNone(res.data["latest_jd"])
         self.assertIsNone(res.data["latest_resume"])
+        self.assertEqual(res.data["interview_count"], 0)
+        self.assertIsNone(res.data["latest_interview"])
+        self.assertIsNone(res.data["latest_report"])
 
     def test_summary_requires_auth(self):
         res = self.client.get(self.url)
         self.assertEqual(res.status_code, status.HTTP_401_UNAUTHORIZED)
+
+
+class UserProfileTests(_AuthMixin, APITestCase):
+    url = "/api/v1/users/me/profile"
+
+    def test_profile_create_get_and_patch_with_frontend_values(self):
+        self._auth("profile@example.com")
+
+        create = self.client.post(
+            self.url,
+            {
+                "career_type": "new",
+                "major_type": "major",
+                "desired_job": "backend",
+                "career_year": 0,
+            },
+            format="json",
+        )
+        self.assertEqual(create.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(create.data["career_type"], "new")
+
+        detail = self.client.get(self.url)
+        self.assertEqual(detail.status_code, status.HTTP_200_OK)
+        self.assertEqual(detail.data["major_type"], "major")
+        self.assertEqual(detail.data["desired_job"], "backend")
+
+        patch = self.client.patch(
+            self.url,
+            {
+                "career_type": "career",
+                "major_type": "non_major",
+                "career_year": 3,
+            },
+            format="json",
+        )
+        self.assertEqual(patch.status_code, status.HTTP_200_OK)
+
+        detail = self.client.get(self.url)
+        self.assertEqual(detail.data["career_type"], "career")
+        self.assertEqual(detail.data["major_type"], "non_major")
+        self.assertEqual(detail.data["career_year"], 3)
