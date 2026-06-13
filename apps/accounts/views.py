@@ -7,13 +7,12 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.serializers import TokenRefreshSerializer
 from rest_framework_simplejwt.exceptions import InvalidToken, TokenError
 
-from django.core import signing
 from django.contrib.auth.models import update_last_login
 
 from .serializers import SignupSerializer, LoginSerializer, SignupResponseSerializer
 from .models import User
-from .tokens import verify_email_verification_token
-from .emails import send_welcome_email, send_admin_signup_notification
+from .codes import issue_code, verify_code, VerifyResult, ResendCooldownError
+from .emails import send_admin_signup_notification, send_verification_code_email
 
 logger = logging.getLogger("apps.accounts")
 
@@ -33,10 +32,11 @@ class SignupView(APIView):
 
             mail_failed = False
             try:
-                send_welcome_email(user)
+                code = issue_code(user)
+                send_verification_code_email(user, code)
             except Exception:  # noqa: BLE001
                 mail_failed = True
-                logger.exception("welcome email 발송 실패 user_id=%s", user.id)
+                logger.exception("인증번호 메일 발송 실패 user_id=%s", user.id)
             try:
                 send_admin_signup_notification(user, signup_method="email")
             except Exception:  # noqa: BLE001
@@ -64,36 +64,92 @@ class SignupView(APIView):
 
 
 class VerifyEmailView(APIView):
-    """이메일 인증. GET /api/v1/auth/verify-email?token=..."""
+    """이메일 인증(6자리 인증번호). POST /api/v1/auth/verify-email  body: {"email","code"}"""
     permission_classes = [permissions.AllowAny]
+    authentication_classes = []
 
-    def get(self, request):
-        token = request.query_params.get('token', '')
-        invalid = Response(
-            {'detail': '유효하지 않거나 만료된 인증 토큰입니다.'},
-            status=status.HTTP_400_BAD_REQUEST,
-        )
-        if not token:
-            return invalid
-        try:
-            payload = verify_email_verification_token(token)
-        except signing.SignatureExpired:
-            return invalid
-        except signing.BadSignature:
-            return invalid
+    def post(self, request):
+        email = (request.data.get('email') or '').strip()
+        code = (request.data.get('code') or '').strip()
+        if not email or not code:
+            return Response(
+                {'detail': '이메일과 인증번호를 모두 입력해 주세요.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         try:
-            user = User.objects.get(id=payload.get('uid'), email=payload.get('email'))
+            user = User.objects.get(email=email)
         except User.DoesNotExist:
-            return invalid
+            # 열거 방지: 코드 불일치와 동일한 응답
+            return Response(
+                {'detail': '인증번호가 올바르지 않습니다.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         if user.is_verified:
             return Response({'message': '이미 인증된 계정입니다.'}, status=status.HTTP_200_OK)
 
-        user.is_verified = True
-        user.save(update_fields=['is_verified', 'updated_at'])
-        logger.info("email verified user_id=%s", user.id)
-        return Response({'message': '이메일 인증이 완료되었습니다.'}, status=status.HTTP_200_OK)
+        result = verify_code(user, code)
+        if result == VerifyResult.OK:
+            user.is_verified = True
+            user.save(update_fields=['is_verified', 'updated_at'])
+            logger.info("email verified(code) user_id=%s", user.id)
+            return Response({'message': '이메일 인증이 완료되었습니다.'}, status=status.HTTP_200_OK)
+        if result == VerifyResult.TOO_MANY:
+            return Response(
+                {'detail': '인증 시도 횟수를 초과했습니다. 인증번호를 재발송해 주세요.'},
+                status=status.HTTP_429_TOO_MANY_REQUESTS,
+            )
+        if result == VerifyResult.EXPIRED:
+            return Response(
+                {'detail': '인증번호가 만료되었거나 존재하지 않습니다. 재발송해 주세요.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        return Response(
+            {'detail': '인증번호가 올바르지 않습니다.'},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+
+class ResendVerificationView(APIView):
+    """
+    이메일 인증 재발송. POST /api/v1/auth/resend-verification  body: {"email": "..."}
+
+    - 이메일 열거(enumeration) 방지를 위해 가입/미가입 여부와 무관하게 항상 동일한 200 메시지를 반환한다.
+    - 실제 발송은 '가입되어 있고 아직 미인증' 인 경우에만 수행한다.
+    - 메일 발송 실패가 요청 실패로 이어지지 않게 한다(로그만 남김, 토큰은 로그에 미기록).
+    """
+    permission_classes = [permissions.AllowAny]
+    authentication_classes = []
+
+    GENERIC_MESSAGE = "입력하신 이메일이 가입되어 있고 아직 인증 전이라면, 인증 메일을 다시 보냈습니다."
+
+    def post(self, request):
+        email = (request.data.get('email') or '').strip()
+        if not email:
+            return Response({'error': 'Email is required.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            user = User.objects.get(email=email)
+        except User.DoesNotExist:
+            return Response({'message': self.GENERIC_MESSAGE}, status=status.HTTP_200_OK)
+
+        if user.is_verified:
+            # 이미 인증된 계정 — 메일 재발송 없이 동일 메시지(열거 방지)
+            return Response({'message': self.GENERIC_MESSAGE}, status=status.HTTP_200_OK)
+
+        try:
+            code = issue_code(user)
+            send_verification_code_email(user, code)
+        except ResendCooldownError as exc:
+            return Response(
+                {'detail': f'잠시 후 다시 시도해 주세요. ({exc.retry_after}초 후 재발송 가능)'},
+                status=status.HTTP_429_TOO_MANY_REQUESTS,
+            )
+        except Exception:  # noqa: BLE001
+            logger.exception("verification code resend 실패 user_id=%s", user.id)
+
+        return Response({'message': self.GENERIC_MESSAGE}, status=status.HTTP_200_OK)
 
 
 class LoginView(APIView):
