@@ -2,6 +2,9 @@ from django.urls import path
 from .views import (
     JDListCreateView,
     JDDetailView,
+    JDUploadView,
+    ResumeUploadView,
+    UserSummaryView,
     ProjectExperienceListCreateView,
     ProjectExperienceDetailView,
     CoverLetterListCreateView,
@@ -17,13 +20,16 @@ from .views import (
 
 urlpatterns = [
     path('jds', JDListCreateView.as_view(), name='jd-list-create'),
+    path('jds/upload', JDUploadView.as_view(), name='jd-upload'),
     path('jds/<uuid:jd_id>', JDDetailView.as_view(), name='jd-detail'),
     path('projects', ProjectExperienceListCreateView.as_view(), name='project-list-create'),
     path('projects/<uuid:project_id>', ProjectExperienceDetailView.as_view(), name='project-detail'),
     path('cover-letters', CoverLetterListCreateView.as_view(), name='cover-letter-list-create'),
     path('cover-letters/<uuid:cover_letter_id>', CoverLetterDetailView.as_view(), name='cover-letter-detail'),
     path('users/me/profile', UserProfileView.as_view(), name='user-profile'),
-    path('resumes', ResumeMasterCreateView.as_view(), name='resume-create'),
+    path('users/me/summary', UserSummaryView.as_view(), name='user-summary'),
+    path('resumes', ResumeMasterCreateView.as_view(), name='resume-list-create'),
+    path('resumes/upload', ResumeUploadView.as_view(), name='resume-upload'),
     path('resumes/<uuid:resume_id>', ResumeMasterDetailView.as_view(), name='resume-detail'),
     path('resumes/<uuid:resume_id>/education', ResumeEducationCreateView.as_view(), name='resume-education-create'),
     path('resumes/<uuid:resume_id>/careers', ResumeCareerCreateView.as_view(), name='resume-career-create'),

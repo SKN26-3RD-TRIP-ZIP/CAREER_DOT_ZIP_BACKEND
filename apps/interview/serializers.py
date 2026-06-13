@@ -23,6 +23,8 @@ class InterviewSessionCreateSerializer(serializers.ModelSerializer):
     resume_id = serializers.UUIDField(required=False, allow_null=True, write_only=True)
     cover_letter_id = serializers.UUIDField(required=False, allow_null=True, write_only=True)
     persona = serializers.CharField(required=False, allow_blank=True, default='practical')
+    persona_type = serializers.CharField(required=False, allow_blank=True, write_only=True)
+    interview_mode = serializers.ChoiceField(choices=('text', 'voice'), required=False, default='text')
 
     class Meta:
         model = InterviewSession
@@ -32,6 +34,8 @@ class InterviewSessionCreateSerializer(serializers.ModelSerializer):
             'cover_letter_id',
             'interview_type',
             'persona',
+            'persona_type',
+            'interview_mode',
             'total_question_count',
         )
         extra_kwargs = {
@@ -64,6 +68,11 @@ class InterviewSessionCreateSerializer(serializers.ModelSerializer):
         
     def validate_persona(self, value):
         return normalize_persona_type(value)
+
+    def validate(self, attrs):
+        raw_persona = attrs.pop('persona_type', None) or attrs.get('persona') or 'practical'
+        attrs['persona'] = normalize_persona_type(raw_persona)
+        return attrs
 
     def create(self, validated_data):
         jd = validated_data.pop('jd_id', None)
@@ -122,6 +131,7 @@ class InterviewSessionDetailSerializer(serializers.ModelSerializer):
             'cover_letter_id',
             'interview_type',
             'persona',
+            'interview_mode',
             'status',
             'total_question_count',
             'current_question_index',
