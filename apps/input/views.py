@@ -1,7 +1,12 @@
+from pathlib import Path
+
 from rest_framework import generics, permissions
 from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.views import APIView
+from rest_framework.parsers import MultiPartParser, FormParser
+
+from apps.document.services.document_parser import extract_text_from_file
 
 from .models import (
     JobDescription,
@@ -37,6 +42,150 @@ from .serializers import (
     ResumeCertificateCreateSerializer,
     ResumeCertificateListSerializer,
 )
+
+
+UPLOAD_MAX_SIZE = 10 * 1024 * 1024  # 10MB
+UPLOAD_ALLOWED_TYPES = {'pdf', 'docx'}
+
+
+def _validate_upload(file_obj, allowed_types=None):
+    """업로드 파일 공통 검증. 통과 시 (file_type, filename) 반환, 실패 시 ValueError(메시지)."""
+    allowed_types = allowed_types or UPLOAD_ALLOWED_TYPES
+    if file_obj is None:
+        raise ValueError('파일이 필요합니다.')
+    filename = Path(file_obj.name).name
+    file_type = Path(filename).suffix.lower().lstrip('.')
+    if file_type not in allowed_types:
+        if allowed_types == {'pdf'}:
+            raise ValueError('PDF 파일만 업로드할 수 있습니다.')
+        raise ValueError('PDF 또는 DOCX 파일만 업로드할 수 있습니다.')
+    if file_obj.size == 0:
+        raise ValueError('빈 파일은 업로드할 수 없습니다.')
+    if file_obj.size > UPLOAD_MAX_SIZE:
+        raise ValueError('파일 크기는 10MB를 초과할 수 없습니다.')
+    return file_type, filename
+
+
+def _extract_or_error(file_obj, file_type):
+    """텍스트 추출. 성공 시 (text, None), 실패/빈내용 시 (None, error_response)."""
+    try:
+        text = (extract_text_from_file(file_obj, file_type) or '').strip()
+    except Exception as exc:  # noqa: BLE001
+        return None, Response(
+            {'detail': f'텍스트 추출에 실패했습니다: {exc}'},
+            status=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        )
+    if not text:
+        return None, Response(
+            {'detail': '파일에서 텍스트를 추출하지 못했습니다. (빈 내용)'},
+            status=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        )
+    return text, None
+
+
+class JDUploadView(APIView):
+    """JD PDF 업로드 → 텍스트 추출 → JobDescription 저장. POST /api/v1/jds/upload"""
+    permission_classes = [permissions.IsAuthenticated]
+    parser_classes = [MultiPartParser, FormParser]
+
+    def post(self, request):
+        file_obj = request.FILES.get('file')
+        try:
+            file_type, filename = _validate_upload(file_obj, allowed_types={'pdf'})
+        except ValueError as exc:
+            return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        text, error = _extract_or_error(file_obj, file_type)
+        if error is not None:
+            return error
+
+        jd = JobDescription.objects.create(
+            user=request.user,
+            company_name=(request.data.get('company_name') or '').strip() or '미입력',
+            position=(request.data.get('position') or '').strip() or (Path(filename).stem[:100] or '미입력'),
+            original_text=text,
+            input_method='PDF',
+            analysis_status='PENDING',
+        )
+        return Response(JobDescriptionListSerializer(jd).data, status=status.HTTP_201_CREATED)
+
+
+class ResumeUploadView(APIView):
+    """이력서 PDF/DOCX 업로드 → 텍스트 추출 → ResumeMaster.original_text 저장. POST /api/v1/resumes/upload"""
+    permission_classes = [permissions.IsAuthenticated]
+    parser_classes = [MultiPartParser, FormParser]
+
+    def post(self, request):
+        file_obj = request.FILES.get('file')
+        try:
+            file_type, filename = _validate_upload(file_obj)
+        except ValueError as exc:
+            return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        text, error = _extract_or_error(file_obj, file_type)
+        if error is not None:
+            return error
+
+        resume = ResumeMaster.objects.create(
+            user=request.user,
+            name=(request.data.get('name') or '').strip() or (Path(filename).stem[:50] or '업로드 이력서'),
+            email=request.user.email,
+            original_text=text,
+        )
+        return Response(
+            {
+                'resume_id': str(resume.id),
+                'name': resume.name,
+                'original_text_length': len(text),
+                'created_at': resume.created_at,
+                'updated_at': resume.updated_at,
+            },
+            status=status.HTTP_201_CREATED,
+        )
+
+
+class UserSummaryView(APIView):
+    """마이페이지 요약 집계. GET /api/v1/users/me/summary (request.user 기준, 집계만 — DB 변경 없음)."""
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        user = request.user
+        jds = JobDescription.objects.filter(user=user)
+        resumes = ResumeMaster.objects.filter(user=user)
+        latest_jd = jds.order_by('-created_at').first()
+        latest_resume = resumes.order_by('-updated_at').first()
+        return Response(
+            {
+                'jd_count': jds.count(),
+                'latest_jd': (
+                    {
+                        'jd_id': str(latest_jd.id),
+                        'company_name': latest_jd.company_name,
+                        'position': latest_jd.position,
+                        'analysis_status': latest_jd.analysis_status,
+                        'created_at': latest_jd.created_at,
+                    }
+                    if latest_jd
+                    else None
+                ),
+                'latest_jd_created_at': latest_jd.created_at if latest_jd else None,
+                'latest_jd_analysis_status': latest_jd.analysis_status if latest_jd else None,
+                'resume_count': resumes.count(),
+                'latest_resume': (
+                    {
+                        'resume_id': str(latest_resume.id),
+                        'name': latest_resume.name,
+                        'updated_at': latest_resume.updated_at,
+                    }
+                    if latest_resume
+                    else None
+                ),
+                'latest_resume_updated_at': latest_resume.updated_at if latest_resume else None,
+                'cover_letter_count': CoverLetter.objects.filter(user=user).count(),
+                'project_count': ProjectExperience.objects.filter(user=user).count(),
+            },
+            status=status.HTTP_200_OK,
+        )
 
 
 class JDListCreateView(generics.ListCreateAPIView):
@@ -92,6 +241,22 @@ class JDDetailView(generics.RetrieveDestroyAPIView):
 
 class ResumeMasterCreateView(APIView):
     permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        """현재 사용자의 이력서 목록 (선택/마이페이지용). GET /api/v1/resumes"""
+        resumes = ResumeMaster.objects.filter(user=request.user).order_by('-updated_at')
+        results = [
+            {
+                'resume_id': str(r.id),
+                'name': r.name,
+                'is_active': r.is_active,
+                'has_text': bool(r.original_text),
+                'created_at': r.created_at,
+                'updated_at': r.updated_at,
+            }
+            for r in resumes
+        ]
+        return Response({'total': len(results), 'results': results}, status=status.HTTP_200_OK)
 
     def post(self, request):
         serializer = ResumeMasterCreateSerializer(data=request.data)

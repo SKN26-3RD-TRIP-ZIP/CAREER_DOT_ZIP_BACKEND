@@ -59,6 +59,8 @@ class InterviewSessionListCreateView(generics.ListCreateAPIView):
                 'session_id': str(session.id),
                 'interview_type': session.interview_type,
                 'persona': session.persona,
+                'persona_type': session.persona,
+                'interview_mode': session.interview_mode,
                 'status': session.status,
                 'total_question_count': session.total_question_count,
                 'created_at': session.created_at,
