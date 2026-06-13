@@ -9,6 +9,7 @@ from .mvp_views import (
     MVPSessionCreateView,
     MVPSessionDetailView,
     MVPSessionStatusView,
+    MVPTTSSpeechView,
     MVPWhisperDevTranscribeView,
     MVPWhisperTranscribeView,
 )
@@ -31,6 +32,7 @@ urlpatterns = [
     path('answers', MVPAnswerCreateView.as_view(), name='mvp-answer-create'),
     path('stt/transcribe', MVPWhisperTranscribeView.as_view(), name='mvp-stt-transcribe'),
     path('stt/transcribe/dev', MVPWhisperDevTranscribeView.as_view(), name='mvp-stt-transcribe-dev'),
+    path('tts/speech', MVPTTSSpeechView.as_view(), name='mvp-tts-speech'),
     path(
         'answers/<uuid:answer_id>/stt',
         MVPSTTResultUpdateView.as_view(),

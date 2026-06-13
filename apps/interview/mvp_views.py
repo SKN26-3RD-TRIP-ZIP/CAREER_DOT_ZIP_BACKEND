@@ -1,5 +1,6 @@
 from django.shortcuts import get_object_or_404
 from django.conf import settings
+from django.http import HttpResponse
 from django.utils import timezone
 from rest_framework import parsers
 from rest_framework import permissions, status
@@ -23,6 +24,7 @@ from .services.question_generator import generate_interview_questions
 from .services.answer_service import AnswerService
 from .services.follow_up_generator import FollowupGenerator
 from .services.whisper_stt_service import transcribe_uploaded_audio
+from .services.tts_service import synthesize_interview_question
 from .services.ai_chain_openai_engine import AIChainOpenAIError
 
 
@@ -269,6 +271,23 @@ class MVPWhisperDevTranscribeView(APIView):
         language = request.data.get('language') or 'ko'
         result = transcribe_uploaded_audio(audio_file, language=language)
         return Response(result, status=status.HTTP_200_OK)
+
+
+class MVPTTSSpeechView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        session_id = request.data.get('session_id')
+        session = get_object_or_404(InterviewSession, id=session_id, user=request.user)
+        result = synthesize_interview_question(
+            request.data.get('text'),
+            persona=session.persona,
+        )
+        response = HttpResponse(result['audio_bytes'], content_type=result['content_type'])
+        response['X-TTS-Model'] = result['model']
+        response['X-TTS-Voice'] = result['voice']
+        response['X-TTS-Persona'] = result['persona']
+        return response
 
 
 class MVPFollowupQuestionCreateView(APIView):

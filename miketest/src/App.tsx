@@ -4,6 +4,7 @@ type PermissionState = 'idle' | 'granted' | 'denied' | 'unsupported';
 type SttMode = 'quality' | 'mini' | 'whisper' | 'browser' | 'clova';
 type TtsMode = 'openai' | 'browser';
 type MicInputStatus = 'none' | 'low' | 'normal';
+type QuestionType = 'technical' | 'general';
 
 type WhisperWordTimestamp = {
   word: string;
@@ -45,7 +46,23 @@ type VadAnalysisResult = {
   };
 };
 
+type TechnicalCorrectionResult = {
+  questionType: QuestionType;
+  normalizedText: string;
+  replacements: Array<{
+    before: string;
+    after: string;
+  }>;
+  warnings: string[];
+  fallback: boolean;
+  skipped: boolean;
+  model: string | null;
+  processingMs: number;
+};
+
 type ComparisonResult = {
+  questionType: QuestionType;
+  technicalCorrection: TechnicalCorrectionResult;
   whisper: {
     text: string;
     sttMs: number;
@@ -449,6 +466,7 @@ function App() {
   const [comparisonLoading, setComparisonLoading] = useState(false);
   const [comparisonError, setComparisonError] = useState<string | null>(null);
   const [comparisonResult, setComparisonResult] = useState<ComparisonResult | null>(null);
+  const [questionType, setQuestionType] = useState<QuestionType>('technical');
   const [questionEndedAt] = useState<string | null>(null);
   const [answerStartedAt, setAnswerStartedAt] = useState<string | null>(null);
   const [answerEndedAt, setAnswerEndedAt] = useState<string | null>(null);
@@ -522,6 +540,8 @@ function App() {
     }
 
     return {
+      question_type: comparisonResult.questionType,
+      technical_term_correction: comparisonResult.technicalCorrection,
       whisper_timestamp: buildWhisperTimestampPayload({
         result: comparisonResult.whisper,
         questionEndedAt,
@@ -996,6 +1016,68 @@ function App() {
     };
   };
 
+  const requestTechnicalTermCorrection = async (
+    text: string,
+    currentQuestionType: QuestionType
+  ): Promise<TechnicalCorrectionResult> => {
+    const startedAt = performance.now();
+
+    try {
+      const response = await fetch('/api/normalize-technical-terms', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          text,
+          questionType: currentQuestionType
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error(await parseApiError(response));
+      }
+
+      const data = await response.json();
+      const replacements = Array.isArray(data.replacements)
+        ? data.replacements
+            .map((item: { before?: unknown; after?: unknown }) => ({
+              before: typeof item.before === 'string' ? item.before : '',
+              after: typeof item.after === 'string' ? item.after : ''
+            }))
+            .filter((item: { before: string; after: string }) => item.before || item.after)
+        : [];
+
+      return {
+        questionType: data.question_type === 'technical' ? 'technical' : 'general',
+        normalizedText: typeof data.normalized_text === 'string' ? data.normalized_text : text,
+        replacements,
+        warnings: Array.isArray(data.warnings)
+          ? data.warnings.filter((item: unknown): item is string => typeof item === 'string')
+          : [],
+        fallback: Boolean(data.fallback),
+        skipped: Boolean(data.skipped),
+        model: typeof data.model === 'string' ? data.model : null,
+        processingMs:
+          typeof data.processing_time_ms === 'number'
+            ? data.processing_time_ms
+            : performance.now() - startedAt
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown correction error';
+      return {
+        questionType: currentQuestionType,
+        normalizedText: text,
+        replacements: [],
+        warnings: [`Correction fallback: ${message}`],
+        fallback: true,
+        skipped: false,
+        model: null,
+        processingMs: performance.now() - startedAt
+      };
+    }
+  };
+
   const requestClovaStt = async () => {
     if (!recordedBlob) {
       throw new Error('녹음 파일이 없습니다. 먼저 녹음을 진행하세요.');
@@ -1149,6 +1231,7 @@ function App() {
     setComparisonError(null);
 
     try {
+      const selectedQuestionType = questionType;
       const whisperTotalStart = performance.now();
       const whisperSttStart = performance.now();
       const whisperResult = await requestOpenAiStt(OPENAI_STT_WHISPER_MODEL);
@@ -1163,6 +1246,7 @@ function App() {
         };
       });
       const whisperTotalMs = performance.now() - whisperTotalStart;
+      const technicalCorrection = await requestTechnicalTermCorrection(whisperResult.text, selectedQuestionType);
 
       const gptTotalStart = performance.now();
       const gptSttPromise = (async () => {
@@ -1189,6 +1273,8 @@ function App() {
 
       const whisperPauseRows = whisperWordsForDisplay.slice(0, -1).filter((item) => item.gapToNext >= 0.5);
       setComparisonResult({
+        questionType: selectedQuestionType,
+        technicalCorrection,
         whisper: {
           text: whisperResult.text,
           sttMs: whisperSttMs,
@@ -2342,6 +2428,30 @@ function App() {
             </button>
           </div>
 
+          <div className="mt-4 rounded-lg border border-emerald-100 bg-emerald-50 p-4">
+            <p className="text-sm font-semibold text-slate-950">질문 유형</p>
+            <div className="mt-3 flex flex-wrap gap-2">
+              {(['technical', 'general'] as QuestionType[]).map((type) => (
+                <button
+                  key={type}
+                  type="button"
+                  className={`rounded-lg border px-4 py-2 text-sm font-semibold transition ${
+                    questionType === type
+                      ? 'border-emerald-500 bg-white text-emerald-700 shadow-sm'
+                      : 'border-slate-200 bg-white text-slate-600 hover:border-emerald-300'
+                  }`}
+                  onClick={() => setQuestionType(type)}
+                  disabled={comparisonLoading}
+                >
+                  {type}
+                </button>
+              ))}
+            </div>
+            <p className="mt-2 text-xs text-slate-600">
+              technical은 Whisper 직후 기술용어 표기 보정을 실행하고, general은 LLM 호출 없이 Whisper 원문을 그대로 사용합니다.
+            </p>
+          </div>
+
           {comparisonError ? <div className="mt-4 rounded-lg bg-rose-50 p-4 text-sm text-rose-700">{comparisonError}</div> : null}
           {!recordedBlob ? (
             <p className="mt-4 rounded-lg bg-slate-50 p-4 text-sm text-slate-600">녹음 파일이 생성되면 비교를 실행할 수 있습니다.</p>
@@ -2349,6 +2459,81 @@ function App() {
 
           {comparisonResult ? (
             <div className="mt-5 grid gap-4 xl:grid-cols-2">
+              <div className="rounded-lg border border-emerald-200 bg-white p-4 xl:col-span-2">
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                  <div>
+                    <p className="text-sm font-semibold text-slate-950">Whisper 원문 vs 기술용어 보정본</p>
+                    <p className="mt-1 text-xs text-slate-500">
+                      질문 유형: {comparisonResult.questionType} / 모델:{' '}
+                      {comparisonResult.technicalCorrection.model ?? 'LLM 미호출'}
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap gap-2 text-xs">
+                    <span className="rounded-full bg-slate-100 px-3 py-1 text-slate-700">
+                      Whisper {formatMilliseconds(comparisonResult.whisper.sttMs)}
+                    </span>
+                    <span className="rounded-full bg-emerald-100 px-3 py-1 text-emerald-700">
+                      LLM {formatMilliseconds(comparisonResult.technicalCorrection.processingMs)}
+                    </span>
+                    <span
+                      className={`rounded-full px-3 py-1 ${
+                        comparisonResult.technicalCorrection.fallback
+                          ? 'bg-amber-100 text-amber-800'
+                          : comparisonResult.technicalCorrection.skipped
+                            ? 'bg-slate-100 text-slate-700'
+                            : 'bg-emerald-100 text-emerald-700'
+                      }`}
+                    >
+                      {comparisonResult.technicalCorrection.fallback
+                        ? 'fallback'
+                        : comparisonResult.technicalCorrection.skipped
+                          ? 'skipped'
+                          : 'normalized'}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="mt-4 grid gap-3 lg:grid-cols-2">
+                  <div>
+                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Whisper original</p>
+                    <p className="mt-2 min-h-24 whitespace-pre-wrap rounded-lg bg-slate-50 p-3 text-sm text-slate-700">
+                      {comparisonResult.whisper.text || '변환 텍스트가 없습니다.'}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Normalized text</p>
+                    <p className="mt-2 min-h-24 whitespace-pre-wrap rounded-lg bg-emerald-50 p-3 text-sm text-slate-800">
+                      {comparisonResult.technicalCorrection.normalizedText || comparisonResult.whisper.text || '보정 텍스트가 없습니다.'}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="mt-4 rounded-lg border border-slate-200">
+                  <div className="border-b border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-600">
+                    replacements
+                  </div>
+                  {comparisonResult.technicalCorrection.replacements.length === 0 ? (
+                    <p className="px-3 py-3 text-sm text-slate-500">변경된 기술용어가 없습니다.</p>
+                  ) : (
+                    <ul className="divide-y divide-slate-100 text-sm">
+                      {comparisonResult.technicalCorrection.replacements.map((item, index) => (
+                        <li key={`${item.before}-${item.after}-${index}`} className="flex flex-wrap gap-2 px-3 py-2">
+                          <span className="font-medium text-slate-900">{item.before || '-'}</span>
+                          <span className="text-slate-400">-&gt;</span>
+                          <span className="font-semibold text-emerald-700">{item.after || '-'}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+
+                {comparisonResult.technicalCorrection.warnings.length > 0 ? (
+                  <div className="mt-3 rounded-lg bg-amber-50 p-3 text-xs text-amber-800">
+                    {comparisonResult.technicalCorrection.warnings.join(' / ')}
+                  </div>
+                ) : null}
+              </div>
+
               <div className="rounded-lg border border-slate-200 p-4">
                 <p className="text-sm font-semibold text-slate-950">A안 Whisper</p>
                 <p className="mt-1 text-xs text-slate-500">whisper-1 / verbose_json / word timestamp</p>
