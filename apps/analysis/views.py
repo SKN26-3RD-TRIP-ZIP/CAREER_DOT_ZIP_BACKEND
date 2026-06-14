@@ -1,5 +1,7 @@
+import json
 import logging
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -9,18 +11,24 @@ from django.db import connection
 
 from .models import AnalysisSession, JdAnalysis, GeneratedQuestion
 from apps.input.models import JobDescription, ResumeMaster, CoverLetter
-from .serializers import JDListSerializer, ResumeListSerializer, CoverLetterListSerializer
+from .serializers import (
+    JDListSerializer, ResumeListSerializer, CoverLetterListSerializer,
+    ResumeFullCreateSerializer,
+)
 from apps.input.serializers import (
     JobDescriptionCreateSerializer,
-    ResumeMasterCreateSerializer,
     CoverLetterCreateSerializer,
 )
-from .services import extract_jd_keywords, analyze_resume, generate_all_questions
-from .services.jd_service     import extract_jd_requirements
-from .services.match_service  import calculate_match_score
-from .services.result_service import build_match_result
-from .services.gap_service    import calculate_gap, build_gap_message
-from .services.question_output_service import to_db_records
+from .services import extract_jd_keywords, analyze_resume
+from .services.jd_service              import extract_jd_requirements
+from .services.match_service           import calculate_match_score
+from .services.result_service          import build_match_result
+from .services.gap_service             import calculate_gap, build_gap_message
+from .services.question_rag_service    import search_similar_questions
+from .services.question_gen_service    import generate_questions
+from .services.question_merge_service  import merge_and_deduplicate
+from .services.star_service            import generate_star_answers
+from .services.question_output_service import build_question_output, to_db_records
 
 logger = logging.getLogger(__name__)
 
@@ -41,36 +49,33 @@ def _run_analysis(session_id: int):
     """
     백그라운드 스레드에서 실행되는 전체 분석 파이프라인.
 
-    1) JD 키워드 추출
-    2) 이력서·자소서 분석
-    3) 매칭 점수 및 강점/약점 계산
-    4) JdAnalysis 생성
-    5) 질문 + STAR 답안 생성 → GeneratedQuestion 저장
+    [최적화 구조]
+    Step1: JD 키워드/요건 추출 + 이력서 분석 — 3개 병렬
+    Step2: match_score(임베딩+LLM) ↔ RAG+질문생성(LLM) — 병렬
+    Step3: gap 계산(순수 로직) ↔ merge(임베딩) — 병렬
+    Step4: STAR 답안 생성 — personality/technical/experience 3그룹 병렬
     """
     session = AnalysisSession.objects.get(id=session_id)
+    t_total = time.time()
     try:
-        # 1) JD 키워드 추출 / JD 자격 요건 추출 / 이력서 분석 — 3개 병렬 실행
+        # Step 1: JD 키워드 추출 / JD 자격 요건 추출 / 이력서 분석 — 3개 병렬
+        t0 = time.time()
         with ThreadPoolExecutor(max_workers=3) as executor:
             f_jd_kw  = executor.submit(extract_jd_keywords,    session.jd_text)
             f_jd_req = executor.submit(extract_jd_requirements, session.jd_text)
             f_resume = executor.submit(analyze_resume, session.resume_text, session.cover_letter_text)
 
-        # 각 future를 개별 처리 — 부분 실패 시 fallback 값으로 파이프라인 유지
-        jd_kw,         err_jd_kw  = _resolve_future(f_jd_kw,  "JD 키워드 추출",   {})
-        jd_req,        err_jd_req = _resolve_future(f_jd_req, "JD 자격 요건 추출", {})
+        jd_kw,          err_jd_kw  = _resolve_future(f_jd_kw,  "JD 키워드 추출",   {})
+        jd_req,         err_jd_req = _resolve_future(f_jd_req, "JD 자격 요건 추출", {})
         resume_summary, err_resume = _resolve_future(f_resume, "이력서 분석",       {})
+        logger.info("[TIMING] step1 병렬(jd_kw+jd_req+resume): %.2fs", time.time() - t0)
 
-        # 이력서 분석은 매칭의 핵심 — 실패 시 파이프라인 중단
         if err_resume:
             raise RuntimeError("이력서 분석 실패로 파이프라인을 중단합니다.")
 
-        # 부분 실패한 단계가 있으면 경고 로그 기록
         failed_steps = [s for s in [err_jd_kw, err_jd_req] if s]
         if failed_steps:
-            logger.warning(
-                "[Analysis] session=%s — 일부 단계 fallback 적용: %s",
-                session_id, failed_steps,
-            )
+            logger.warning("[Analysis] session=%s — 일부 단계 fallback 적용: %s", session_id, failed_steps)
 
         inferred_level = resume_summary.get("career_level", session.career_level)
         session.jd_keywords     = {**jd_kw, "requirements": jd_req}
@@ -78,28 +83,86 @@ def _run_analysis(session_id: int):
         session.career_level    = inferred_level
         session.save(update_fields=["jd_keywords", "resume_analysis", "career_level"])
 
-        # 3) 매칭 점수 및 강점/약점/자소서 포인트 계산
-        match_result = calculate_match_score(
-            jd_keywords=jd_kw,
-            resume_analysis=resume_summary,
-            cover_letter_text=session.cover_letter_text,
-            career_level=inferred_level,
-            jd_requirements=jd_req,
+        # Step 2: match_score(임베딩+LLM) ↔ RAG검색+질문생성(LLM) 병렬
+        # generate_questions는 jd_kw + resume_summary만 필요하므로 match_result를 기다릴 필요 없음
+        t0 = time.time()
+        with ThreadPoolExecutor(max_workers=4) as executor:
+            f_match = executor.submit(
+                calculate_match_score,
+                jd_keywords=jd_kw,
+                resume_analysis=resume_summary,
+                cover_letter_text=session.cover_letter_text,
+                career_level=inferred_level,
+                jd_requirements=jd_req,
+                job_role=session.job_role,
+            )
+            f_rag = executor.submit(search_similar_questions, jd_kw, 20)
+            f_llm = executor.submit(
+                generate_questions,
+                job_role=session.job_role,
+                company_name=session.company_name,
+                jd_keywords=jd_kw,
+                resume_analysis=resume_summary,
+            )
+
+        match_result_raw, err_match = _resolve_future(f_match, "매칭 점수 계산", {})
+        rag_questions,    _         = _resolve_future(f_rag,   "RAG 질문 검색",  [])
+        llm_questions,    _         = _resolve_future(f_llm,   "LLM 질문 생성",  [])
+        logger.info("[TIMING] step2 병렬(match+RAG+question_gen): %.2fs", time.time() - t0)
+
+        if err_match:
+            raise RuntimeError("매칭 점수 계산 실패로 파이프라인을 중단합니다.")
+
+        match_result = build_match_result(match_result_raw, inferred_level)
+
+        # Step 3: gap 계산(순수 로직) ↔ 질문 merge(임베딩) 병렬
+        t0 = time.time()
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            f_gap   = executor.submit(
+                calculate_gap,
+                jd_keywords=jd_kw,
+                jd_requirements=jd_req,
+                resume_analysis=resume_summary,
+                unmatched_keywords=match_result["unmatched_keywords"],
+                trait_details=match_result.get("trait_details"),
+            )
+            f_merge = executor.submit(merge_and_deduplicate, rag_questions, llm_questions)
+
+        gap_result, _ = _resolve_future(f_gap,   "갭 계산",       {})
+        questions,  _ = _resolve_future(f_merge, "질문 통합/중복 제거", [])
+        gap_message   = build_gap_message(gap_result, inferred_level)
+        logger.info("[TIMING] step3 병렬(gap+merge): %.2fs", time.time() - t0)
+
+        # Step 4: STAR 답안 생성 — 타입별 3그룹 병렬
+        t0 = time.time()
+        star_groups = {
+            "personality": [q for q in questions if q.get("type") == "personality"],
+            "technical":   [q for q in questions if q.get("type") == "technical"],
+            "experience":  [q for q in questions if q.get("type") == "experience"],
+        }
+        star_kwargs = dict(
             job_role=session.job_role,
+            company_name=session.company_name,
+            jd_text=session.jd_text,
+            resume_text=session.resume_text,
+            cover_letter_text=session.cover_letter_text,
         )
-        match_result = build_match_result(match_result, inferred_level)
+        with ThreadPoolExecutor(max_workers=3) as executor:
+            star_futures = {
+                qtype: executor.submit(generate_star_answers, questions=qs, **star_kwargs)
+                for qtype, qs in star_groups.items()
+                if qs
+            }
 
-        # 4) 갭 분석
-        gap_result  = calculate_gap(
-            jd_keywords=jd_kw,
-            jd_requirements=jd_req,
-            resume_analysis=resume_summary,
-            unmatched_keywords=match_result["unmatched_keywords"],
-            trait_details=match_result.get("trait_details"),
-        )
-        gap_message = build_gap_message(gap_result, inferred_level)
+        questions_with_star = []
+        for qtype, f in star_futures.items():
+            group_result, err = _resolve_future(f, f"STAR 생성({qtype})", [])
+            questions_with_star.extend(group_result)
+        logger.info("[TIMING] step4 STAR 3그룹 병렬: %.2fs", time.time() - t0)
 
-        # 5) JdAnalysis 생성
+        questions = build_question_output(questions_with_star)
+
+        # Step 5: JdAnalysis 생성
         jd_analysis = JdAnalysis.objects.create(
             user=session.user,
             jd_id=session.jd_id,
@@ -117,17 +180,6 @@ def _run_analysis(session_id: int):
             cl_points=match_result["cl_points"],
         )
 
-        # 6) 질문 + STAR 답안 생성
-        questions = generate_all_questions(
-            job_role=session.job_role,
-            company_name=session.company_name,
-            jd_keywords=jd_kw,
-            resume_analysis=resume_summary,
-            jd_text=session.jd_text,
-            resume_text=session.resume_text,
-            cover_letter_text=session.cover_letter_text,
-        )
-
         # 7) 질문 DB 저장
         db_records = to_db_records(questions, str(jd_analysis.id))
         GeneratedQuestion.objects.bulk_create([
@@ -143,14 +195,33 @@ def _run_analysis(session_id: int):
             for r in db_records
         ])
 
+        # input.JobDescription에 분석 결과 반영
+        summary_parts = []
+        if jd_req.get("job_type"):
+            summary_parts.append(jd_req["job_type"])
+        if jd_req.get("min_years"):
+            summary_parts.append(f"경력 {jd_req['min_years']}년 이상")
+        if jd_req.get("education") and jd_req["education"] != "무관":
+            summary_parts.append(jd_req["education"])
+        if jd_req.get("required_tech"):
+            summary_parts.append(", ".join(jd_req["required_tech"][:5]))
+        company_summary = " | ".join(summary_parts) if summary_parts else session.job_role
+
+        JobDescription.objects.filter(id=session.jd_id).update(
+            company_summary=company_summary,
+            analysis_status="COMPLETED",
+        )
+
         # 세션에 jd_analysis_id 저장 후 완료
         session.jd_analysis_id = jd_analysis.id
         session.status = "ready"
         session.save(update_fields=["jd_analysis_id", "status", "updated_at"])
+        logger.info("[TIMING] ✅ 전체 파이프라인 완료: %.2fs", time.time() - t_total)
 
     except Exception as e:
         session.status = "failed"
         session.save(update_fields=["status", "updated_at"])
+        JobDescription.objects.filter(id=session.jd_id).update(analysis_status="FAILED")
         logger.error("Analysis failed for session %s: %s", session_id, e, exc_info=True)
     finally:
         connection.close()
@@ -211,14 +282,20 @@ class JDCreateView(APIView):
 class ResumeCreateView(APIView):
     """
     POST /api/v1/analysis/create/resumes/
-    body: { name, phone, email, address, github_url, original_text }
+    body: {
+        name, phone, email, address, github_url, original_text,
+        careers: [{company_name, position, start_date, end_date, is_current, description}],
+        education: [{school_name, major, degree, start_date, end_date, status}],
+        skills: ["Python", "Django", ...],
+        certificates: [{name, issued_by, issued_at}]
+    }
     """
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
-        serializer = ResumeMasterCreateSerializer(data=request.data)
+        serializer = ResumeFullCreateSerializer(data=request.data, context={'user': request.user})
         serializer.is_valid(raise_exception=True)
-        resume = serializer.save(user=request.user)
+        resume = serializer.save()
         return Response({'resume_id': str(resume.id), 'name': resume.name}, status=status.HTTP_201_CREATED)
 
 

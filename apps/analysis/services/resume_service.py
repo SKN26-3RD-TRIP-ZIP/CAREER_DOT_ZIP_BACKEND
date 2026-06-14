@@ -12,7 +12,7 @@ import json
 from .utils import get_client, clean_json
 
 
-def analyze_resume(resume_text: str, cover_letter_text: str) -> dict:
+def analyze_resume(resume_text: str, cover_letter_text: str, model: str = "gpt-4o-mini") -> dict:
     """
     이력서 + 자기소개서를 분석해 구조화된 딕셔너리로 반환한다.
 
@@ -45,7 +45,7 @@ def analyze_resume(resume_text: str, cover_letter_text: str) -> dict:
     """
     client = get_client()
     response = client.chat.completions.create(
-        model="gpt-4o-mini",
+        model=model,
         temperature=0.3,
         messages=[
             {
