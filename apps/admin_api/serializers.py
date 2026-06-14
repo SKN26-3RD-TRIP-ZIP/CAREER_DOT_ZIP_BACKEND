@@ -14,10 +14,13 @@ class PageQuerySerializer(serializers.Serializer):
 
 class MemberListQuerySerializer(PageQuerySerializer):
     status = serializers.ChoiceField(choices=User.STATUS_CHOICES, required=False)
+    search = serializers.CharField(required=False, max_length=255, allow_blank=True)
 
 
 class MemberListSerializer(serializers.ModelSerializer):
     practice_count = serializers.IntegerField(read_only=True)
+    monthly_session_count = serializers.IntegerField(read_only=True)
+    report_count = serializers.IntegerField(read_only=True)
 
     class Meta:
         model = User
@@ -28,6 +31,8 @@ class MemberListSerializer(serializers.ModelSerializer):
             'role',
             'status',
             'practice_count',
+            'monthly_session_count',
+            'report_count',
             'last_login',
             'created_at',
         )
@@ -35,6 +40,10 @@ class MemberListSerializer(serializers.ModelSerializer):
 
 class MemberStatusSerializer(serializers.Serializer):
     status = serializers.ChoiceField(choices=User.STATUS_CHOICES)
+
+
+class MemberInviteSerializer(serializers.Serializer):
+    email = serializers.EmailField()
 
 
 class AuditLogQuerySerializer(PageQuerySerializer):

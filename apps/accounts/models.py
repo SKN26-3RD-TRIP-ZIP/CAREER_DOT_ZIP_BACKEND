@@ -34,7 +34,8 @@ class User(AbstractBaseUser, PermissionsMixin):
     
     STATUS_CHOICES = [
         ('active', 'Active'),
-        ('suspended', 'Suspended'),
+        ('dormant', 'Dormant'),
+        ('banned', 'Banned'),
     ]
     
     ROLE_CHOICES = [

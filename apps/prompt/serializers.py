@@ -48,6 +48,9 @@ class PromptTemplateSerializer(serializers.ModelSerializer):
     persona_config_id = serializers.IntegerField(read_only=True)
     persona_type = serializers.CharField(source='persona_config.persona_type', read_only=True)
     default_version_id = serializers.IntegerField(read_only=True)
+    default_version_number = serializers.IntegerField(source='default_version.version_number', default=None, read_only=True)
+    default_version_content = serializers.CharField(source='default_version.content', default=None, read_only=True)
+    version_count = serializers.IntegerField(read_only=True)
 
     class Meta:
         model = PromptTemplate
@@ -58,6 +61,9 @@ class PromptTemplateSerializer(serializers.ModelSerializer):
             'title',
             'prompt_type',
             'default_version_id',
+            'default_version_number',
+            'default_version_content',
+            'version_count',
             'created_at',
         )
 
