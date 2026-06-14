@@ -21,6 +21,7 @@ def generate_questions(
     company_name: str,
     jd_keywords: dict,
     resume_analysis: dict,
+    model: str = "gpt-4o-mini",
 ) -> list[dict]:
     """
     JD와 이력서 분석 결과를 바탕으로 LLM이 면접 질문을 생성한다.
@@ -58,7 +59,7 @@ def generate_questions(
     trait_str = "\n".join(f"- {t}" for t in trait_evidence)
 
     response = client.chat.completions.create(
-        model="gpt-4o-mini",
+        model=model,
         temperature=0.6,
         messages=[
             {

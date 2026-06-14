@@ -25,9 +25,10 @@ WORKNET_API_KEY = os.getenv('WORKNET_API_KEY', '')
 WORKNET_BASE_URL = os.getenv('WORKNET_BASE_URL', '')
 
 # ===== LangChain / LangSmith =====
-LANGCHAIN_TRACING_V2 = os.getenv('LANGCHAIN_TRACING_V2', 'false')
-LANGCHAIN_API_KEY    = os.getenv('LANGCHAIN_API_KEY', '')
-LANGCHAIN_PROJECT    = os.getenv('LANGCHAIN_PROJECT', 'career-dot-zip')
+LANGCHAIN_TRACING_V2  = os.getenv('LANGCHAIN_TRACING_V2', 'false')
+LANGCHAIN_API_KEY     = os.getenv('LANGCHAIN_API_KEY', '')
+LANGCHAIN_PROJECT     = os.getenv('LANGCHAIN_PROJECT', 'career-dot-zip')
+LANGSMITH_ENDPOINT    = os.getenv('LANGSMITH_ENDPOINT', 'https://api.smith.langchain.com')
 # ===== AI Chain / OpenAI Settings =====
 def _env_bool(name: str, default: bool = False) -> bool:
     value = os.getenv(name)
@@ -199,17 +200,14 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 AUTH_USER_MODEL = 'accounts.User'
 
 # ===== CORS Settings =====
-# withCredentials(쿠키 기반 refresh) 요청은 와일드카드('*') Origin 과 함께 쓸 수 없다.
-# 따라서 특정 Origin 화이트리스트 + credentials 허용으로 구성한다.
-# 추가 Origin 은 .env 의 CORS_ALLOWED_ORIGINS(쉼표구분)로 주입한다.
 CORS_ALLOW_CREDENTIALS = True
 CORS_ALLOWED_ORIGINS = [
-    o.strip()
-    for o in os.getenv(
+    origin.strip()
+    for origin in os.getenv(
         "CORS_ALLOWED_ORIGINS",
-        "http://localhost:5173,http://127.0.0.1:5175",
+        "http://localhost:5173,http://localhost:5174,http://localhost:5175,http://127.0.0.1:5173,http://127.0.0.1:5174,http://127.0.0.1:5175",
     ).split(",")
-    if o.strip()
+    if origin.strip()
 ]
 
 # ===== DRF Settings =====

@@ -13,7 +13,7 @@ import json
 from .utils import get_client, clean_json
 
 
-def extract_jd_keywords(jd_text: str) -> dict:
+def extract_jd_keywords(jd_text: str, model: str = "gpt-4o-mini") -> dict:
     """
     JD 텍스트에서 기술 스택 키워드와 인재상·역량 키워드를 분리 추출한다.
 
@@ -25,7 +25,7 @@ def extract_jd_keywords(jd_text: str) -> dict:
     """
     client = get_client()
     response = client.chat.completions.create(
-        model="gpt-4o-mini",
+        model=model,
         temperature=0.3,
         messages=[
             {
@@ -69,7 +69,7 @@ def extract_jd_keywords(jd_text: str) -> dict:
     }
 
 
-def extract_jd_requirements(jd_text: str) -> dict:
+def extract_jd_requirements(jd_text: str, model: str = "gpt-4o-mini") -> dict:
     """
     JD 텍스트에서 지원 자격 요건(필수 조건)을 추출한다.
     match_service의 룰베이스 점수 및 gap_service의 갭 계산에 사용된다.
@@ -86,7 +86,7 @@ def extract_jd_requirements(jd_text: str) -> dict:
     """
     client = get_client()
     response = client.chat.completions.create(
-        model="gpt-4o-mini",
+        model=model,
         temperature=0.2,
         messages=[
             {
