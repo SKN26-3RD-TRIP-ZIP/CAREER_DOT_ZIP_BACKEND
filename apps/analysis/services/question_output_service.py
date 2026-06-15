@@ -26,7 +26,7 @@ def build_question_output(questions_with_star: list[dict]) -> list[dict]:
             "basis":    q.get("basis", ""),
         }
         if "answer" in q:
-            item["star"] = q["answer"]
+            item["answer"] = q["answer"]
         output.append(item)
     return output
 
