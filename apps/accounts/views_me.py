@@ -14,11 +14,8 @@ class MeView(APIView):
             "user_id": u.id,
             "email": u.email,
             "name": u.name,
-            "role": u.role,
+            "is_staff": u.is_staff,
             "is_verified": u.is_verified,
             "is_active": u.is_active,
-            "is_staff": u.is_staff,
-            # 최근 로그인 일시 (AbstractBaseUser.last_login). 로그인 시 update_last_login 으로 갱신됨.
-            # 마이페이지에서 "최근 로그인" 표시에 사용. 미로그인 이력 시 null.
             "last_login": u.last_login.isoformat() if u.last_login else None,
         })

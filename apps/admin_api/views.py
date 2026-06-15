@@ -10,6 +10,9 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework_simplejwt.authentication import JWTAuthentication
 
+from apps.analysis.models import AnalysisSession, JdAnalysis
+from apps.document.models import UploadedDocument
+from apps.input.models import JobDescription, ResumeMaster, CoverLetter, ProjectExperience, UserProfile
 from apps.interview.models import InterviewSession
 from apps.report.models import FinalReport
 from .models import AuditLog
@@ -189,9 +192,20 @@ class MemberDeleteView(AdminAPIView):
                 action_type='member_delete',
                 target_type=User._meta.db_table,
                 target_id=str(member.id),
-                before_value={'email': member.email, 'name': member.name},
+                before_value={'email': member.email, 'name': member.name, 'status': member.status},
                 after_value={},
             )
+            # 연관 데이터 명시적 삭제 (CASCADE 미설정 항목 포함)
+            AnalysisSession.objects.filter(user=member).delete()
+            JdAnalysis.objects.filter(user=member).delete()
+            InterviewSession.objects.filter(user=member).delete()
+            UploadedDocument.objects.filter(user=member).delete()
+            CoverLetter.objects.filter(user=member).delete()
+            ProjectExperience.objects.filter(user=member).delete()
+            ResumeMaster.objects.filter(user=member).delete()
+            JobDescription.objects.filter(user=member).delete()
+            UserProfile.objects.filter(user=member).delete()
+            # 유저 삭제 (나머지 CASCADE 처리)
             member.delete()
 
         return Response(status=status.HTTP_204_NO_CONTENT)
