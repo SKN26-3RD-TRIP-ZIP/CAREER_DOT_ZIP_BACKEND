@@ -55,6 +55,13 @@ class AuditLogSerializer(serializers.ModelSerializer):
     audit_log_id = serializers.IntegerField(source='id', read_only=True)
     actor_id = serializers.IntegerField(read_only=True, allow_null=True)
     actor_name = serializers.CharField(source='actor.name', read_only=True, allow_null=True)
+    target_name = serializers.SerializerMethodField()
+
+    def get_target_name(self, obj):
+        if obj.target_type == User._meta.db_table:
+            user = User.objects.filter(id=obj.target_id).first()
+            return user.name if user else None
+        return None
 
     class Meta:
         model = AuditLog
@@ -65,6 +72,7 @@ class AuditLogSerializer(serializers.ModelSerializer):
             'action_type',
             'target_type',
             'target_id',
+            'target_name',
             'before_value',
             'after_value',
             'created_at',

@@ -115,12 +115,38 @@ class MemberStatusView(AdminAPIView):
 class MemberStatsView(AdminAPIView):
     def get(self, request):
         today = timezone.now().date()
+        this_month_start = today.replace(day=1)
+        last_month_end = this_month_start - timedelta(days=1)
+        last_month_start = last_month_end.replace(day=1)
+
+        this_month_new = User.objects.filter(created_at__date__gte=this_month_start).count()
+        last_month_new = User.objects.filter(
+            created_at__date__gte=last_month_start,
+            created_at__date__lte=last_month_end,
+        ).count()
+
+        this_month_active_new = User.objects.filter(
+            created_at__date__gte=this_month_start, status='active'
+        ).count()
+        last_month_active_new = User.objects.filter(
+            created_at__date__gte=last_month_start,
+            created_at__date__lte=last_month_end,
+            status='active',
+        ).count()
+
+        def growth_rate(current, previous):
+            if previous == 0:
+                return None
+            return round((current - previous) / previous * 100, 1)
+
         return Response({
             'total': User.objects.count(),
             'active': User.objects.filter(status='active').count(),
             'dormant': User.objects.filter(status='dormant').count(),
             'banned': User.objects.filter(status='banned').count(),
             'today': User.objects.filter(created_at__date=today).count(),
+            'total_growth_rate': growth_rate(this_month_new, last_month_new),
+            'active_growth_rate': growth_rate(this_month_active_new, last_month_active_new),
         })
 
 

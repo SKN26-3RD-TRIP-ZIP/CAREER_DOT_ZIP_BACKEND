@@ -8,7 +8,6 @@ INTERVIEW_PERSONA_CHOICES = [
     ("coach", "코치형"),
     ("practical", "실무형"),
     ("verifier", "검증형"),
-    ("pressure", "압박형"),
 ]
 
 INTERVIEW_SESSION_STATUS_COMPLETED = "completed"
