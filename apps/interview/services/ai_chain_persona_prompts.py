@@ -68,7 +68,6 @@ PERSONA_ALIASES = {
     "verifier": "verify",
     "technical": "verify",
     "strict": "verify",
-    "pressure": "verify",
     "hard": "verify",
 }
 
