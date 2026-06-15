@@ -52,6 +52,12 @@ class SignupView(APIView):
             return Response(data, status=status.HTTP_201_CREATED)
 
         if 'email' in serializer.errors:
+            error_detail = str(serializer.errors['email'])
+            if 'banned' in error_detail:
+                return Response(
+                    {'error': 'This account has been banned. Please contact the administrator.'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
             return Response(
                 {'error': 'This email is already registered.'},
                 status=status.HTTP_409_CONFLICT,
@@ -187,6 +193,8 @@ class LoginView(APIView):
             return Response({'error': 'Email not verified.'}, status=status.HTTP_403_FORBIDDEN)
         if 'Account is suspended' in errors:
             return Response({'error': 'Account is suspended.'}, status=status.HTTP_403_FORBIDDEN)
+        if 'Account is banned' in errors:
+            return Response({'error': 'Account is banned.'}, status=status.HTTP_403_FORBIDDEN)
         return Response({'error': 'Invalid email or password.'}, status=status.HTTP_401_UNAUTHORIZED)
 
 

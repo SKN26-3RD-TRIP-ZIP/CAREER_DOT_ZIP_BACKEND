@@ -1,5 +1,5 @@
 from django.db import transaction
-from django.db.models import Max
+from django.db.models import Count, Max
 from django.shortcuts import get_object_or_404
 from rest_framework import status
 from rest_framework.response import Response
@@ -55,7 +55,7 @@ class PromptTemplateListCreateView(PromptAdminAPIView):
         templates = PromptTemplate.objects.filter(is_active=True).select_related(
             'persona_config',
             'default_version',
-        )
+        ).annotate(version_count=Count('versions'))
         persona_type = request.query_params.get('persona_type')
         prompt_type = request.query_params.get('prompt_type')
         if persona_type:

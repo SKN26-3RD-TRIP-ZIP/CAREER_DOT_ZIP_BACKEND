@@ -13,7 +13,10 @@ class SignupSerializer(serializers.ModelSerializer):
 
     def validate_email(self, value):
         """Validate email uniqueness."""
-        if User.objects.filter(email=value).exists():
+        existing = User.objects.filter(email=value).first()
+        if existing:
+            if existing.status == 'banned':
+                raise serializers.ValidationError('This email is banned.')
             raise serializers.ValidationError('This email is already registered.')
         return value
 
@@ -68,8 +71,11 @@ class LoginSerializer(serializers.Serializer):
         if not user.is_verified:
             raise serializers.ValidationError('Email not verified.')
 
-        if user.status == 'suspended':
+        if user.status == 'dormant':
             raise serializers.ValidationError('Account is suspended.')
+
+        if user.status == 'banned':
+            raise serializers.ValidationError('Account is banned.')
 
         if not user.is_active:
             raise serializers.ValidationError('Account is inactive.')
