@@ -102,51 +102,71 @@ def record_ab_result(
     return True
 
 
+# variant 간 비교를 신뢰하기 위한 최소 표본 수 (그룹별)
+MIN_SAMPLE_SIZE = 30
+
+_METRICS = [
+    "final_score", "bei_total", "cbi_score",
+    "grounding_score", "speech_score", "sbert_score", "emotion_confidence",
+]
+
+
 def get_experiment_stats(experiment_name: str) -> dict:
-    """실험별 variant 간 점수 비교 집계를 반환한다.
-
-    Returns:
-        {
-            "experiment": str,
-            "status": str,
-            "variants": {
-                "control": {"count": int, "avg_final_score": float, ...},
-                "treatment": {...},
-            },
-            "delta": {"final_score": float, ...},  # treatment - control
-        }
-    """
-    from django.db.models import Avg, Count
-
+    """실험명으로 집계를 반환한다 (외부 API용)."""
     try:
         experiment = ABTestExperiment.objects.get(name=experiment_name)
     except ABTestExperiment.DoesNotExist:
         return {"error": f"실험 '{experiment_name}'을 찾을 수 없습니다."}
+    return stats_for_experiment(experiment)
 
-    metrics = [
-        "final_score", "bei_total", "cbi_score",
-        "grounding_score", "speech_score", "sbert_score", "emotion_confidence",
-    ]
-    agg_fields = {f"avg_{m}": Avg(m) for m in metrics}
+
+def stats_for_experiment(experiment) -> dict:
+    """실험 인스턴스로 variant 간 점수 비교 집계를 반환한다.
+
+    variant별 집계를 단일 GROUP BY 쿼리로 처리해 N+1을 제거한다.
+    표본 수가 MIN_SAMPLE_SIZE 미만이면 delta를 신뢰하지 말라는
+    min_sample_met=False 플래그를 함께 반환한다.
+
+    Returns:
+        {
+            "experiment": str, "status": str,
+            "variants": {"control": {...}, "treatment": {...}},
+            "delta_treatment_vs_control": {"final_score": float, ...},
+            "min_sample_met": bool, "min_sample_size": int,
+        }
+    """
+    from django.db.models import Avg, Count
+
+    agg_fields = {f"avg_{m}": Avg(m) for m in _METRICS}
     agg_fields["count"] = Count("id")
 
-    variants_data = {}
-    for variant in ("control", "treatment"):
-        qs = ABTestResult.objects.filter(
-            experiment=experiment,
-            assignment__variant=variant,
-        ).aggregate(**agg_fields)
+    # 단일 쿼리: variant로 GROUP BY 하여 control/treatment 동시 집계
+    grouped = (
+        ABTestResult.objects.filter(experiment=experiment)
+        .values("assignment__variant")
+        .annotate(**agg_fields)
+    )
+
+    def _empty():
+        return {"count": 0, **{f"avg_{m}": 0 for m in _METRICS}}
+
+    variants_data = {"control": _empty(), "treatment": _empty()}
+    for row in grouped:
+        variant = row.get("assignment__variant")
+        if variant not in variants_data:
+            continue
         variants_data[variant] = {
-            "count": qs.get("count", 0),
-            **{f"avg_{m}": round(qs.get(f"avg_{m}") or 0, 2) for m in metrics},
+            "count": row.get("count", 0),
+            **{f"avg_{m}": round(row.get(f"avg_{m}") or 0, 2) for m in _METRICS},
         }
 
-    delta = {}
     ctrl = variants_data["control"]
     trt = variants_data["treatment"]
-    for m in metrics:
-        key = f"avg_{m}"
-        delta[m] = round((trt.get(key) or 0) - (ctrl.get(key) or 0), 2)
+    delta = {
+        m: round((trt[f"avg_{m}"] or 0) - (ctrl[f"avg_{m}"] or 0), 2)
+        for m in _METRICS
+    }
+    min_sample_met = ctrl["count"] >= MIN_SAMPLE_SIZE and trt["count"] >= MIN_SAMPLE_SIZE
 
     return {
         "experiment": experiment.name,
@@ -158,4 +178,6 @@ def get_experiment_stats(experiment_name: str) -> dict:
         "ended_at": experiment.ended_at.isoformat() if experiment.ended_at else None,
         "variants": variants_data,
         "delta_treatment_vs_control": delta,
+        "min_sample_met": min_sample_met,
+        "min_sample_size": MIN_SAMPLE_SIZE,
     }

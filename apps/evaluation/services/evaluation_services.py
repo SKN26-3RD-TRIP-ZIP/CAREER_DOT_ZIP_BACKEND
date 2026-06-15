@@ -17,8 +17,25 @@ SPEECH_CONFIG = getattr(settings, "SPEECH_CONFIG", {
     "BASE_SCORE": 100.0,
     "FILLER_PENALTY_PER_COUNT": 5.0,
     "FLOOR_SCORE": 20.0,
-    "EXCESSIVE_FILLER_LIMIT": 6
+    "EXCESSIVE_FILLER_LIMIT": 6,
 })
+
+# 💡 E7.6 휴지 파라미터 — settings.SPEECH_CONFIG에 키가 없을 때의 방어 기본값
+_PAUSE_DEFAULTS = {
+    "SPEECH_RATE_WORDS_PER_SEC": 3.0,
+    "PAUSE_DURATION_SEC": 3.0,
+    "PAUSE_RATIO_THRESHOLD": 0.30,
+    "PAUSE_RATIO_PENALTY_SCALE": 50.0,
+    "PAUSE_SEVERITY_PENALTY": {
+        "none": 0.0, "minimal": 0.0, "moderate": 5.0, "high": 12.0, "critical": 22.0,
+    },
+    "PAUSE_SEVERITY_THRESHOLDS": {"minimal": 1, "moderate": 3, "high": 6},
+}
+
+
+def _cfg(key):
+    """SPEECH_CONFIG에서 값을 읽되, 누락 시 E7.6 기본값으로 폴백."""
+    return SPEECH_CONFIG[key] if key in SPEECH_CONFIG else _PAUSE_DEFAULTS[key]
 
 # 로거 정의
 logger = logging.getLogger("feedback_ai.evaluation_service")
@@ -54,10 +71,11 @@ class EvaluationService:
         # ── E7.6 — 휴지 패턴 고도화 ──────────────────────────────────
         # word_count 기반 추정 발화 시간: 한국어 평균 발화속도 ≈ 3단어/초
         word_count = len(stt_text.split())
-        estimated_speech_duration_sec = max(word_count / 3.0, 1.0)
+        speech_rate = _cfg("SPEECH_RATE_WORDS_PER_SEC")
+        estimated_speech_duration_sec = max(word_count / speech_rate, 1.0)
 
-        # 휴지 1회당 평균 3초로 추정 (long_pause 기준치)
-        estimated_pause_duration_sec = long_pause_count * 3.0
+        # 휴지 1회당 평균 길이(초)는 config에서 주입
+        estimated_pause_duration_sec = long_pause_count * _cfg("PAUSE_DURATION_SEC")
 
         # 총 추정 인터뷰 시간 = 발화 + 휴지
         total_estimated_duration = estimated_speech_duration_sec + estimated_pause_duration_sec
@@ -66,14 +84,15 @@ class EvaluationService:
         # 휴지 빈도 정규화: 발화 100단어당 pause 횟수
         pause_frequency_per_100w = round((long_pause_count / word_count) * 100, 2) if word_count > 0 else 0.0
 
-        # 휴지 패턴 심각도 분류
+        # 휴지 패턴 심각도 분류 (경계값은 SPEECH_CONFIG에서 주입)
+        _sev_th = _cfg("PAUSE_SEVERITY_THRESHOLDS")
         if long_pause_count == 0:
             pause_severity = "none"
-        elif long_pause_count <= 1:
+        elif long_pause_count <= _sev_th["minimal"]:
             pause_severity = "minimal"
-        elif long_pause_count <= 3:
+        elif long_pause_count <= _sev_th["moderate"]:
             pause_severity = "moderate"
-        elif long_pause_count <= 6:
+        elif long_pause_count <= _sev_th["high"]:
             pause_severity = "high"
         else:
             pause_severity = "critical"
@@ -166,16 +185,11 @@ class EvaluationService:
         pause_analysis_data = dysfluency_res.get("pause_analysis", {})
         pause_ratio = pause_analysis_data.get("pause_ratio", 0.0)
         pause_severity = pause_analysis_data.get("pause_severity", "none")
-        pause_penalty = {
-            "none": 0.0,
-            "minimal": 0.0,
-            "moderate": 5.0,
-            "high": 12.0,
-            "critical": 22.0,
-        }.get(pause_severity, 0.0)
-        # 추가로 pause_ratio > 30% 시 비례 감점 (ratio 단위: %)
-        if pause_ratio > 0.30:
-            pause_penalty += (pause_ratio - 0.30) * 50  # 초과 비율 1%당 0.5점 추가 감점
+        pause_penalty = _cfg("PAUSE_SEVERITY_PENALTY").get(pause_severity, 0.0)
+        # pause_ratio가 임계값 초과 시 초과분(소수)에 비례한 추가 감점
+        _ratio_threshold = _cfg("PAUSE_RATIO_THRESHOLD")
+        if pause_ratio > _ratio_threshold:
+            pause_penalty += (pause_ratio - _ratio_threshold) * _cfg("PAUSE_RATIO_PENALTY_SCALE")
 
         calculated_speech_score -= pause_penalty
         final_speech_score = max(calculated_speech_score, floor_score)
@@ -195,7 +209,6 @@ class EvaluationService:
         else:
             raw_calc = (bei_total * 0.5) + (cbi_mapped_score * 0.3) + (final_speech_score * 0.2)
             overall_score = min(round(raw_calc, 1), 100.0)
-            overall_score = min(round(raw_calc, 1), 100.0)
             logger.info(
                 "[인성/기타면접 스코어링] BEI=%.1f x 0.5 + CBI=%.1f x 0.3 + Speech=%.1f x 0.2 = %.1f",
                 bei_total, cbi_mapped_score, final_speech_score, overall_score,
@@ -209,12 +222,16 @@ class EvaluationService:
 
         # 7. 디터미니스틱 태그 라우팅 (E7 통합)
         deterministic_tags = route_deterministic_tags(
-            filler_word_counts=dysfluency_res.get("filler_word_counts", {}),
-            total_filler_count=dysfluency_res.get("total_filler_count", 0),
+            question_type=question_type,
+            bei_star=bei_star,
+            cbi_res=cbi_res,
+            grounding_res=grounding_res,
+            total_filler=dysfluency_res.get("total_filler_count", 0),
             long_pause_count=long_pause_count,
-            pause_severity=pause_severity,
-            repetitions=dysfluency_res.get("repetitions", []),
-            is_sentence_incomplete=dysfluency_res.get("is_sentence_incomplete", False),
+            raw_word_count=word_count,
+            tech_score=overall_score,
+            stt_text=answer_text,
+            llm_weakness_tags=cbi_res.get("llm_weakness_tags", []),
         )
         llm_tags = cbi_res.get("llm_weakness_tags", [])
 

@@ -32,8 +32,13 @@ def _get_font_path() -> str | None:
     return None
 
 
-def _register_korean_font() -> str:
-    """한글 폰트를 ReportLab에 등록하고 사용할 폰트명을 반환한다."""
+def _register_korean_font() -> tuple[str, bool]:
+    """한글 폰트를 ReportLab에 등록한다.
+
+    Returns:
+        (font_name, used_fallback). 폰트를 못 찾아 Helvetica로 폴백하면
+        used_fallback=True. 호출부는 이 플래그로 한글 깨짐을 사용자에게 고지한다.
+    """
     from reportlab.pdfbase import pdfmetrics
     from reportlab.pdfbase.ttfonts import TTFont
 
@@ -42,11 +47,14 @@ def _register_korean_font() -> str:
         try:
             pdfmetrics.registerFont(TTFont("NanumGothic", font_path))
             logger.info("한글 폰트 등록 완료: %s", font_path)
-            return "NanumGothic"
+            return "NanumGothic", False
         except Exception as e:
-            logger.warning("한글 폰트 등록 실패 (%s): %s", font_path, str(e))
-    logger.warning("한글 폰트 미발견 — Helvetica 사용 (한글 깨짐 가능)")
-    return "Helvetica"
+            logger.error("한글 폰트 등록 실패 (%s): %s", font_path, str(e))
+    logger.error(
+        "한글 폰트 미발견 — Helvetica 폴백 (한글 깨짐). settings.NANUM_FONT_PATH 지정 또는 "
+        "폰트 동봉 필요. 후보 경로=%s", _FONT_CANDIDATES,
+    )
+    return "Helvetica", True
 
 
 def _safe(value, default="—") -> str:
@@ -74,7 +82,7 @@ def generate_report_pdf(report) -> bytes:
         HRFlowable, KeepTogether,
     )
 
-    font_name = _register_korean_font()
+    font_name, font_fallback = _register_korean_font()
 
     # ── 스타일 정의 ────────────────────────────────────────────────────
     styles = getSampleStyleSheet()
@@ -220,7 +228,7 @@ def generate_report_pdf(report) -> bytes:
         for tag in strength_tags[:5]:
             name = _safe(tag.get("tag_name"))
             desc = _safe(tag.get("description"), "")
-            story.append(Paragraph(f"✅ [{name}]  {desc}", body_style))
+            story.append(Paragraph(f"[강점] {name}  {desc}", body_style))
 
     # 약점 태그
     weakness_tags = dyn_tags.get("weakness_tags", [])
@@ -229,7 +237,7 @@ def generate_report_pdf(report) -> bytes:
         for tag in weakness_tags[:5]:
             name = _safe(tag.get("tag_name"))
             desc = _safe(tag.get("description"), "")
-            story.append(Paragraph(f"⚠️ [{name}]  {desc}", body_style))
+            story.append(Paragraph(f"[개선] {name}  {desc}", body_style))
 
     # 개선 권고
     improvements = score_detail.get("improvement", [])
@@ -293,6 +301,11 @@ def generate_report_pdf(report) -> bytes:
         f"본 리포트는 CAREER.ZIP AI 평가 시스템에 의해 자동 생성되었습니다. | {generated_at}",
         make_style("Footer", fontSize=8, textColor=colors.grey, alignment=1),
     ))
+    if font_fallback:
+        story.append(Paragraph(
+            "※ 서버에 한글 폰트가 없어 일부 한글이 정상 표기되지 않을 수 있습니다.",
+            make_style("FontWarn", fontSize=8, textColor=accent_red, alignment=1),
+        ))
 
     doc.build(story)
     pdf_bytes = buffer.getvalue()

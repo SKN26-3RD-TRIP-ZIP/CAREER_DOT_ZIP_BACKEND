@@ -57,7 +57,13 @@ def _check_evaluation_failure(report):
 
 
 def _create_report(session):
+    # 동시 GET 요청이 같은 세션 리포트를 중복 생성하거나 IntegrityError를 내는 것을
+    # 막기 위해 세션 행에 select_for_update 락을 건다. 이미 생성됐으면 그대로 반환.
     with transaction.atomic():
+        InterviewSession.objects.select_for_update().get(pk=session.pk)
+        existing = FinalReport.objects.filter(session=session).first()
+        if existing:
+            return existing
         summary = generate_final_report(session)
         if is_failed_report_summary(summary):
             raise ReportGenerationFailed()

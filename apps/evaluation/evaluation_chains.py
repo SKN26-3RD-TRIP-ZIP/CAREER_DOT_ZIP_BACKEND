@@ -166,4 +166,3 @@ def eval_llm_chains_parallel_with_emotion(answer_text: str) -> tuple[dict, dict,
         competency_future = executor.submit(fetch_competency, answer_text)
         emotion_future = executor.submit(fetch_emotion_intent, answer_text)
         return grounding_future.result(), competency_future.result(), emotion_future.result()
-sult(), competency_future.result(), emotion_future.result()

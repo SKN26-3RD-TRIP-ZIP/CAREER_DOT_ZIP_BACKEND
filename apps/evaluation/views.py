@@ -5,7 +5,7 @@ from rest_framework.views import APIView
 from apps.interview.models import InterviewAnswer
 from .models import Evaluation
 from .ab_test_models import ABTestExperiment
-from .services.ab_test_service import get_experiment_stats
+from .services.ab_test_service import get_experiment_stats, stats_for_experiment
 from .serializers import (
     EvaluationCreateSerializer,
     EvaluationSerializer,
@@ -113,7 +113,7 @@ class ABTestExperimentListView(APIView):
 
     def get(self, request):
         experiments = ABTestExperiment.objects.all().order_by('-created_at')
-        results = [get_experiment_stats(exp.name) for exp in experiments]
+        results = [stats_for_experiment(exp) for exp in experiments]
         return Response({'total': len(results), 'results': results}, status=status.HTTP_200_OK)
 
 
@@ -126,5 +126,3 @@ class ABTestExperimentDetailView(APIView):
         if 'error' in stats:
             return Response(stats, status=status.HTTP_404_NOT_FOUND)
         return Response(stats, status=status.HTTP_200_OK)
-P_404_NOT_FOUND)
-    return Response(stats, status=status.HTTP_200_OK)

@@ -236,7 +236,18 @@ SPEECH_CONFIG = {
     "BASE_SCORE": 100.0,
     "FILLER_PENALTY_PER_COUNT": 5.0,        # 필러워드 개당 감점 수치
     "FLOOR_SCORE": 20.0,                    # 최저 방어선 점수
-    "EXCESSIVE_FILLER_LIMIT": 6            # 과락 기준 개수
+    "EXCESSIVE_FILLER_LIMIT": 6,            # 과락 기준 개수
+    # -- E7.6 휴지(pause) 패턴 파라미터 --
+    "SPEECH_RATE_WORDS_PER_SEC": 3.0,       # 한국어 평균 발화 속도(단어/초)
+    "PAUSE_DURATION_SEC": 3.0,              # long_pause 1회 추정 길이(초)
+    "PAUSE_RATIO_THRESHOLD": 0.30,          # 이 비율 초과 시 비례 감점 시작
+    "PAUSE_RATIO_PENALTY_SCALE": 50.0,      # 초과 비율(소수)에 곱하는 감점 계수
+    "PAUSE_SEVERITY_PENALTY": {             # severity별 기본 감점
+        "none": 0.0, "minimal": 0.0, "moderate": 5.0, "high": 12.0, "critical": 22.0,
+    },
+    "PAUSE_SEVERITY_THRESHOLDS": {          # long_pause_count 분류 경계(이하 기준)
+        "minimal": 1, "moderate": 3, "high": 6,
+    },
 }
 # ===== 이메일 발송 설정 =====
 # 로컬/개발 기본값은 console backend(터미널 출력). 운영/QA 는 .env 에서 SMTP 로 전환.
