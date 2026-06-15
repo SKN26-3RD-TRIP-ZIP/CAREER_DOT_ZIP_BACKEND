@@ -52,16 +52,18 @@ class SignupView(APIView):
             return Response(data, status=status.HTTP_201_CREATED)
 
         if 'email' in serializer.errors:
-            error_detail = str(serializer.errors['email'])
-            if 'banned' in error_detail:
+            email = request.data.get('email')
+            existing_user = User.objects.filter(email=email).first()
+            if existing_user and existing_user.status == 'banned':
                 return Response(
                     {'error': 'This account has been banned. Please contact the administrator.'},
                     status=status.HTTP_403_FORBIDDEN
                 )
-            return Response(
-                {'error': 'This email is already registered.'},
-                status=status.HTTP_409_CONFLICT,
-            )
+            if existing_user:
+                return Response(
+                    {'error': 'This email is already registered.'},
+                    status=status.HTTP_409_CONFLICT,
+                )
 
         return Response(
             {'error': serializer.errors},
