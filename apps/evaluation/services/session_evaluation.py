@@ -17,6 +17,11 @@ EvaluationCreateView(POST /evaluations)에서만 생성되었고,
 import logging
 
 from django.db import transaction
+from apps.evaluation.services.sbert_service import (
+    compute_sbert_similarities,
+    compute_tech_depth_score,
+    get_reference_texts_for_answer,
+)
 
 from apps.evaluation.models import (
     Evaluation,
@@ -105,6 +110,36 @@ def create_evaluation_for_answer(answer, request_sufficiency=None):
     )
 
     pipeline_tags = ai_result.pop("pipeline_tags", {"strengths": [], "weaknesses": []})
+    emotion_intent_score = ai_result.pop("emotion_intent_score", {})
+    pause_analysis = ai_result.get("score_detail", {}).get("pause_analysis", {})
+
+    # E7.5 — SBERT 하드스킬 깊이 검증 (기술 질문일 때만 실행)
+    sbert_db_similarity = None
+    sbert_readme_similarity = None
+    if question_type == "technical":
+        try:
+            ref_db, ref_readme = get_reference_texts_for_answer(answer)
+            sbert_res = compute_sbert_similarities(
+                answer_text=answer_text,
+                reference_db_text=ref_db,
+                reference_readme_text=ref_readme,
+            )
+            sbert_db_similarity = sbert_res["sbert_db_similarity"]
+            sbert_readme_similarity = sbert_res["sbert_readme_similarity"]
+
+            if sbert_res["model_available"] and sbert_res["sbert_combined_score"] > 0:
+                llm_concept = ai_result.get("final_tech_score") or 0
+                hybrid_score = compute_tech_depth_score(
+                    sbert_combined_score=sbert_res["sbert_combined_score"],
+                    llm_concept_score=llm_concept,
+                )
+                ai_result["final_tech_score"] = int(hybrid_score)
+                logger.info(
+                    "SBERT 하이브리드 스코어 적용: sbert=%.1f, llm=%d → final=%d",
+                    sbert_res["sbert_combined_score"], llm_concept, int(hybrid_score),
+                )
+        except Exception:
+            logger.exception("SBERT 평가 실패 — final_tech_score 기존 값 유지")
 
     evaluation = Evaluation.objects.create(
         answer=answer,
@@ -113,6 +148,10 @@ def create_evaluation_for_answer(answer, request_sufficiency=None):
         filler_words=ai_result["filler_words"],
         final_tech_score=ai_result["final_tech_score"],
         score_detail=ai_result["score_detail"],
+        emotion_intent_score=emotion_intent_score,      # E7.4
+        pause_analysis=pause_analysis,                  # E7.6
+        sbert_db_similarity=sbert_db_similarity,        # E7.5
+        sbert_readme_similarity=sbert_readme_similarity, # E7.5
     )
 
     _persist_pipeline_tags(answer, pipeline_tags, selected_tag_name)

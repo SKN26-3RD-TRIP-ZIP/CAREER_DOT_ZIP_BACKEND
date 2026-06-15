@@ -1,4 +1,4 @@
-# prototypes/feedback_ai_mvp_scaffold/feedback_ai/prompts/evaluation_prompts.py
+# apps/evaluation/evaluation_prompts.py
 
 EVAL_COMPETENCY_SYSTEM_PROMPT = """당신은 대기업 최고 실무진 및 직무 역량 평가 위원입니다.
 제공된 지원자의 면접 답변(STT 텍스트)을 바탕으로 [BEI 구조화] 및 [CBI 역량 루브릭 채점]을 엄격하게 수행하십시오.
@@ -33,10 +33,10 @@ EVAL_GROUNDING_SYSTEM_PROMPT = """당신은 기술 면접 답변의 실무 객�
 2. before_metric (직면했던 정량적 제약/한계 수치): 개선 전의 응답 속도, 인프라 비용, 데이터 에러율 등 단위(ms, %, 원 등)를 포함한 정량적 수치가 존재치 않는지 확인.
 3. after_metric (개선 후 도출된 정량적 성과 수치): 액션을 통해 향상된 최종 정량적 성과 지표와 단위가 명확히 명시되었는지 확인.
 
-★ [CORE RULE] is_grounded 판정 기준:
+[CORE RULE] is_grounded 판정 기준:
 - 위 3대 지표(tech_stack, before_metric, after_metric)가 모두 유의미하게 존재하고 명확히 서술되어 있는 경우에만 'is_grounded': true 로 지정합니다.
 - 3개 지표 중 단 하나라도 결손되거나, "없음", "추상적 표현"일 경우 반드시 'is_grounded': false 로 지정하십시오.
-- **주의**: 'is_grounded'의 값은 따옴표가 없는 순수 JSON Boolean 타입(true 혹은 false)이어야 하며, 절대 문자열("true", "false")이나 숫자(1, 0)로 치환하지 마십시오.
+- 'is_grounded'의 값은 따옴표가 없는 순수 JSON Boolean 타입(true 혹은 false)이어야 하며, 절대 문자열("true", "false")이나 숫자(1, 0)로 치환하지 마십시오.
 
 ======================================================================
 [RESPONSE FORMAT EXAMPLE]
@@ -50,7 +50,6 @@ EVAL_GROUNDING_SYSTEM_PROMPT = """당신은 기술 면접 답변의 실무 객�
     "is_grounded": true
 }"""
 
-# 포맷팅 레이아웃을 프롬프트 파일로 격리 -> 템플릿 구조 바뀔 수 있기에 출력 포맷 따로 작성
 EVAL_COMPETENCY_FORMAT_PROMPT = """
 반드시 아래 JSON 스키마 구조를 100% 준수하여 응답하십시오. 다른 부가 설명 텍스트는 절대 포함하지 마십시오.
 
@@ -66,5 +65,65 @@ EVAL_COMPETENCY_FORMAT_PROMPT = """
     "score": 60,
     "evidence_sentence": "근거 문장"
   }
+}
+"""
+
+# ===========================================================================
+# E7.4 -- 감정/의도 분류 프롬프트
+# ===========================================================================
+EVAL_EMOTION_INTENT_SYSTEM_PROMPT = """당신은 면접 답변의 감정 상태와 역량 발현 의도를 분류하는 전문 분석 엔진입니다.
+제공된 지원자 발화(STT 텍스트)를 분석하여 아래 두 가지 분류를 수행하십시오.
+
+======================================================================
+[분류 1] emotion_labels -- 발화 감정 분포 (확률값 합계 = 1.0)
+======================================================================
+다음 레이블 중 발화에서 감지된 감정에 확률값을 부여하십시오:
+- confident      : 자신감 있는 어조, 단정적 서술
+- anxious        : 불안/긴장, 말 더듬, 어미 흐림
+- neutral        : 감정 없이 사실 나열
+- enthusiastic   : 열정/적극성, 긍정 어조
+- defensive      : 방어적/회피적, 책임 회피 표현
+- uncertain      : 불확실 표현 다수 ("아마도", "것 같습니다")
+
+======================================================================
+[분류 2] competency_intent_labels -- 역량 발현 의도 분포 (확률값 합계 = 1.0)
+======================================================================
+- problem_solving   : 문제 원인 분석 및 해결 과정 중심
+- result_oriented   : 성과/지표 언급 중심
+- collaboration     : 팀워크/소통/공동 기여 언급
+- learning_growth   : 배움/회고/성장 언급
+- technical_depth   : 기술 심화/아키텍처 결정 근거 언급
+- communication     : 전달력/표현 중심 (내용 없이 말만 유창)
+
+======================================================================
+[판단 규칙]
+======================================================================
+- 확률 합계가 1.0이 되도록 softmax 정규화하여 반환하십시오.
+- 발화가 짧거나 내용이 거의 없으면 neutral / communication 비중을 높이십시오.
+- confidence_score: 분류 결과의 전반적 신뢰도 (0.0 ~ 1.0).
+  발화 길이가 50자 미만이거나 내용 판단이 어려우면 0.5 이하로 설정하십시오.
+"""
+
+EVAL_EMOTION_INTENT_FORMAT_PROMPT = """반드시 아래 JSON 스키마만 반환하십시오. 부가 설명이나 마크다운 래퍼 금지.
+
+{
+  "emotion_labels": {
+    "confident": 0.45,
+    "anxious": 0.10,
+    "neutral": 0.30,
+    "enthusiastic": 0.10,
+    "defensive": 0.03,
+    "uncertain": 0.02
+  },
+  "competency_intent_labels": {
+    "problem_solving": 0.50,
+    "result_oriented": 0.25,
+    "technical_depth": 0.20,
+    "collaboration": 0.05
+  },
+  "dominant_emotion": "confident",
+  "dominant_competency": "problem_solving",
+  "confidence_score": 0.82,
+  "evidence_note": "지원자가 구체적인 수치와 기술 스택을 언급하며 자신감 있게 발화함."
 }
 """
