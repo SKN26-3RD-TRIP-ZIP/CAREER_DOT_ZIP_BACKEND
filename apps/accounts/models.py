@@ -1,17 +1,61 @@
 from django.contrib.auth.models import AbstractBaseUser, BaseUserManager, PermissionsMixin
+from django.db import connection
 from django.db import models
+from django.utils import timezone
 
 
 class UserManager(BaseUserManager):
     """Custom user manager for email-based authentication."""
+
+    def _has_legacy_role_column(self):
+        """Return whether the current DB still has the removed role column."""
+        try:
+            with connection.cursor() as cursor:
+                columns = connection.introspection.get_table_description(cursor, self.model._meta.db_table)
+            return any(column.name == 'role' for column in columns)
+        except Exception:
+            return False
     
     def create_user(self, email, password, name, **extra_fields):
         """Create and save a regular user."""
         if not email:
             raise ValueError('The Email field must be set')
         email = self.normalize_email(email)
+        legacy_role = extra_fields.pop('role', None)
         user = self.model(email=email, name=name, **extra_fields)
         user.set_password(password)
+        if self._has_legacy_role_column():
+            now = timezone.now()
+            role = legacy_role or ('admin' if user.is_staff or user.is_superuser else 'user')
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    INSERT INTO accounts_user (
+                        password, last_login, is_superuser, email, name,
+                        is_verified, status, is_staff, is_active,
+                        created_at, updated_at, role
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    """,
+                    [
+                        user.password,
+                        user.last_login,
+                        user.is_superuser,
+                        user.email,
+                        user.name,
+                        user.is_verified,
+                        user.status,
+                        user.is_staff,
+                        user.is_active,
+                        now,
+                        now,
+                        role,
+                    ],
+                )
+                user.id = cursor.lastrowid
+            user.created_at = now
+            user.updated_at = now
+            return user
         user.save(using=self._db)
         return user
     
