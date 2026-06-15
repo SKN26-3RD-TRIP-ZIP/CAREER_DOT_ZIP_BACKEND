@@ -28,7 +28,7 @@ class MemberListSerializer(serializers.ModelSerializer):
             'id',
             'email',
             'name',
-            'role',
+            'is_staff',
             'status',
             'practice_count',
             'monthly_session_count',
@@ -54,12 +54,14 @@ class AuditLogQuerySerializer(PageQuerySerializer):
 class AuditLogSerializer(serializers.ModelSerializer):
     audit_log_id = serializers.IntegerField(source='id', read_only=True)
     actor_id = serializers.IntegerField(read_only=True, allow_null=True)
+    actor_name = serializers.CharField(source='actor.name', read_only=True, allow_null=True)
 
     class Meta:
         model = AuditLog
         fields = (
             'audit_log_id',
             'actor_id',
+            'actor_name',
             'action_type',
             'target_type',
             'target_id',

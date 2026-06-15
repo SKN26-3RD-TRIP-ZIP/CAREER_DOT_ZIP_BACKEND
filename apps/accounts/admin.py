@@ -7,15 +7,15 @@ from .models import User
 class UserAdmin(BaseUserAdmin):
     """Admin configuration for User model."""
     
-    list_display = ('email', 'name', 'role', 'status', 'is_verified', 'is_staff', 'created_at')
-    list_filter = ('role', 'status', 'is_verified', 'is_staff', 'is_active', 'created_at')
+    list_display = ('email', 'name', 'status', 'is_verified', 'is_staff', 'created_at')
+    list_filter = ('status', 'is_verified', 'is_staff', 'is_active', 'created_at')
     search_fields = ('email', 'name')
     ordering = ('-created_at',)
     
     fieldsets = (
         (None, {'fields': ('email', 'password')}),
         ('Personal info', {'fields': ('name', 'is_verified')}),
-        ('Account status', {'fields': ('status', 'role', 'is_active', 'is_staff')}),
+        ('Account status', {'fields': ('status', 'is_active', 'is_staff')}),
         ('Permissions', {'fields': ('groups', 'user_permissions')}),
         ('Important dates', {'fields': ('last_login', 'created_at', 'updated_at')}),
     )

@@ -19,7 +19,6 @@ class UserManager(BaseUserManager):
         """Create and save a superuser."""
         extra_fields.setdefault('is_staff', True)
         extra_fields.setdefault('is_superuser', True)
-        extra_fields.setdefault('role', 'admin')
         
         if extra_fields.get('is_staff') is not True:
             raise ValueError('Superuser must have is_staff=True.')
@@ -37,18 +36,12 @@ class User(AbstractBaseUser, PermissionsMixin):
         ('dormant', 'Dormant'),
         ('banned', 'Banned'),
     ]
-    
-    ROLE_CHOICES = [
-        ('user', 'User'),
-        ('admin', 'Admin'),
-    ]
-    
+
     id = models.BigAutoField(primary_key=True)
     email = models.EmailField(unique=True, db_index=True)
     name = models.CharField(max_length=255)
     is_verified = models.BooleanField(default=False)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='active')
-    role = models.CharField(max_length=20, choices=ROLE_CHOICES, default='user')
     is_staff = models.BooleanField(default=False)
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
