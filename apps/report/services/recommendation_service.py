@@ -110,29 +110,31 @@ def get_recommended_questions_for_tags(
     results: list[dict] = []
     seen_ids: set = set()
 
+    # 활성 질문을 1회만 로드해 태그별 풀스캔(최대 N회)을 제거하고 메모리에서 재사용한다.
+    all_active_items = list(QuestionBankItem.objects.filter(is_active=True))
+
     for tag_name in weakness_tag_names:
         strategy = _TAG_STRATEGY.get(tag_name, _DEFAULT_STRATEGY)
         q_types = strategy["question_types"]
         keywords = strategy["keywords"]
         difficulty = strategy.get("difficulty")
 
-        base_qs = QuestionBankItem.objects.filter(is_active=True, question_type__in=q_types)
-        qs = base_qs.filter(difficulty=difficulty) if difficulty else base_qs
+        typed_items = [it for it in all_active_items if it.question_type in q_types]
+        pool = [it for it in typed_items if (not difficulty or it.difficulty == difficulty)]
 
-        scored = []
-        for item in qs.iterator(chunk_size=200):
-            if item.id in seen_ids:
-                continue
-            score = _score_item(item, keywords)
-            scored.append((score, item))
+        scored = [
+            (_score_item(item, keywords), item)
+            for item in pool
+            if item.id not in seen_ids
+        ]
 
         # difficulty 필터로 결과가 없으면 difficulty 제한 없이 재시도
         if not scored and difficulty:
-            for item in base_qs.iterator(chunk_size=200):
-                if item.id in seen_ids:
-                    continue
-                score = _score_item(item, keywords)
-                scored.append((score, item))
+            scored = [
+                (_score_item(item, keywords), item)
+                for item in typed_items
+                if item.id not in seen_ids
+            ]
 
         scored.sort(key=lambda x: (-x[0], str(x[1].id)))
 

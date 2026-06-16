@@ -51,7 +51,7 @@ class ABTestAssignment(models.Model):
         on_delete=models.CASCADE,
         related_name="assignments",
     )
-    user_id = models.UUIDField(db_index=True)
+    user_id = models.BigIntegerField(db_index=True)  # User.id is BigAutoField(int)
     variant = models.CharField(max_length=20, choices=VARIANT_CHOICES)
     assigned_at = models.DateTimeField(auto_now_add=True)
 

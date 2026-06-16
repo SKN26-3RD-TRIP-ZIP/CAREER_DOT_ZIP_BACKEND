@@ -1,6 +1,7 @@
 import re
 import logging
 import time
+from collections import Counter
 from datetime import datetime
 from kiwipiepy import Kiwi
 from django.conf import settings
@@ -14,7 +15,7 @@ from apps.evaluation.utils.tag_router import route_deterministic_tags
 
 # 💡 settings.py에 선언한 SPEECH_CONFIG를 안전하게 맵핑 (없을 경우를 대비한 Fallback 방어코드 포함)
 SPEECH_CONFIG = getattr(settings, "SPEECH_CONFIG", {
-    "BASE_SCORE": 100.0,
+    "BASE_SCORE": 80.0,   # settings.SPEECH_CONFIG와 일치 (완벽한 전달력도 80 상한)
     "FILLER_PENALTY_PER_COUNT": 5.0,
     "FLOOR_SCORE": 20.0,
     "EXCESSIVE_FILLER_LIMIT": 6,
@@ -52,17 +53,26 @@ class EvaluationService:
         logger.info("=== [Task A] 로컬 비유창성 분석 시작 ===")
         start_time = time.time()
 
+        # 형태소 토큰을 먼저 산출 — 단음절 필러의 부분문자열 오탐(예: "들어","어렵다",
+        # "마음","처음")을 막기 위해 토큰 경계 기준으로 카운트한다.
+        tokens = [t.form for t in kiwi.tokenize(stt_text)]
+        token_counter = Counter(tokens)
+
         filler_counts = {}
         total_filler = 0
         for word in FILLER_WORDS[0]:
-            plain_count = stt_text.count(word)
-            ellipsis_count = len(re.findall(rf'{re.escape(word)}\.+', stt_text))
-            count = max(plain_count, ellipsis_count)
+            if len(word) == 1:
+                # 단음절 필러("어","음")는 형태소 토큰 정확 일치로만 카운트
+                count = token_counter.get(word, 0)
+            else:
+                # 다음절 필러는 부분문자열 + 말줄임("그러니까...") 패턴 중 큰 값
+                plain_count = stt_text.count(word)
+                ellipsis_count = len(re.findall(rf'{re.escape(word)}\.+', stt_text))
+                count = max(plain_count, ellipsis_count)
             if count > 0:
                 filler_counts[word] = count
                 total_filler += count
 
-        tokens = [t.form for t in kiwi.tokenize(stt_text)]
         repetition_scans = []
         for i in range(len(tokens) - 1):
             if tokens[i] == tokens[i+1] and len(tokens[i]) > 1:
@@ -221,6 +231,9 @@ class EvaluationService:
         )
 
         # 7. 디터미니스틱 태그 라우팅 (E7 통합)
+        # interview 팀 sufficiency 체인이 넘긴 llm_weakness_tags(파라미터)를 사용한다.
+        # competency 프롬프트 스키마에는 llm_weakness_tags 필드가 없어 항상 비므로 fallback일 뿐이다.
+        effective_llm_tags = llm_weakness_tags or cbi_res.get("llm_weakness_tags", []) or []
         deterministic_tags = route_deterministic_tags(
             question_type=question_type,
             bei_star=bei_star,
@@ -231,13 +244,14 @@ class EvaluationService:
             raw_word_count=word_count,
             tech_score=overall_score,
             stt_text=answer_text,
-            llm_weakness_tags=cbi_res.get("llm_weakness_tags", []),
+            llm_weakness_tags=effective_llm_tags,
         )
-        llm_tags = cbi_res.get("llm_weakness_tags", [])
 
+        # route_deterministic_tags가 내부 merge 루프에서 effective_llm_tags를
+        # 이미 weaknesses에 병합하므로, 여기서 다시 더하면 중복된다.
         pipeline_tags = {
             "strengths": deterministic_tags.get("strengths", []),
-            "weaknesses": deterministic_tags.get("weaknesses", []) + llm_tags,
+            "weaknesses": deterministic_tags.get("weaknesses", []),
         }
 
         return {

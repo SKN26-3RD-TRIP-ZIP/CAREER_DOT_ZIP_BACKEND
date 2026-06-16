@@ -118,6 +118,9 @@ class FinalReportGenerateView(APIView):
 
         try:
             with transaction.atomic():
+                # 동시 강제재생성 경합 방지: 세션 행에 락을 걸고 락 안에서 리포트 재확인.
+                InterviewSession.objects.select_for_update().get(pk=session.pk)
+                report = FinalReport.objects.filter(session=session).first()
                 summary = generate_final_report(session)
                 if is_failed_report_summary(summary):
                     raise ReportGenerationFailed()

@@ -10,7 +10,8 @@ logger = logging.getLogger("feedback_ai.report_generator")
 
 # E7.10 -- 페르소나별 점수 가중치 및 피드백 설정
 # DB 저장값은 common/choices.py INTERVIEW_PERSONA_CHOICES 기준:
-#   "coach" / "practical" / "verifier" / "pressure"
+#   "coach" / "practical" / "verifier"
+# ※ "pressure"는 interview/migrations/0009에서 제거됨 (기존 데이터 → verifier 변환)
 PERSONA_CONFIG: dict[str, dict] = {
     "coach": {
         "weights": {"bei": 0.40, "cbi": 0.25, "grounding": 0.15, "speech": 0.20},
@@ -35,14 +36,6 @@ PERSONA_CONFIG: dict[str, dict] = {
         "strength_prefix": "신뢰 가능한 역량 근거가 확인된 항목:",
         "weakness_prefix": "검증 기준 미달로 보완이 필요한 항목:",
         "closing_template": "답변의 구체성과 일관성이 핵심 평가 기준입니다. 모호한 표현을 수치와 사례로 대체하세요.",
-    },
-    "pressure": {
-        "weights": {"bei": 0.20, "cbi": 0.35, "grounding": 0.35, "speech": 0.10},
-        "label": "압박형",
-        "intro": "압박 상황에서 즉각적인 사실 기반 대응 능력을 평가한 결과입니다.",
-        "strength_prefix": "압박 상황에서도 흔들리지 않은 강점 영역:",
-        "weakness_prefix": "압박 시 노출된 취약 영역:",
-        "closing_template": "압박 면접에서는 빠른 팩트 정리와 자신감 있는 어조가 핵심입니다. 수치 근거 중심의 답변 연습을 권장합니다.",
     },
 }
 
@@ -138,6 +131,7 @@ def generate_final_report(session):
     cbi_scores: list = []
     speech_scores: list = []
     sbert_scores: list = []
+    grounding_flags: list = []   # E7 리뷰 #3 — 답변별 is_grounded 수집
 
     for ans in evaluated_answers:
         eval_obj = ans.evaluation
@@ -181,6 +175,10 @@ def generate_final_report(session):
         speech_delivery = score_detail.get("speech_delivery", {})
         if speech_delivery.get("speech_score") is not None:
             speech_scores.append(speech_delivery["speech_score"])
+
+        grounding_block = score_detail.get("grounding", {})
+        if isinstance(grounding_block, dict) and "is_grounded" in grounding_block:
+            grounding_flags.append(bool(grounding_block.get("is_grounded")))
 
     top_strength_names = [name for name, _ in strength_counter.most_common(5)]
     top_weakness_names = [name for name, _ in weakness_counter.most_common(5)]
@@ -238,13 +236,18 @@ def generate_final_report(session):
         recommendations.append("세션 상세 답변의 꼬리질문 분석 내용을 점검해 보세요.")
 
     detailed_stats: dict = {}
+    # bei_avg: 0~100 스케일(4요소 합) — score_summary 지표 및 페르소나 가중치 입력용.
+    #          cbi_avg / grounding_avg / speech_avg 와 스케일을 일치시킨다.
+    # bei_element_avg: 0~25 스케일(요소 평균) — 상세 통계 표시용.
     bei_avg = cbi_avg = speech_avg = 0.0
+    bei_element_avg = 0.0
     if n > 0:
         avg_sit = round(sum(bei_situations) / n, 1)
         avg_tsk = round(sum(bei_tasks) / n, 1)
         avg_act = round(sum(bei_actions) / n, 1)
         avg_res = round(sum(bei_results) / n, 1)
-        bei_avg = round((avg_sit + avg_tsk + avg_act + avg_res) / 4, 1)
+        bei_element_avg = round((avg_sit + avg_tsk + avg_act + avg_res) / 4, 1)  # 0~25
+        bei_avg = round(avg_sit + avg_tsk + avg_act + avg_res, 1)                # 0~100
         cbi_avg = round(sum(cbi_scores) / len(cbi_scores), 1) if cbi_scores else 0.0
         speech_avg = round(sum(speech_scores) / len(speech_scores), 1) if speech_scores else 0.0
         detailed_stats = {
@@ -255,7 +258,7 @@ def generate_final_report(session):
                     "action": avg_act,
                     "result": avg_res,
                 },
-                "element_total_avg": bei_avg,
+                "element_total_avg": bei_element_avg,
             },
             "cbi_metrics": {
                 "average_level": round(sum(cbi_levels) / len(cbi_levels), 1) if cbi_levels else 0,
@@ -263,7 +266,9 @@ def generate_final_report(session):
             },
         }
 
-    grounding_avg = round(sum(final_scores) / len(final_scores), 1) if final_scores else 0.0
+    # E7 리뷰 #3 — 실제 grounding 지표: is_grounded 비율 × 100.
+    # (기존엔 final_tech_score 평균을 grounding_score로 잘못 노출하고 있었음)
+    grounding_avg = round(sum(grounding_flags) / len(grounding_flags) * 100, 1) if grounding_flags else 0.0
     technical_avg = round((sum(sbert_scores) / len(sbert_scores)) * 100, 1) if sbert_scores else 0.0
     strength_tags = _aggregate_tag_objects(evaluated_answers, "strength_mappings", "strength_tag")
     weakness_tags = _aggregate_tag_objects(evaluated_answers, "weakness_mappings", "weakness_tag")

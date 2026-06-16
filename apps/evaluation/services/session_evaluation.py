@@ -39,6 +39,76 @@ from apps.evaluation.services.sufficiency_bridge import (
 logger = logging.getLogger("feedback_ai.session_evaluation")
 
 
+def _try_record_ab_results(user_id: int, answer_id, evaluation, ai_result: dict) -> None:
+    """활성 A/B 실험 전체에 평가 결과를 기록한다.
+
+    - 활성 실험이 없으면 쿼리 1회로 단락.
+    - 실패해도 예외를 전파하지 않는다 — 평가 트랜잭션과 격리.
+
+    Args:
+        user_id:    answer.session.user_id (BigInt, User.id).
+        answer_id:  answer.id.
+        evaluation: 방금 생성된 Evaluation 인스턴스.
+        ai_result:  run_pipeline 반환값 (pipeline_tags/emotion_intent_score 이미 pop된 상태).
+    """
+    try:
+        from apps.evaluation.ab_test_models import ABTestExperiment
+        from apps.evaluation.services.ab_test_service import (
+            get_or_create_assignment,
+            record_ab_result,
+        )
+
+        active_exp_names = list(
+            ABTestExperiment.objects.filter(status="active").values_list("name", flat=True)
+        )
+        if not active_exp_names:
+            return
+
+        # bei_total: situation+task+action+result score 합산
+        bei = ai_result.get("bei_score", {})
+        bei_total = sum(
+            v.get("score", 0) if isinstance(v, dict) else 0
+            for v in bei.values()
+        )
+        # grounding은 LLM이 숫자 점수를 주지 않으므로 is_grounded로 0/100 환산 (None 방지)
+        _grounding = ai_result.get("score_detail", {}).get("grounding", {})
+        _grounding_score = _grounding.get("grounding_score")
+        if _grounding_score is None:
+            _grounding_score = 100.0 if _grounding.get("is_grounded") else 0.0
+
+        score_dict = {
+            "final_score": evaluation.final_tech_score,
+            "bei_total": bei_total,
+            "cbi_score": ai_result.get("cbi_score", {}).get("score"),
+            "grounding_score": _grounding_score,
+            "speech_score": (
+                ai_result.get("score_detail", {})
+                .get("speech_delivery", {})
+                .get("speech_score")
+            ),
+            "sbert_score": evaluation.sbert_db_similarity,
+            # emotion_intent_score는 ai_result에서 이미 pop됐으므로 evaluation에서 참조.
+            # 프롬프트(EVAL_EMOTION_INTENT_FORMAT_PROMPT)가 생성하는 키는 confidence_score다.
+            "emotion_confidence": (
+                evaluation.emotion_intent_score.get("confidence_score")
+                if isinstance(evaluation.emotion_intent_score, dict)
+                else None
+            ),
+        }
+
+        for exp_name in active_exp_names:
+            get_or_create_assignment(user_id, exp_name)
+            record_ab_result(exp_name, user_id, answer_id, score_dict)
+
+        logger.debug(
+            "A/B 결과 기록 완료 (answer=%s, experiments=%s)", answer_id, active_exp_names
+        )
+    except Exception:
+        logger.exception(
+            "A/B 결과 기록 실패 (answer=%s) — 평가에는 영향 없음", answer_id
+        )
+
+
 def _persist_pipeline_tags(answer, pipeline_tags, selected_tag_name):
     """파이프라인이 산출한 강점/약점 태그를 답변에 매핑해 저장한다."""
     for idx, strength in enumerate(pipeline_tags.get("strengths", []), start=1):
@@ -141,6 +211,7 @@ def create_evaluation_for_answer(answer, request_sufficiency=None):
         except Exception:
             logger.exception("SBERT 평가 실패 — final_tech_score 기존 값 유지")
 
+
     evaluation = Evaluation.objects.create(
         answer=answer,
         bei_score=ai_result["bei_score"],
@@ -156,6 +227,14 @@ def create_evaluation_for_answer(answer, request_sufficiency=None):
 
     _persist_pipeline_tags(answer, pipeline_tags, selected_tag_name)
 
+    # E7.7 — A/B 프레임워크 연결
+    _try_record_ab_results(
+        user_id=answer.session.user_id,
+        answer_id=answer.id,
+        evaluation=evaluation,
+        ai_result=ai_result,
+    )
+
     return evaluation
 
 
@@ -163,24 +242,18 @@ def evaluate_session_answers(session, reevaluate=False):
     """세션의 모든 답변을 평가한다(미평가분 백필).
 
     멱등하며 답변별로 예외를 격리한다: 한 답변 평가가 실패해도
-    나머지 답변과 리포트 생성은 계속 진행된다.
+    나머지 답변의 평가는 계속 진행된다.
 
     Args:
         session: InterviewSession 인스턴스.
-        reevaluate: True 이면 기존 평가/태그를 삭제하고 다시 평가한다.
+        reevaluate: True 이면 이미 평가된 답변도 재평가한다.
 
     Returns:
-        {'evaluated': int, 'skipped': int, 'failed': int} 집계 딕셔너리.
+        {"evaluated": int, "skipped": int, "failed": int}
     """
     stats = {"evaluated": 0, "skipped": 0, "failed": 0}
 
-    answers = session.answers.select_related("session").all()
-    for answer in answers:
-        # 답변 본문이 비어 있으면 평가 의미가 없으므로 건너뜀.
-        if not (answer.answer_text or answer.stt_text):
-            stats["skipped"] += 1
-            continue
-
+    for answer in session.answers.all():
         already_evaluated = Evaluation.objects.filter(answer=answer).exists()
         if already_evaluated and not reevaluate:
             stats["skipped"] += 1

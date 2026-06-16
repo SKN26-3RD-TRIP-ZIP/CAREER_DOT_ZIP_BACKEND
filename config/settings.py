@@ -233,7 +233,9 @@ SIMPLE_JWT = {
 
 # ===== Speech Evaluation Metrics Configuration =====
 SPEECH_CONFIG = {
-    "BASE_SCORE": 100.0,
+    # QA 피드백 반영: 필러/pause 없는 발화자가 99점 받는 문제 보정.
+    # BASE_SCORE=80 → 완벽한 전달력도 80점이 상한(면접 특성상 100점은 비현실적).
+    "BASE_SCORE": 80.0,
     "FILLER_PENALTY_PER_COUNT": 5.0,        # 필러워드 개당 감점 수치
     "FLOOR_SCORE": 20.0,                    # 최저 방어선 점수
     "EXCESSIVE_FILLER_LIMIT": 6,            # 과락 기준 개수
