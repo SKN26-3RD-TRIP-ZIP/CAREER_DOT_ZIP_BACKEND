@@ -69,8 +69,20 @@ class SignupVerifyLoginFlowTests(APITestCase):
         admin_mail = next(m for m in mail.outbox if m.to[0] == "qa-admin@example.com")
         self.assertNotIn(PASSWORD, admin_mail.body)
 
-    def test_duplicate_signup_returns_409(self):
+    def test_duplicate_unverified_signup_resends_and_returns_200(self):
+        # 미인증 기존 계정 재가입 시도 — 차단(409) 대신 인증 흐름(200)으로 처리한다.
         self._signup()
+        res = self._signup()
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        self.assertTrue(res.data.get("requires_verification"))
+        self.assertEqual(res.data.get("email"), "qa.user@example.com")
+
+    def test_duplicate_verified_signup_returns_409(self):
+        # 인증 완료된 이메일만 "이미 가입된 이메일"로 막는다.
+        self._signup()
+        user = User.objects.get(email="qa.user@example.com")
+        user.is_verified = True
+        user.save(update_fields=["is_verified"])
         res = self._signup()
         self.assertEqual(res.status_code, status.HTTP_409_CONFLICT)
 
@@ -167,16 +179,24 @@ class SeedAndAdminPermissionTests(APITestCase):
     login_url = "/api/v1/auth/login"
     members_url = "/api/v1/admin/members"
 
-    def test_seed_qa_users_creates_admin_with_role(self):
+    def test_seed_qa_users_creates_admin_with_permissions(self):
         call_command("seed_qa_users", password=PASSWORD)
         admin = User.objects.get(email="tripdotzip@gmail.com")
-        self.assertEqual(admin.role, "admin")
+        self.assertTrue(admin.is_staff)
+        self.assertTrue(admin.is_superuser)
+        self.assertTrue(admin.is_active)
+        self.assertTrue(admin.is_verified)
+        self.assertEqual(admin.status, "active")
         self.assertTrue(admin.is_staff)
         self.assertTrue(admin.is_verified)
         # 팀원/페르소나 계정 verified
         team = User.objects.get(email="parksoyun9084@gmail.com")
         self.assertTrue(team.is_verified)
-        self.assertEqual(team.role, "user")
+        self.assertFalse(team.is_staff)
+        self.assertFalse(team.is_superuser)
+        self.assertTrue(team.is_active)
+        self.assertTrue(team.is_verified)
+        self.assertEqual(team.status, "active")
 
     def test_normal_user_cannot_access_admin_api(self):
         call_command("seed_qa_users", password=PASSWORD)
