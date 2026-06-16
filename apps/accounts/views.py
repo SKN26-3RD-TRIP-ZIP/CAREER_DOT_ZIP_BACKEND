@@ -21,12 +21,37 @@ REFRESH_COOKIE_MAX_AGE = 7 * 24 * 60 * 60  # 7 days
 
 
 class SignupView(APIView):
-    """회원가입 엔드포인트. 성공 시 환영/관리자 알림 메일을 발송(실패해도 가입은 성공)."""
+    """회원가입 엔드포인트. 성공 시 환영/관리자 알림 메일을 발송(실패해도 가입은 성공).
+
+    중복 이메일 정책:
+    - banned 계정      → 403 (가입 차단)
+    - is_verified=True → 409 "이미 가입된 이메일" (가입 차단)
+    - is_verified=False→ 200 (가입 차단하지 않고 인증번호 재발급/재발송, requires_verification)
+    이렇게 하여 인증 메일을 받지 못한 미인증 계정이 재가입 흐름에서 막히지 않도록 한다.
+    """
     permission_classes = [permissions.AllowAny]
 
     def post(self, request):
-        serializer = SignupSerializer(data=request.data)
+        email = (request.data.get('email') or '').strip()
 
+        # 1) 이미 존재하는 이메일 — 인증 완료/차단 계정만 가입을 막는다.
+        existing_user = User.objects.filter(email=email).first() if email else None
+        if existing_user is not None:
+            if existing_user.status == 'banned':
+                return Response(
+                    {'error': 'This account has been banned. Please contact the administrator.'},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+            if existing_user.is_verified:
+                return Response(
+                    {'error': 'This email is already registered.'},
+                    status=status.HTTP_409_CONFLICT,
+                )
+            # 미인증 기존 계정 — 차단 대신 인증번호 재발급/재발송 흐름으로 처리.
+            return self._resend_for_unverified(existing_user)
+
+        # 2) 신규 가입
+        serializer = SignupSerializer(data=request.data)
         if serializer.is_valid():
             user = serializer.save()
 
@@ -44,31 +69,60 @@ class SignupView(APIView):
 
             response_serializer = SignupResponseSerializer(user)
             data = dict(response_serializer.data)
+            data["requires_verification"] = True
+            data["mail_sent"] = not mail_failed
             if mail_failed:
                 data["message"] = (
-                    "가입이 완료되었습니다. 인증 메일 발송이 지연될 수 있습니다. "
-                    "메일이 오지 않으면 잠시 후 다시 시도해주세요."
+                    "가입은 완료되었지만 인증 메일 발송에 실패했습니다. "
+                    "인증 화면에서 인증번호 재전송을 눌러주세요."
                 )
             return Response(data, status=status.HTTP_201_CREATED)
-
-        if 'email' in serializer.errors:
-            email = request.data.get('email')
-            existing_user = User.objects.filter(email=email).first()
-            if existing_user and existing_user.status == 'banned':
-                return Response(
-                    {'error': 'This account has been banned. Please contact the administrator.'},
-                    status=status.HTTP_403_FORBIDDEN
-                )
-            if existing_user:
-                return Response(
-                    {'error': 'This email is already registered.'},
-                    status=status.HTTP_409_CONFLICT,
-                )
 
         return Response(
             {'error': serializer.errors},
             status=status.HTTP_400_BAD_REQUEST,
         )
+
+    @staticmethod
+    def _resend_for_unverified(user):
+        """미인증 기존 계정의 재가입 시도 — 새 인증번호 발급 후 재발송.
+
+        - 쿨다운 미경과 시: 직전에 보낸 인증번호가 아직 유효하므로 재발송 없이 안내.
+        - 발송 실패 시: 사용자가 갇히지 않도록 200 + 재발송 안내 메시지를 반환.
+        """
+        resent = False
+        mail_failed = False
+        try:
+            code = issue_code(user)
+            send_verification_code_email(user, code)
+            resent = True
+        except ResendCooldownError:
+            logger.info("signup resend skipped(cooldown) user_id=%s", user.id)
+        except Exception:  # noqa: BLE001
+            mail_failed = True
+            logger.exception("미인증 재가입 인증번호 재발송 실패 user_id=%s", user.id)
+
+        data = {
+            "user_id": user.id,
+            "email": user.email,
+            "name": user.name,
+            "requires_verification": True,
+            "resent": resent,
+            "mail_sent": resent,
+        }
+        if mail_failed:
+            data["message"] = (
+                "이미 가입 시도한 이메일입니다. 다만 인증 메일 발송에 실패했어요. "
+                "인증 화면에서 인증번호 재전송을 눌러주세요."
+            )
+        elif resent:
+            data["message"] = "이미 가입 시도한 이메일입니다. 인증번호를 다시 보냈습니다."
+        else:
+            data["message"] = (
+                "이미 가입 시도한 이메일입니다. 앞서 보낸 인증번호가 아직 유효합니다. "
+                "메일함을 확인해주세요."
+            )
+        return Response(data, status=status.HTTP_200_OK)
 
 
 class VerifyEmailView(APIView):
