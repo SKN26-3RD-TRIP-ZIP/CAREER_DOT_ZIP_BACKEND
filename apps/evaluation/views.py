@@ -4,6 +4,8 @@ from rest_framework.views import APIView
 
 from apps.interview.models import InterviewAnswer
 from .models import Evaluation
+from .ab_test_models import ABTestExperiment
+from .services.ab_test_service import get_experiment_stats, stats_for_experiment
 from .serializers import (
     EvaluationCreateSerializer,
     EvaluationSerializer,
@@ -102,3 +104,25 @@ class StrengthTagsView(EvaluationAnswerMixin, APIView):
         },
         status=status.HTTP_200_OK,
     )
+
+
+# -- E7.7 A/B 테스트 관리 API -----------------------------------------------
+class ABTestExperimentListView(APIView):
+    """GET /evaluations/ab-tests -- 전체 실험 목록 + 집계 통계."""
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        experiments = ABTestExperiment.objects.all().order_by('-created_at')
+        results = [stats_for_experiment(exp) for exp in experiments]
+        return Response({'total': len(results), 'results': results}, status=status.HTTP_200_OK)
+
+
+class ABTestExperimentDetailView(APIView):
+    """GET /evaluations/ab-tests/<experiment_name> -- 단일 실험 집계."""
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request, experiment_name: str):
+        stats = get_experiment_stats(experiment_name)
+        if 'error' in stats:
+            return Response(stats, status=status.HTTP_404_NOT_FOUND)
+        return Response(stats, status=status.HTTP_200_OK)

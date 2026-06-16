@@ -8,6 +8,8 @@ from .evaluation_prompts import (
     EVAL_GROUNDING_SYSTEM_PROMPT,
     EVAL_COMPETENCY_SYSTEM_PROMPT,
     EVAL_COMPETENCY_FORMAT_PROMPT,
+    EVAL_EMOTION_INTENT_SYSTEM_PROMPT,
+    EVAL_EMOTION_INTENT_FORMAT_PROMPT,
 )
 
 logger = logging.getLogger("feedback_ai.evaluation_chains")
@@ -94,6 +96,49 @@ def fetch_competency(answer_text: str) -> dict:
             "llm_weakness_tags": [],
         }
 
+def fetch_emotion_intent(answer_text: str) -> dict:
+    """E7.4 — 감정/의도 분류 엔진. 확률값 softmax 정규화 및 신뢰도 보정 포함."""
+    full_system = f"{EVAL_EMOTION_INTENT_SYSTEM_PROMPT}\n\n{EVAL_EMOTION_INTENT_FORMAT_PROMPT}"
+    try:
+        res = client.chat.completions.create(
+            model="gpt-4o-mini",
+            response_format={"type": "json_object"},
+            messages=[
+                {"role": "system", "content": full_system},
+                {"role": "user", "content": answer_text},
+            ],
+            timeout=15.0,
+        )
+        raw = json.loads(res.choices[0].message.content)
+
+        # 신뢰도 보정: 0.05 미만 레이블 제거 후 재정규화
+        for label_key in ("emotion_labels", "competency_intent_labels"):
+            labels = raw.get(label_key, {})
+            if not isinstance(labels, dict):
+                continue
+            cleaned = {k: v for k, v in labels.items() if isinstance(v, (int, float)) and v >= 0.05}
+            total = sum(cleaned.values())
+            if total > 0:
+                raw[label_key] = {k: round(v / total, 4) for k, v in cleaned.items()}
+            else:
+                raw[label_key] = labels
+
+        return raw
+
+    except Exception as e:
+        logger.error(f"OpenAI fetch_emotion_intent failed: {str(e)}", exc_info=True)
+        if not USE_MOCK:
+            raise
+        return {
+            "emotion_labels": {"neutral": 1.0},
+            "competency_intent_labels": {"problem_solving": 1.0},
+            "dominant_emotion": "neutral",
+            "dominant_competency": "problem_solving",
+            "confidence_score": 0.0,
+            "evidence_note": "OpenAI 연결 실패로 감정/의도 분류를 수행하지 못했습니다.",
+        }
+
+
 def eval_grounding_chain(answer_text: str) -> dict:
     return fetch_grounding(answer_text)
 
@@ -102,9 +147,22 @@ def eval_competency_chain(answer_text: str) -> dict:
     return fetch_competency(answer_text)
 
 
+def eval_emotion_intent_chain(answer_text: str) -> dict:
+    return fetch_emotion_intent(answer_text)
+
+
 def eval_llm_chains_parallel(answer_text: str) -> tuple[dict, dict]:
     """Run grounding and competency LLM calls concurrently."""
     with ThreadPoolExecutor(max_workers=2) as executor:
         grounding_future = executor.submit(fetch_grounding, answer_text)
         competency_future = executor.submit(fetch_competency, answer_text)
         return grounding_future.result(), competency_future.result()
+
+
+def eval_llm_chains_parallel_with_emotion(answer_text: str) -> tuple[dict, dict, dict]:
+    """E7.4 포함 3-chain 병렬 실행 (grounding / competency / emotion_intent)."""
+    with ThreadPoolExecutor(max_workers=3) as executor:
+        grounding_future = executor.submit(fetch_grounding, answer_text)
+        competency_future = executor.submit(fetch_competency, answer_text)
+        emotion_future = executor.submit(fetch_emotion_intent, answer_text)
+        return grounding_future.result(), competency_future.result(), emotion_future.result()

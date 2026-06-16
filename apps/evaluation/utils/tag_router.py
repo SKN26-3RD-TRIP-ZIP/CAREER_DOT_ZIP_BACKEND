@@ -1,6 +1,21 @@
 # apps/evaluation/utils/tag_router.py
 import re
 
+
+def _to_korean(text: str, fallback: str) -> str:
+    """텍스트에 영어 비중이 높으면 fallback 한국어 문자열을 반환한다.
+
+    sufficiency 체인이 영어로 reason을 반환하는 경우를 방어.
+    ASCII 비율이 50% 초과 시 영어로 판정.
+    """
+    if not text:
+        return fallback
+    ascii_count = sum(1 for c in text if c.isascii() and c.isalpha())
+    alpha_count = sum(1 for c in text if c.isalpha())
+    if alpha_count > 0 and ascii_count / alpha_count > 0.5:
+        return fallback
+    return text
+
 def route_deterministic_tags(
     question_type: str,
     bei_star: dict,
@@ -317,10 +332,12 @@ def route_deterministic_tags(
         for l_tag in llm_weakness_tags:
             name = l_tag.get("tag_name")
             if name not in local_tag_names:
+                raw_desc = l_tag.get("reason", l_tag.get("description", ""))
                 triggered_weaknesses.append({
                     "tag_name": name,
                     "category": l_tag.get("category", "general"),
-                    "description": l_tag.get("reason", l_tag.get("description", "실시간 탐지 보완 요소")),
+                    # sufficiency 체인이 영어로 반환한 경우 한국어 fallback으로 대체
+                    "description": _to_korean(raw_desc, "답변에서 추가 보완이 필요한 영역이 감지되었습니다."),
                     "trigger_signal": "LLM 실시간 피드백 루프 수집"
                 })
 
