@@ -297,13 +297,26 @@ def _build_project_experience_sources(session):
 
 
 def _get_latest_jd_analysis(session):
+    requested_jd_analysis_id = getattr(session, '_jd_analysis_id', None)
+
     if not session.jd_id or not session.resume_id:
-        return None
+        if not requested_jd_analysis_id:
+            return None
 
     try:
         from apps.analysis.models import JdAnalysis
     except Exception:
         return None
+
+    if requested_jd_analysis_id:
+        return (
+            JdAnalysis.objects.filter(
+                id=requested_jd_analysis_id,
+                user=session.user,
+            )
+            .select_related('jd', 'resume', 'cover_letter')
+            .first()
+        )
 
     queryset = JdAnalysis.objects.filter(
         user=session.user,

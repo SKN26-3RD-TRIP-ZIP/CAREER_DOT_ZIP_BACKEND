@@ -6,7 +6,7 @@ from django.urls import reverse
 from rest_framework import status
 from rest_framework.test import APITestCase
 
-from apps.analysis.models import GeneratedQuestion, JdAnalysis
+from apps.analysis.models import AnalysisSession, GeneratedQuestion, JdAnalysis
 from apps.input.models import (
     CoverLetter,
     CoverLetterItem,
@@ -288,3 +288,101 @@ class InterviewQuestionGenerateSourceTagsAPITest(APITestCase):
         self.assertEqual(question.source_type, 'jd')
         self.assertEqual(QuestionSourceTag.objects.filter(question=question).count(), 1)
         self.assertEqual(response.data['questions'][0]['source_tags'][0]['source_type'], 'jd')
+
+
+class MVPAnalysisQuestionLinkAPITest(APITestCase):
+    def setUp(self):
+        user_model = get_user_model()
+        self.user = user_model.objects.create_user(
+            email='analysis-link-owner@example.com',
+            password='password123',
+            name='Analysis Link Owner',
+        )
+        self.jd = JobDescription.objects.create(
+            user=self.user,
+            company_name='Career Zip',
+            position='Backend Developer',
+            original_text='Django API and OpenAI integration experience required.',
+        )
+        self.resume = ResumeMaster.objects.create(
+            user=self.user,
+            name='Analysis Link Owner',
+            email='analysis-link-owner@example.com',
+            original_text='Built Django APIs with OpenAI integration.',
+        )
+        self.analysis = JdAnalysis.objects.create(
+            user=self.user,
+            jd=self.jd,
+            resume=self.resume,
+            match_score=88,
+        )
+        self.generated_question = GeneratedQuestion.objects.create(
+            jd_analysis=self.analysis,
+            question_type='technical',
+            question_text='How did the analysis-stage Django API question reach the interview?',
+            source='combined',
+            source_ref='JD(Django) + Resume(OpenAI)',
+            order=1,
+            answer={'summary': 'Explain the linked analysis question.'},
+        )
+        self.analysis_session = AnalysisSession.objects.create(
+            user=self.user,
+            jd=self.jd,
+            resume=self.resume,
+            jd_analysis=self.analysis,
+            job_role='Backend Developer',
+            company_name='Career Zip',
+            jd_text=self.jd.original_text,
+            resume_text=self.resume.original_text,
+            status='ready',
+        )
+        self.client.force_authenticate(self.user)
+
+    def test_mvp_session_can_use_analysis_session_generated_questions(self):
+        session_response = self.client.post(
+            reverse('mvp-session-create'),
+            {
+                'analysis_session_id': self.analysis_session.id,
+                'persona_type': 'practical',
+                'interview_mode': 'text',
+            },
+            format='json',
+        )
+
+        self.assertEqual(session_response.status_code, status.HTTP_201_CREATED)
+        session = InterviewSession.objects.get(id=session_response.data['session_id'])
+        self.assertEqual(session.jd_id, self.jd.id)
+        self.assertEqual(session.resume_id, self.resume.id)
+
+        with patch('apps.interview.services.question_generator.InterviewAIChainService') as service_class:
+            service = service_class.return_value
+            service.generate_questions.return_value = {
+                'session_id': str(session.id),
+                'questions': [],
+            }
+
+            response = self.client.post(
+                reverse('mvp-question-generate', kwargs={'session_id': session.id}),
+                {
+                    'question_count': 1,
+                    'analysis_session_id': self.analysis_session.id,
+                },
+                format='json',
+            )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['generated_count'], 1)
+
+        question = InterviewQuestion.objects.get(session=session)
+        self.assertEqual(question.question_text, self.generated_question.question_text)
+        self.assertEqual(question.source_type, 'combined')
+        self.assertEqual(
+            question.source_reference,
+            f'analysis_generated_question:{self.generated_question.id}',
+        )
+
+        payload = service.generate_questions.call_args.args[0]
+        self.assertEqual(
+            payload['input_sources']['prepared_questions'][0]['generated_question_id'],
+            str(self.generated_question.id),
+        )

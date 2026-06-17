@@ -26,6 +26,7 @@ from .services.ai_chain_openai_engine import AIChainOpenAIError
 from .serializers import FollowUpQuestionSerializer
 from django.db import models
 from django.db.models import Prefetch
+from apps.analysis.models import AnalysisSession, JdAnalysis
 from .models import InterviewAnswer
 from .serializers import (
     InterviewAnswerCreateSerializer,
@@ -294,6 +295,67 @@ def _save_question_source_tags(question, source_tags):
         QuestionSourceTag.objects.bulk_create(normalized_tags)
 
 
+def _resolve_requested_jd_analysis(request, session):
+    jd_analysis_id = request.data.get('jd_analysis_id')
+    analysis_session_id = request.data.get('analysis_session_id')
+    jd_analysis = None
+
+    if jd_analysis_id:
+        jd_analysis = JdAnalysis.objects.filter(
+            id=jd_analysis_id,
+            user=request.user,
+        ).first()
+        if not jd_analysis:
+            return None, Response(
+                {'jd_analysis_id': 'JD analysis not found.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+    if analysis_session_id:
+        analysis_session = (
+            AnalysisSession.objects.select_related('jd_analysis')
+            .filter(id=analysis_session_id, user=request.user)
+            .first()
+        )
+        if not analysis_session:
+            return None, Response(
+                {'analysis_session_id': 'Analysis session not found.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if not analysis_session.jd_analysis_id:
+            return None, Response(
+                {'analysis_session_id': 'Analysis session has no completed result.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if jd_analysis and jd_analysis.id != analysis_session.jd_analysis_id:
+            return None, Response(
+                {'jd_analysis_id': 'JD analysis does not match analysis_session_id.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        jd_analysis = analysis_session.jd_analysis
+
+    if not jd_analysis:
+        return None, None
+
+    if session.jd_id and session.jd_id != jd_analysis.jd_id:
+        return None, Response(
+            {'jd_analysis_id': 'JD analysis does not match this session.'},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    if session.resume_id and session.resume_id != jd_analysis.resume_id:
+        return None, Response(
+            {'jd_analysis_id': 'JD analysis does not match this session.'},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    if session.cover_letter_id and session.cover_letter_id != jd_analysis.cover_letter_id:
+        return None, Response(
+            {'jd_analysis_id': 'JD analysis does not match this session.'},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    return jd_analysis, None
+
+
 class InterviewQuestionGenerateView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
@@ -319,6 +381,12 @@ class InterviewQuestionGenerateView(APIView):
             existing_qs.delete()
 
         # generate deterministic questions via service
+        jd_analysis, error_response = _resolve_requested_jd_analysis(request, session)
+        if error_response:
+            return error_response
+        if jd_analysis:
+            session._jd_analysis_id = jd_analysis.id
+
         try:
             generated = generate_interview_questions(session)
         except AIChainOpenAIError as exc:

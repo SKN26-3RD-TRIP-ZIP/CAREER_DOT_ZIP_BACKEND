@@ -143,6 +143,10 @@ class MVPQuestionGenerateView(APIView):
         session.total_question_count = serializer.validated_data['question_count']
         session.save(update_fields=('total_question_count', 'updated_at'))
 
+        jd_analysis = serializer.validated_data.get('jd_analysis')
+        if jd_analysis:
+            session._jd_analysis_id = jd_analysis.id
+
         try:
             generated = generate_interview_questions(session)
         except AIChainOpenAIError as exc:
