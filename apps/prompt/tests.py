@@ -1,4 +1,7 @@
+from io import StringIO
+
 from django.contrib.auth import get_user_model
+from django.core.management import call_command
 from django.urls import reverse
 from rest_framework import status
 from rest_framework.test import APITestCase
@@ -169,3 +172,38 @@ class RuntimePromptServiceTests(APITestCase):
         result = get_runtime_prompt_version('practical', 'follow_up_generation')
 
         self.assertIsNone(result)
+
+
+class SeedInterviewPromptsCommandTests(APITestCase):
+    def test_seed_interview_prompts_is_idempotent_and_runtime_ready(self):
+        out = StringIO()
+        call_command('seed_interview_prompts', stdout=out)
+
+        self.assertEqual(PersonaConfig.objects.count(), 3)
+        self.assertEqual(PromptTemplate.objects.count(), 9)
+        self.assertEqual(PromptVersion.objects.count(), 9)
+
+        for persona_type in ('coach', 'practical', 'verifier'):
+            persona = PersonaConfig.objects.get(persona_type=persona_type)
+            self.assertIsNotNone(persona.active_template_id)
+            self.assertEqual(persona.active_template.prompt_type, 'question_generation')
+            for prompt_type in (
+                'question_generation',
+                'answer_evaluation',
+                'follow_up_generation',
+            ):
+                runtime_prompt = get_runtime_prompt_version(persona_type, prompt_type)
+                self.assertIsNotNone(runtime_prompt)
+                self.assertIn('Return only a JSON object', runtime_prompt.content)
+
+        first_template_ids = set(PromptTemplate.objects.values_list('id', flat=True))
+        first_version_ids = set(PromptVersion.objects.values_list('id', flat=True))
+
+        out = StringIO()
+        call_command('seed_interview_prompts', stdout=out)
+
+        self.assertEqual(PersonaConfig.objects.count(), 3)
+        self.assertEqual(PromptTemplate.objects.count(), 9)
+        self.assertEqual(PromptVersion.objects.count(), 9)
+        self.assertEqual(first_template_ids, set(PromptTemplate.objects.values_list('id', flat=True)))
+        self.assertEqual(first_version_ids, set(PromptVersion.objects.values_list('id', flat=True)))
