@@ -1,10 +1,11 @@
-from django.test import SimpleTestCase, override_settings
+from django.test import TestCase, override_settings
 
 from apps.interview.ai_chain_contracts import NextAction
 from apps.interview.services.ai_chain_openai_engine import (
     AIChainOpenAIEngine,
     AIChainOpenAIError,
 )
+from apps.prompt.models import PersonaConfig, PromptTemplate, PromptVersion
 
 
 class FakeOpenAIMessage:
@@ -43,7 +44,7 @@ class FakeOpenAIClient:
         self.chat = FakeChat(self.completions)
 
 
-class AIChainOpenAIEngineTest(SimpleTestCase):
+class AIChainOpenAIEngineTest(TestCase):
     def setUp(self):
         self.engine = AIChainOpenAIEngine(
             api_key="test-api-key",
@@ -694,3 +695,141 @@ class AIChainOpenAIEngineTest(SimpleTestCase):
         self.assertEqual(result[0]["source_type"], "jd")
         self.assertEqual(result[1]["source_type"], "cover_letter")
         self.assertEqual(result[2]["source_type"], "project_experience")
+
+    def _create_prompt_version(self, *, prompt_type, content, persona_type="practical"):
+        persona, _ = PersonaConfig.objects.get_or_create(persona_type=persona_type)
+        template = PromptTemplate.objects.create(
+            persona_config=persona,
+            title=f"{prompt_type} prompt",
+            prompt_type=prompt_type,
+        )
+        version = PromptVersion.objects.create(
+            template=template,
+            version_number=1,
+            content=content,
+        )
+        template.default_version = version
+        template.save(update_fields=("default_version", "updated_at"))
+        return version
+
+    def test_question_generation_uses_db_prompt_and_returns_metadata(self):
+        version = self._create_prompt_version(
+            prompt_type="question_generation",
+            content="DB QUESTION SYSTEM PROMPT",
+        )
+        raw_response = """{
+          "session_id": "11111111-1111-1111-1111-111111111111",
+          "questions": [
+            {
+              "question_text": "DB prompt question",
+              "order_index": 1,
+              "source_tags": [{"source_type": "general"}]
+            }
+          ]
+        }"""
+        fake_client = FakeOpenAIClient(raw_response)
+        engine = AIChainOpenAIEngine(
+            api_key="test-api-key",
+            client_factory=lambda api_key: fake_client,
+            enable_real_call=True,
+        )
+
+        result = engine.generate_questions(self._question_generation_payload())
+
+        self.assertEqual(
+            fake_client.completions.last_kwargs["messages"][0]["content"],
+            "DB QUESTION SYSTEM PROMPT",
+        )
+        self.assertEqual(result["prompt_version_id"], version.id)
+        self.assertEqual(result["prompt_source"], "db")
+
+    def test_question_generation_uses_fallback_prompt_and_returns_metadata_without_db_prompt(self):
+        raw_response = """{
+          "session_id": "11111111-1111-1111-1111-111111111111",
+          "questions": [
+            {
+              "question_text": "Fallback prompt question",
+              "order_index": 1,
+              "source_tags": [{"source_type": "general"}]
+            }
+          ]
+        }"""
+        fake_client = FakeOpenAIClient(raw_response)
+        engine = AIChainOpenAIEngine(
+            api_key="test-api-key",
+            client_factory=lambda api_key: fake_client,
+            enable_real_call=True,
+        )
+
+        result = engine.generate_questions(self._question_generation_payload())
+
+        self.assertIn(
+            "questions",
+            fake_client.completions.last_kwargs["messages"][0]["content"],
+        )
+        self.assertIsNone(result["prompt_version_id"])
+        self.assertEqual(result["prompt_source"], "fallback")
+
+    def test_answer_sufficiency_uses_db_prompt_and_returns_metadata(self):
+        version = self._create_prompt_version(
+            prompt_type="answer_evaluation",
+            content="DB ANSWER SYSTEM PROMPT",
+        )
+        raw_response = """{
+          "answer_id": "33333333-3333-3333-3333-333333333333",
+          "is_sufficient": true,
+          "sufficiency_reason": "Enough detail.",
+          "answer_weakness_tags": [],
+          "selected_weakness_tag": null,
+          "should_generate_followup": false,
+          "next_action": "NEXT_QUESTION"
+        }"""
+        fake_client = FakeOpenAIClient(raw_response)
+        engine = AIChainOpenAIEngine(
+            api_key="test-api-key",
+            client_factory=lambda api_key: fake_client,
+            enable_real_call=True,
+        )
+        payload = self._sufficiency_payload()
+        payload["answer"]["answer_text"] = (
+            "I designed the Django API retry flow because transient failures caused "
+            "inconsistent results. I compared rollback and retry boundaries, added "
+            "transaction handling, and confirmed the error rate dropped after release."
+        )
+
+        result = engine.judge_answer_sufficiency(payload)
+
+        self.assertEqual(
+            fake_client.completions.last_kwargs["messages"][0]["content"],
+            "DB ANSWER SYSTEM PROMPT",
+        )
+        self.assertEqual(result["prompt_version_id"], version.id)
+        self.assertEqual(result["prompt_source"], "db")
+
+    def test_followup_generation_uses_db_prompt_and_returns_metadata(self):
+        version = self._create_prompt_version(
+            prompt_type="follow_up_generation",
+            content="DB FOLLOWUP SYSTEM PROMPT",
+        )
+        raw_response = """{
+          "session_id": "11111111-1111-1111-1111-111111111111",
+          "followup_question": {
+            "question_text": "DB prompt follow-up question",
+            "order_index": 2
+          }
+        }"""
+        fake_client = FakeOpenAIClient(raw_response)
+        engine = AIChainOpenAIEngine(
+            api_key="test-api-key",
+            client_factory=lambda api_key: fake_client,
+            enable_real_call=True,
+        )
+
+        result = engine.generate_followup_question(self._followup_payload())
+
+        self.assertEqual(
+            fake_client.completions.last_kwargs["messages"][0]["content"],
+            "DB FOLLOWUP SYSTEM PROMPT",
+        )
+        self.assertEqual(result["prompt_version_id"], version.id)
+        self.assertEqual(result["prompt_source"], "db")
