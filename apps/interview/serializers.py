@@ -1,5 +1,6 @@
 from rest_framework import serializers
 
+from apps.analysis.models import AnalysisSession, JdAnalysis
 from apps.common.choices import ANSWER_SOURCE_CHOICES
 from apps.evaluation.models import Evaluation
 from apps.input.models import JobDescription, ResumeMaster, CoverLetter
@@ -19,9 +20,11 @@ class QuestionSourceTagSerializer(serializers.ModelSerializer):
 
 
 class InterviewSessionCreateSerializer(serializers.ModelSerializer):
-    jd_id = serializers.UUIDField(required=True, allow_null=False, write_only=True)
+    jd_id = serializers.UUIDField(required=False, allow_null=False, write_only=True)
     resume_id = serializers.UUIDField(required=False, allow_null=True, write_only=True)
     cover_letter_id = serializers.UUIDField(required=False, allow_null=True, write_only=True)
+    analysis_session_id = serializers.IntegerField(required=False, write_only=True)
+    jd_analysis_id = serializers.UUIDField(required=False, write_only=True)
     persona = serializers.CharField(required=False, allow_blank=True, default='practical')
     persona_type = serializers.CharField(required=False, allow_blank=True, write_only=True)
     interview_mode = serializers.ChoiceField(choices=('text', 'voice'), required=False, default='text')
@@ -32,6 +35,8 @@ class InterviewSessionCreateSerializer(serializers.ModelSerializer):
             'jd_id',
             'resume_id',
             'cover_letter_id',
+            'analysis_session_id',
+            'jd_analysis_id',
             'interview_type',
             'persona',
             'persona_type',
@@ -65,11 +70,78 @@ class InterviewSessionCreateSerializer(serializers.ModelSerializer):
             return CoverLetter.objects.get(id=value, user=self.context['request'].user)
         except CoverLetter.DoesNotExist:
             raise serializers.ValidationError('Cover letter not found.')
+
+    def _owned_jd_analysis(self, jd_analysis_id):
+        try:
+            return JdAnalysis.objects.select_related(
+                'jd',
+                'resume',
+                'cover_letter',
+            ).get(id=jd_analysis_id, user=self.context['request'].user)
+        except JdAnalysis.DoesNotExist:
+            raise serializers.ValidationError({'jd_analysis_id': 'JD analysis not found.'})
+
+    def _owned_analysis_session(self, analysis_session_id):
+        try:
+            analysis_session = AnalysisSession.objects.select_related(
+                'jd_analysis__jd',
+                'jd_analysis__resume',
+                'jd_analysis__cover_letter',
+            ).get(id=analysis_session_id, user=self.context['request'].user)
+        except AnalysisSession.DoesNotExist:
+            raise serializers.ValidationError({'analysis_session_id': 'Analysis session not found.'})
+
+        if not analysis_session.jd_analysis_id:
+            raise serializers.ValidationError({'analysis_session_id': 'Analysis session has no completed result.'})
+        return analysis_session.jd_analysis
+
+    @staticmethod
+    def _matches_analysis(selected, expected):
+        if selected is None:
+            return True
+        if expected is None:
+            return False
+        return selected.id == expected.id
         
     def validate_persona(self, value):
         return normalize_persona_type(value)
 
     def validate(self, attrs):
+        jd_analysis_id = attrs.pop('jd_analysis_id', None)
+        analysis_session_id = attrs.pop('analysis_session_id', None)
+        jd_analysis = None
+
+        if jd_analysis_id:
+            jd_analysis = self._owned_jd_analysis(jd_analysis_id)
+
+        if analysis_session_id:
+            session_analysis = self._owned_analysis_session(analysis_session_id)
+            if jd_analysis and jd_analysis.id != session_analysis.id:
+                raise serializers.ValidationError(
+                    {'jd_analysis_id': 'JD analysis does not match analysis_session_id.'}
+                )
+            jd_analysis = session_analysis
+
+        if jd_analysis:
+            if not self._matches_analysis(attrs.get('jd_id'), jd_analysis.jd):
+                raise serializers.ValidationError({'jd_id': 'JD does not match the analysis result.'})
+            if not self._matches_analysis(attrs.get('resume_id'), jd_analysis.resume):
+                raise serializers.ValidationError({'resume_id': 'Resume does not match the analysis result.'})
+            if not self._matches_analysis(attrs.get('cover_letter_id'), jd_analysis.cover_letter):
+                raise serializers.ValidationError(
+                    {'cover_letter_id': 'Cover letter does not match the analysis result.'}
+                )
+
+            attrs['jd_id'] = jd_analysis.jd
+            attrs['resume_id'] = jd_analysis.resume
+            if jd_analysis.cover_letter_id:
+                attrs['cover_letter_id'] = jd_analysis.cover_letter
+
+        if not attrs.get('jd_id'):
+            raise serializers.ValidationError(
+                {'jd_id': 'This field is required unless jd_analysis_id or analysis_session_id is provided.'}
+            )
+
         raw_persona = attrs.pop('persona_type', None) or attrs.get('persona') or 'practical'
         attrs['persona'] = normalize_persona_type(raw_persona)
         return attrs

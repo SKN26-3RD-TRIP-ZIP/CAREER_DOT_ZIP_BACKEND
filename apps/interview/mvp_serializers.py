@@ -1,5 +1,6 @@
 from rest_framework import serializers
 
+from apps.analysis.models import AnalysisSession, JdAnalysis
 from apps.input.models import CoverLetter, JobDescription, ProjectExperience, ResumeMaster
 from apps.question_bank.models import QuestionBankItem
 from .models import InterviewAnswer, InterviewQuestion, InterviewSession
@@ -31,9 +32,11 @@ STATUS_OUTPUT_MAP = {
 
 
 class MVPSessionCreateSerializer(serializers.Serializer):
-    jd_id = serializers.UUIDField()
+    jd_id = serializers.UUIDField(required=False)
     resume_id = serializers.UUIDField(required=False, allow_null=True)
     cover_letter_id = serializers.UUIDField(required=False, allow_null=True)
+    analysis_session_id = serializers.IntegerField(required=False)
+    jd_analysis_id = serializers.UUIDField(required=False)
     # persona_type: 프론트 필드명. persona도 별칭으로 허용
     persona_type = serializers.ChoiceField(choices=PERSONA_INPUT_MAP, required=False)
     persona = serializers.ChoiceField(choices=PERSONA_INPUT_MAP, required=False)
@@ -48,21 +51,38 @@ class MVPSessionCreateSerializer(serializers.Serializer):
 
     def validate(self, attrs):
         user = self.context['request'].user
-        attrs['jd'] = self._owned_object(JobDescription, attrs.pop('jd_id'), user, 'JD')
+        jd_analysis = self._resolve_jd_analysis(
+            user=user,
+            jd_analysis_id=attrs.pop('jd_analysis_id', None),
+            analysis_session_id=attrs.pop('analysis_session_id', None),
+        )
+
+        jd_id = attrs.pop('jd_id', None)
+        if jd_id:
+            attrs['jd'] = self._owned_object(JobDescription, jd_id, user, 'JD')
+        elif jd_analysis:
+            attrs['jd'] = jd_analysis.jd
+        else:
+            raise serializers.ValidationError(
+                {'jd_id': 'This field is required unless jd_analysis_id or analysis_session_id is provided.'}
+            )
 
         resume_id = attrs.pop('resume_id', None)
         attrs['resume'] = (
             self._owned_object(ResumeMaster, resume_id, user, 'Resume')
             if resume_id
-            else None
+            else jd_analysis.resume if jd_analysis else None
         )
 
         cover_letter_id = attrs.pop('cover_letter_id', None)
         attrs['cover_letter'] = (
             self._owned_object(CoverLetter, cover_letter_id, user, 'Cover letter')
             if cover_letter_id
-            else None
+            else jd_analysis.cover_letter if jd_analysis else None
         )
+
+        if jd_analysis:
+            self._validate_analysis_resources(attrs, jd_analysis)
 
         # persona_type 우선, 없으면 persona 필드 사용
         raw_persona = attrs.pop('persona_type', None) or attrs.pop('persona', None)
@@ -78,6 +98,53 @@ class MVPSessionCreateSerializer(serializers.Serializer):
             return model.objects.get(id=object_id, user=user)
         except model.DoesNotExist:
             raise serializers.ValidationError({f'{label.lower().replace(" ", "_")}_id': f'{label} not found.'})
+
+    @staticmethod
+    def _resolve_jd_analysis(*, user, jd_analysis_id=None, analysis_session_id=None):
+        jd_analysis = None
+
+        if jd_analysis_id:
+            try:
+                jd_analysis = JdAnalysis.objects.select_related(
+                    'jd',
+                    'resume',
+                    'cover_letter',
+                ).get(id=jd_analysis_id, user=user)
+            except JdAnalysis.DoesNotExist:
+                raise serializers.ValidationError({'jd_analysis_id': 'JD analysis not found.'})
+
+        if analysis_session_id:
+            try:
+                analysis_session = AnalysisSession.objects.select_related(
+                    'jd_analysis__jd',
+                    'jd_analysis__resume',
+                    'jd_analysis__cover_letter',
+                ).get(id=analysis_session_id, user=user)
+            except AnalysisSession.DoesNotExist:
+                raise serializers.ValidationError({'analysis_session_id': 'Analysis session not found.'})
+
+            if not analysis_session.jd_analysis_id:
+                raise serializers.ValidationError(
+                    {'analysis_session_id': 'Analysis session has no completed result.'}
+                )
+            if jd_analysis and jd_analysis.id != analysis_session.jd_analysis_id:
+                raise serializers.ValidationError(
+                    {'jd_analysis_id': 'JD analysis does not match analysis_session_id.'}
+                )
+            jd_analysis = analysis_session.jd_analysis
+
+        return jd_analysis
+
+    @staticmethod
+    def _validate_analysis_resources(attrs, jd_analysis):
+        if attrs['jd'].id != jd_analysis.jd_id:
+            raise serializers.ValidationError({'jd_id': 'JD does not match the analysis result.'})
+        if attrs['resume'] and attrs['resume'].id != jd_analysis.resume_id:
+            raise serializers.ValidationError({'resume_id': 'Resume does not match the analysis result.'})
+        if attrs['cover_letter'] and attrs['cover_letter'].id != jd_analysis.cover_letter_id:
+            raise serializers.ValidationError(
+                {'cover_letter_id': 'Cover letter does not match the analysis result.'}
+            )
 
     def create(self, validated_data):
         total_question_count = validated_data.pop('total_question_count', 5)
@@ -97,6 +164,8 @@ class MVPQuestionGenerateSerializer(serializers.Serializer):
     jd_id = serializers.UUIDField(required=False)
     resume_id = serializers.UUIDField(required=False)
     cover_letter_id = serializers.UUIDField(required=False, allow_null=True)
+    analysis_session_id = serializers.IntegerField(required=False)
+    jd_analysis_id = serializers.UUIDField(required=False)
     project_ids = serializers.ListField(
         child=serializers.UUIDField(),
         required=False,
@@ -109,6 +178,7 @@ class MVPQuestionGenerateSerializer(serializers.Serializer):
         self._validate_session_reference(attrs, 'jd_id', session.jd_id)
         self._validate_session_reference(attrs, 'resume_id', session.resume_id)
         self._validate_session_reference(attrs, 'cover_letter_id', session.cover_letter_id)
+        self._validate_jd_analysis_reference(attrs)
 
         project_ids = attrs.get('project_ids', [])
         owned_count = ProjectExperience.objects.filter(
@@ -125,6 +195,25 @@ class MVPQuestionGenerateSerializer(serializers.Serializer):
             raise serializers.ValidationError(
                 {field_name: 'The resource does not match this session.'}
             )
+
+    def _validate_jd_analysis_reference(self, attrs):
+        jd_analysis = MVPSessionCreateSerializer._resolve_jd_analysis(
+            user=self.context['request'].user,
+            jd_analysis_id=attrs.get('jd_analysis_id'),
+            analysis_session_id=attrs.get('analysis_session_id'),
+        )
+        if not jd_analysis:
+            return
+
+        session = self.context['session']
+        if session.jd_id and session.jd_id != jd_analysis.jd_id:
+            raise serializers.ValidationError({'jd_analysis_id': 'JD analysis does not match this session.'})
+        if session.resume_id and session.resume_id != jd_analysis.resume_id:
+            raise serializers.ValidationError({'jd_analysis_id': 'JD analysis does not match this session.'})
+        if session.cover_letter_id and session.cover_letter_id != jd_analysis.cover_letter_id:
+            raise serializers.ValidationError({'jd_analysis_id': 'JD analysis does not match this session.'})
+
+        attrs['jd_analysis'] = jd_analysis
 
 
 class MVPQuestionSerializer(serializers.ModelSerializer):
