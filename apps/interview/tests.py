@@ -13,7 +13,7 @@ from apps.common.choices import (
     INTERVIEW_SESSION_STATUS_CANCELLED,
     INTERVIEW_SESSION_STATUS_COMPLETED,
 )
-from apps.evaluation.models import Evaluation
+from apps.evaluation.models import AnswerWeaknessTag, Evaluation, WeaknessTag
 from apps.input.models import JobDescription, ResumeMaster
 from apps.question_bank.models import QuestionBankItem
 from apps.interview.services.ai_chain_openai_engine import (
@@ -686,6 +686,10 @@ class MVPAnswerFollowupAPITests(APITestCase):
         followup = InterviewQuestion.objects.get(id=followup_id)
 
         self.assertTrue(followup.source_reference.startswith("ai_chain_mock:"))
+        weakness_mapping = AnswerWeaknessTag.objects.get(answer_id=answer_response.data['answer_id'])
+        self.assertEqual(weakness_mapping.followup_question_id, followup.id)
+        self.assertTrue(weakness_mapping.is_selected_for_followup)
+        self.assertEqual(weakness_mapping.used_for, "followup")
 
         self.assertEqual(second.status_code, status.HTTP_200_OK)
         self.assertEqual(
@@ -693,6 +697,10 @@ class MVPAnswerFollowupAPITests(APITestCase):
                 parent_question=self.question,
                 question_type='follow_up',
             ).count(),
+            1,
+        )
+        self.assertEqual(
+            AnswerWeaknessTag.objects.filter(answer_id=answer_response.data['answer_id']).count(),
             1,
         )
 
@@ -845,6 +853,41 @@ class MVPAnswerFollowupRealModeAPITests(APITestCase):
         self.assertEqual(followup.source_answer, self.answer)
         self.assertFalse(followup.source_reference.startswith('ai_chain_mock:'))
         self.assertTrue(followup.source_reference.startswith('ai_chain:'))
+        weakness_mapping = AnswerWeaknessTag.objects.get(answer=self.answer)
+        self.assertEqual(weakness_mapping.weakness_tag.tag_name, 'answer_specificity')
+        self.assertEqual(weakness_mapping.followup_question_id, followup.id)
+        self.assertEqual(
+            followup.source_reference.split(':')[1],
+            str(weakness_mapping.id)[:36],
+        )
+
+    @patch(
+        'apps.interview.services.follow_up_generator.FollowupGenerator._get_ai_chain_service',
+        return_value=FakeFollowupAIChainService(),
+    )
+    def test_real_mode_followup_reuses_existing_answer_weakness_mapping(self, _mock_service):
+        weakness_tag = WeaknessTag.objects.create(
+            tag_name='answer_specificity',
+            description='Existing tag',
+        )
+        existing_mapping = AnswerWeaknessTag.objects.create(
+            answer=self.answer,
+            weakness_tag=weakness_tag,
+            reason='Existing reason',
+            priority_rank=1,
+        )
+
+        response = self.client.post(self.followup_url(), {}, format='json')
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        followup = InterviewQuestion.objects.get(
+            id=response.data['followup_question']['question_id'],
+        )
+        existing_mapping.refresh_from_db()
+        self.assertEqual(AnswerWeaknessTag.objects.filter(answer=self.answer).count(), 1)
+        self.assertEqual(existing_mapping.followup_question_id, followup.id)
+        self.assertTrue(existing_mapping.is_selected_for_followup)
+        self.assertEqual(existing_mapping.used_for, 'followup')
 
     @patch(
         'apps.interview.services.follow_up_generator.FollowupGenerator._get_ai_chain_service',
@@ -872,6 +915,9 @@ class MVPAnswerFollowupRealModeAPITests(APITestCase):
         self.assertEqual(followup.source_answer, self.answer)
         self.assertTrue(followup.source_reference.startswith('ai_chain:'))
         self.assertFalse(followup.source_reference.startswith('ai_chain_mock:'))
+        weakness_mapping = AnswerWeaknessTag.objects.get(answer=self.answer)
+        self.assertEqual(weakness_mapping.weakness_tag.tag_name, 'weak_specificity')
+        self.assertEqual(weakness_mapping.followup_question_id, followup.id)
 
     @patch(
         'apps.interview.services.follow_up_generator.FollowupGenerator._get_ai_chain_service',

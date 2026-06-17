@@ -4,6 +4,7 @@ from rest_framework import status
 from rest_framework.test import APITestCase
 
 from .models import PersonaConfig, PromptTemplate, PromptVersion
+from .services import get_runtime_prompt_version
 
 
 class PromptAdminAPITests(APITestCase):
@@ -104,3 +105,67 @@ class PromptAdminAPITests(APITestCase):
         self.assertEqual(invalid_active.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertEqual(invalid_default.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertEqual(blocked_delete.status_code, status.HTTP_400_BAD_REQUEST)
+
+
+class RuntimePromptServiceTests(APITestCase):
+    def test_active_template_default_version_has_priority(self):
+        persona = PersonaConfig.objects.create(persona_type='practical')
+        normal_template = PromptTemplate.objects.create(
+            persona_config=persona,
+            title='Normal prompt',
+            prompt_type='question_generation',
+        )
+        normal_version = PromptVersion.objects.create(
+            template=normal_template,
+            version_number=1,
+            content='normal prompt',
+        )
+        normal_template.default_version = normal_version
+        normal_template.save(update_fields=('default_version', 'updated_at'))
+
+        active_template = PromptTemplate.objects.create(
+            persona_config=persona,
+            title='Active prompt',
+            prompt_type='question_generation',
+        )
+        active_version = PromptVersion.objects.create(
+            template=active_template,
+            version_number=1,
+            content='active prompt',
+        )
+        active_template.default_version = active_version
+        active_template.save(update_fields=('default_version', 'updated_at'))
+        persona.active_template = active_template
+        persona.save(update_fields=('active_template', 'updated_at'))
+
+        result = get_runtime_prompt_version('practical', 'question_generation')
+
+        self.assertEqual(result.version_id, active_version.id)
+        self.assertEqual(result.content, 'active prompt')
+
+    def test_matching_active_template_default_version_is_used_without_active_persona_template(self):
+        persona = PersonaConfig.objects.create(persona_type='practical')
+        template = PromptTemplate.objects.create(
+            persona_config=persona,
+            title='Answer prompt',
+            prompt_type='answer_evaluation',
+        )
+        version = PromptVersion.objects.create(
+            template=template,
+            version_number=1,
+            content='answer prompt',
+        )
+        template.default_version = version
+        template.save(update_fields=('default_version', 'updated_at'))
+
+        result = get_runtime_prompt_version('practical', 'answer_evaluation')
+
+        self.assertEqual(result.version_id, version.id)
+        self.assertEqual(result.content, 'answer prompt')
+
+    def test_returns_none_when_no_matching_prompt_exists(self):
+        PersonaConfig.objects.create(persona_type='practical')
+
+        result = get_runtime_prompt_version('practical', 'follow_up_generation')
+
+        self.assertIsNone(result)

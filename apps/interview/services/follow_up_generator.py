@@ -2,6 +2,7 @@ from django.conf import settings
 from django.db import transaction
 from django.db.models import Max, Q
 
+from apps.evaluation.models import AnswerWeaknessTag, WeaknessTag
 from apps.interview.ai_chain_contracts import (
     DEFAULT_WEAKNESS_TAG_CANDIDATES,
     NextAction,
@@ -46,6 +47,17 @@ class FollowupGenerator:
         if not selected_weakness_tag:
             return None, False
 
+        answer_weakness_mapping = cls._get_or_create_answer_weakness_mapping(
+            answer,
+            selected_weakness_tag,
+        )
+        selected_weakness_tag = {
+            **selected_weakness_tag,
+            "answer_weakness_tag_id": str(answer_weakness_mapping.id),
+            "weakness_tag_id": str(answer_weakness_mapping.weakness_tag_id),
+            "tag_name": answer_weakness_mapping.weakness_tag.tag_name,
+        }
+
         followup_payload = cls._build_followup_payload(
             answer=answer,
             selected_weakness_tag=selected_weakness_tag,
@@ -78,6 +90,10 @@ class FollowupGenerator:
                 ),
                 difficulty=followup_data.get("difficulty"),
                 order_index=last_index + 1,
+            )
+            cls._link_weakness_mapping_to_followup(
+                answer_weakness_mapping,
+                question,
             )
 
         return question, True
@@ -185,6 +201,95 @@ class FollowupGenerator:
         if persona in {"coach", "practical", "verify"}:
             return persona
         return "practical"
+
+    @classmethod
+    def _get_or_create_answer_weakness_mapping(cls, answer, selected_weakness_tag):
+        tag_name = cls._normalize_weakness_tag_name(
+            selected_weakness_tag.get("tag_name")
+            or selected_weakness_tag.get("weakness_tag_id")
+            or selected_weakness_tag.get("code")
+            or selected_weakness_tag.get("name")
+        )
+        reason = (
+            selected_weakness_tag.get("reason")
+            or selected_weakness_tag.get("description")
+            or ""
+        )
+
+        weakness_tag, created = WeaknessTag.objects.get_or_create(
+            tag_name=tag_name,
+            defaults={"description": reason},
+        )
+        if not created and reason and not weakness_tag.description:
+            weakness_tag.description = reason
+            weakness_tag.save(update_fields=("description",))
+
+        mapping = AnswerWeaknessTag.objects.filter(
+            answer=answer,
+            weakness_tag=weakness_tag,
+        ).first()
+        if mapping is None:
+            next_rank = (
+                AnswerWeaknessTag.objects.filter(answer=answer)
+                .aggregate(last=Max("priority_rank"))["last"]
+                or 0
+            ) + 1
+            mapping = AnswerWeaknessTag.objects.create(
+                answer=answer,
+                weakness_tag=weakness_tag,
+                reason=reason,
+                priority_rank=next_rank,
+                is_selected_for_followup=True,
+                used_for="followup",
+            )
+            return mapping
+
+        update_fields = []
+        if reason and not mapping.reason:
+            mapping.reason = reason
+            update_fields.append("reason")
+        if not mapping.is_selected_for_followup:
+            mapping.is_selected_for_followup = True
+            update_fields.append("is_selected_for_followup")
+        if not mapping.used_for:
+            mapping.used_for = "followup"
+            update_fields.append("used_for")
+        if update_fields:
+            mapping.save(update_fields=tuple(update_fields))
+        return mapping
+
+    @staticmethod
+    def _normalize_weakness_tag_name(raw_tag_name):
+        tag_name = str(raw_tag_name or "ABSTRACT_ANSWER").strip()
+        normalized = tag_name.upper().replace("-", "_").replace(" ", "_")
+        trigger_aliases = {
+            "TOO_SHORT": "weak_specificity",
+            "ABSTRACT_ANSWER": "weak_specificity",
+            "MISSING_REASON": "weak_technical_reasoning",
+            "UNCLEAR_ROLE": "weak_personal_contribution",
+            "NO_RESULT": "weak_result_impact",
+            "TECH_DEPTH_LOW": "weak_technical_understanding",
+            "WEAK_JD_LINK": "weak_jd_fit",
+            "STAR_MISSING": "weak_answer_structure",
+            "NO_ALTERNATIVE": "weak_technical_reasoning",
+            "OFF_TOPIC": "weak_question_relevance",
+        }
+        return trigger_aliases.get(normalized, tag_name)
+
+    @staticmethod
+    def _link_weakness_mapping_to_followup(mapping, question):
+        update_fields = []
+        if mapping.followup_question_id != question.id:
+            mapping.followup_question_id = question.id
+            update_fields.append("followup_question_id")
+        if mapping.used_for != "followup":
+            mapping.used_for = "followup"
+            update_fields.append("used_for")
+        if not mapping.is_selected_for_followup:
+            mapping.is_selected_for_followup = True
+            update_fields.append("is_selected_for_followup")
+        if update_fields:
+            mapping.save(update_fields=tuple(update_fields))
     
     @classmethod
     def _get_ai_chain_service(cls):
@@ -216,8 +321,8 @@ class FollowupGenerator:
     def _build_source_reference(cls, selected_weakness_tag, followup_data=None):
         tag_name = selected_weakness_tag.get("tag_name") or "unknown"
         weakness_tag_id = (
-            selected_weakness_tag.get("weakness_tag_id")
-            or selected_weakness_tag.get("answer_weakness_tag_id")
+            selected_weakness_tag.get("answer_weakness_tag_id")
+            or selected_weakness_tag.get("weakness_tag_id")
             or "unknown"
         )
         prefix = "ai_chain" if cls._is_real_call_mode() else "ai_chain_mock"

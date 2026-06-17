@@ -30,9 +30,12 @@ from apps.interview.services.ai_chain_response_parser import (
     parse_llm_json_list,
     parse_llm_json_object,
 )
+from apps.prompt.services import get_runtime_prompt_version
 
 
 MAIN_QUESTION_TYPE = "main"
+PROMPT_SOURCE_DB = "db"
+PROMPT_SOURCE_FALLBACK = "fallback"
 
 ALLOWED_QUESTION_SOURCE_TYPES = {
     "jd",
@@ -268,8 +271,13 @@ class AIChainOpenAIEngine:
             return self.fallback_engine.generate_questions(payload)
 
         try:
+            prompt = self._resolve_system_prompt(
+                payload=payload,
+                prompt_type="question_generation",
+                fallback_builder=build_question_generation_system_prompt,
+            )
             raw_response = self._request_text(
-                system_prompt=build_question_generation_system_prompt(payload.get("persona")),
+                system_prompt=prompt["content"],
                 user_prompt=build_question_generation_user_prompt(payload),
                 temperature=0.3,
                 max_tokens=1600,
@@ -279,11 +287,12 @@ class AIChainOpenAIEngine:
             if not parsed:
                 raise ValueError("OpenAI question generation response is empty or invalid JSON.")
 
-            return self._normalize_question_generation_result(
+            result = self._normalize_question_generation_result(
                 parsed,
                 payload=payload,
                 fallback=None,
             )
+            return self._attach_prompt_metadata(result, prompt)
 
         except Exception as exc:
             raise AIChainOpenAIError(
@@ -296,8 +305,13 @@ class AIChainOpenAIEngine:
             return self.fallback_engine.judge_answer_sufficiency(payload)
 
         try:
+            prompt = self._resolve_system_prompt(
+                payload=payload,
+                prompt_type="answer_evaluation",
+                fallback_builder=build_answer_sufficiency_system_prompt,
+            )
             raw_response = self._request_text(
-                system_prompt=build_answer_sufficiency_system_prompt(payload.get("persona")),
+                system_prompt=prompt["content"],
                 user_prompt=build_answer_sufficiency_user_prompt(payload),
                 temperature=0.1,
                 max_tokens=1000,
@@ -311,10 +325,11 @@ class AIChainOpenAIEngine:
                 parsed,
                 fallback=None,
             )
-            return self._apply_local_followup_guardrails(
+            result = self._apply_local_followup_guardrails(
                 normalized,
                 payload,
             )
+            return self._attach_prompt_metadata(result, prompt)
 
         except Exception as exc:
             raise AIChainOpenAIError(
@@ -327,8 +342,13 @@ class AIChainOpenAIEngine:
             return self.fallback_engine.generate_followup_question(payload)
 
         try:
+            prompt = self._resolve_system_prompt(
+                payload=payload,
+                prompt_type="follow_up_generation",
+                fallback_builder=build_followup_system_prompt,
+            )
             raw_response = self._request_text(
-                system_prompt=build_followup_system_prompt(payload.get("persona")),
+                system_prompt=prompt["content"],
                 user_prompt=build_followup_user_prompt(payload),
                 temperature=0.3,
                 max_tokens=800,
@@ -338,11 +358,12 @@ class AIChainOpenAIEngine:
             if not parsed:
                 raise ValueError("OpenAI follow-up response is empty or invalid JSON.")
 
-            return self._normalize_followup_result(
+            result = self._normalize_followup_result(
                 parsed,
                 payload=payload,
                 fallback=None,
             )
+            return self._attach_prompt_metadata(result, prompt)
 
         except Exception as exc:
             raise AIChainOpenAIError(
@@ -352,6 +373,53 @@ class AIChainOpenAIEngine:
 
     def generate_followup_mock(self, payload: dict[str, Any]) -> dict[str, Any]:
         return self.fallback_engine.generate_followup_mock(payload)
+
+    def _resolve_system_prompt(
+        self,
+        *,
+        payload: dict[str, Any],
+        prompt_type: str,
+        fallback_builder: Callable[[Any], str],
+    ) -> dict[str, Any]:
+        persona = payload.get("persona")
+        runtime_prompt = get_runtime_prompt_version(
+            self._extract_persona_type(persona),
+            prompt_type,
+        )
+        if runtime_prompt is not None:
+            return {
+                "content": runtime_prompt.content,
+                "prompt_version_id": runtime_prompt.version_id,
+                "prompt_source": PROMPT_SOURCE_DB,
+            }
+
+        return {
+            "content": fallback_builder(persona),
+            "prompt_version_id": None,
+            "prompt_source": PROMPT_SOURCE_FALLBACK,
+        }
+
+    @staticmethod
+    def _extract_persona_type(persona: Any) -> str | None:
+        if isinstance(persona, dict):
+            return (
+                persona.get("persona_type")
+                or persona.get("type")
+                or persona.get("persona_id")
+                or persona.get("name")
+            )
+        return persona
+
+    @staticmethod
+    def _attach_prompt_metadata(
+        result: dict[str, Any],
+        prompt: dict[str, Any],
+    ) -> dict[str, Any]:
+        return {
+            **result,
+            "prompt_version_id": prompt["prompt_version_id"],
+            "prompt_source": prompt["prompt_source"],
+        }
 
     def _fallback_or_raise(self, fallback: dict[str, Any] | None, message: str) -> dict[str, Any]:
         if fallback is not None:

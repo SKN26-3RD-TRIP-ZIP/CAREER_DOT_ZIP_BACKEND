@@ -70,6 +70,15 @@ def get_score(value):
     return value or 0
 
 
+def _has_structured_bei_scores(bei: dict) -> bool:
+    required_keys = ("situation", "task", "action", "result")
+    return all(
+        isinstance(bei.get(key), dict)
+        and isinstance(bei[key].get("score"), (int, float))
+        for key in required_keys
+    )
+
+
 def _aggregate_tag_objects(evaluated_answers, mapping_attr, tag_attr):
     tag_map = {}
     for answer in evaluated_answers:
@@ -127,6 +136,7 @@ def generate_final_report(session):
     strength_desc_map: dict[str, str] = {}
     weakness_desc_map: dict[str, str] = {}
     bei_situations, bei_tasks, bei_actions, bei_results = [], [], [], []
+    structured_bei_count = 0
     cbi_levels: list = []
     cbi_scores: list = []
     speech_scores: list = []
@@ -158,6 +168,8 @@ def generate_final_report(session):
             sbert_scores.append(sum(sbert_sims) / len(sbert_sims))
 
         bei = eval_obj.bei_score if isinstance(eval_obj.bei_score, dict) else {}
+        if _has_structured_bei_scores(bei):
+            structured_bei_count += 1
         bei_situations.append(get_score(bei.get("situation")))
         bei_tasks.append(get_score(bei.get("task")))
         bei_actions.append(get_score(bei.get("action")))
@@ -283,7 +295,14 @@ def generate_final_report(session):
         speech_avg=speech_avg,
         persona=persona,
     )
-    overall_score = persona_weighted_score if n > 0 else overall_score
+    has_persona_weight_inputs = (
+        n > 0
+        and structured_bei_count == n
+        and len(cbi_scores) == n
+        and len(speech_scores) == n
+        and len(grounding_flags) == n
+    )
+    overall_score = persona_weighted_score if has_persona_weight_inputs else overall_score
 
     persona_feedback = {
         "persona": persona or "practical",
