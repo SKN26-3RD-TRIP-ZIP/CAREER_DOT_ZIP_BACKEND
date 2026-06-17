@@ -201,10 +201,13 @@ def generate_report_pdf(report) -> bytes:
         [Paragraph("평가 축", table_header_style), Paragraph("점수", table_header_style)]
     ]
     for key, label in metric_labels.items():
-        val = metrics.get(key, 0)
+        val = metrics.get(key)
+        # option-C: grounding_score 등은 해당 답변 유형이 없으면 None일 수 있다.
+        # f"{None:.1f}" 는 TypeError 이므로 숫자일 때만 포맷하고, 아니면 대시 표기.
+        val_text = f"{val:.1f}점" if isinstance(val, (int, float)) else "—"
         metric_rows.append([
             Paragraph(label, table_cell_style),
-            Paragraph(f"{val:.1f}점", table_cell_style),
+            Paragraph(val_text, table_cell_style),
         ])
     metric_table = Table(metric_rows, colWidths=["70%", "30%"])
     metric_table.setStyle(TableStyle([

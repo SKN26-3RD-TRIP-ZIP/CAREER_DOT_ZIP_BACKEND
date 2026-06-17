@@ -264,6 +264,88 @@ class TagRecommendedQuestionsView(APIView):
         )
 
 
+# E7.9+ -- 면접관 피드백 (페르소나 피드백 + 동적 태그 + 추천 질문 통합)
+class SessionFeedbackView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    _PERSONA_META = {
+        "practical": {"short_name": "실무형", "avatar_emoji": "💼"},
+        "coach":     {"short_name": "코치형", "avatar_emoji": "🎯"},
+        "verifier":  {"short_name": "검증형", "avatar_emoji": "🔎"},
+    }
+
+    def get_session(self, session_id):
+        try:
+            return InterviewSession.objects.get(id=session_id, user=self.request.user)
+        except InterviewSession.DoesNotExist:
+            return None
+
+    def get(self, request, session_id):
+        session = self.get_session(session_id)
+        if not session:
+            return Response({"detail": "Session not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        report = _get_existing_report(session)
+        if not report:
+            return Response({"detail": "Report not generated yet."}, status=status.HTTP_404_NOT_FOUND)
+
+        summary        = report.summary or {}
+        score_summary  = summary.get("score_summary", {})
+        persona_fb     = score_summary.get("persona_feedback", {})
+        triggered      = summary.get("dynamically_triggered_tags", {})
+        persona_type   = summary.get("evaluation_metadata", {}).get("persona_type", "practical")
+
+        p_meta = self._PERSONA_META.get(persona_type, {"short_name": persona_type, "avatar_emoji": "💼"})
+
+        # pros: strength_tags description (최대 3개)
+        pros = [
+            t.get("description") or t.get("tag_name", "")
+            for t in triggered.get("strength_tags", [])[:3]
+            if t.get("description") or t.get("tag_name")
+        ] or ["분석된 강점 데이터가 없습니다."]
+
+        # cons: weakness_tags description (최대 3개)
+        cons = [
+            t.get("description") or t.get("tag_name", "")
+            for t in triggered.get("weakness_tags", [])[:3]
+            if t.get("description") or t.get("tag_name")
+        ] or ["분석된 보완점 데이터가 없습니다."]
+
+        # 약점 태그 빈도 기반 추천 질문
+        rec_result = get_session_weakness_recommended_questions(session, total_limit=5)
+        expected_questions = [
+            {"order": i + 1, "text": q["question_text"]}
+            for i, q in enumerate(rec_result["recommended_questions"])
+        ]
+
+        # 페르소나별 추천 답변 구조
+        answer_structure_map = {
+            "practical": ["핵심 결론", "수치 근거", "트레이드오프", "결과"],
+            "coach":     ["상황", "행동", "배움", "성장"],
+            "verifier":  ["주장", "근거", "반례 검토", "결론"],
+        }
+
+        return Response(
+            {
+                "persona": {
+                    "short_name": p_meta["short_name"],
+                    "avatar_emoji": p_meta["avatar_emoji"],
+                    "total_score": report.overall_score or 0,
+                    "tags": [persona_fb.get("persona_label", p_meta["short_name"])],
+                },
+                "summary": " ".join(filter(None, [
+                    persona_fb.get("intro", ""),
+                    persona_fb.get("closing", ""),
+                ])) or "페르소나 피드백을 생성 중입니다.",
+                "pros": pros,
+                "cons": cons,
+                "recommended_answer_structure": answer_structure_map.get(persona_type, ["상황", "과제", "행동", "결과"]),
+                "expected_questions": expected_questions,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
 # E7.12 -- PDF 다운로드
 class ReportPDFDownloadView(APIView):
     permission_classes = [permissions.IsAuthenticated]
