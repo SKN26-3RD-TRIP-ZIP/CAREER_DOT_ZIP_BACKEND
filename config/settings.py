@@ -93,6 +93,8 @@ INSTALLED_APPS = [
     'apps.external',
     'apps.question_bank',
     'apps.analysis',
+    # 휴면 계정 스케줄러
+    'django_apscheduler',
 ]
 
 MIDDLEWARE = [

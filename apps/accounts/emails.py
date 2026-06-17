@@ -138,6 +138,83 @@ def send_verification_email(user) -> None:
     logger.info("verification email resent to user_id=%s", user.id)
 
 
+def send_dormancy_warning_email(user) -> None:
+    """30일 후 휴면 전환 예정 안내 메일을 발송한다. (150일 미접속 시점)"""
+    subject = "[Career.zip] 장기 미이용 안내 - 30일 후 휴면 전환 예정"
+    from_email = getattr(settings, "DEFAULT_FROM_EMAIL", "no-reply@career.zip")
+    frontend_base = getattr(settings, "FRONTEND_BASE_URL", "http://localhost:5173").rstrip("/")
+    login_url = f"{frontend_base}/login"
+
+    text_body = (
+        f"{user.name}님, Career.zip을 오랫동안 이용하지 않으셨습니다.\n\n"
+        f"마지막 접속으로부터 150일이 지났으며, 30일 후(총 180일 미접속 시) 계정이 자동으로 휴면 상태로 전환됩니다.\n\n"
+        f"계속 이용하시려면 아래 링크에서 로그인해 주세요:\n{login_url}\n\n"
+        f"휴면 전환 후에도 로그인하면 즉시 계정을 복구할 수 있습니다.\n\n"
+        f"문의: {SUPPORT_EMAIL}\n"
+    )
+
+    html_body = f"""\
+<div style="font-family:Apple SD Gothic Neo,Malgun Gothic,sans-serif;max-width:560px;margin:0 auto;color:#1f2937">
+  <h2 style="color:#253900">장기 미이용 안내</h2>
+  <p><strong>{user.name}</strong>님, Career.zip을 오랫동안 이용하지 않으셨습니다.</p>
+  <p>마지막 접속으로부터 <strong>150일</strong>이 지났으며,<br>
+     <strong>30일 후(총 180일 미접속 시) 계정이 자동으로 휴면 상태로 전환됩니다.</strong></p>
+  <p>계속 이용하시려면 아래 버튼을 눌러 로그인해 주세요.</p>
+  <p style="margin:24px 0">
+    <a href="{login_url}"
+       style="background:#08CB00;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:600">
+       로그인하기
+    </a>
+  </p>
+  <p style="font-size:13px;color:#6b7280">휴면 전환 후에도 로그인하면 즉시 계정을 복구할 수 있습니다.</p>
+  <hr style="border:none;border-top:1px solid #e5e7eb;margin:24px 0"/>
+  <p style="font-size:13px;color:#6b7280">문의: <a href="mailto:{SUPPORT_EMAIL}">{SUPPORT_EMAIL}</a></p>
+</div>
+"""
+
+    msg = EmailMultiAlternatives(subject, text_body, from_email, [user.email])
+    msg.attach_alternative(html_body, "text/html")
+    msg.send(fail_silently=False)
+    logger.info("dormancy warning email sent to user_id=%s", user.id)
+
+
+def send_dormancy_email(user) -> None:
+    """계정이 휴면 상태로 전환될 때 발송하는 알림 메일."""
+    subject = "[Career.zip] 계정이 휴면 상태로 전환되었습니다"
+    from_email = getattr(settings, "DEFAULT_FROM_EMAIL", "no-reply@career.zip")
+    frontend_base = getattr(settings, "FRONTEND_BASE_URL", "http://localhost:5173").rstrip("/")
+    login_url = f"{frontend_base}/login"
+
+    text_body = (
+        f"{user.name}님, Career.zip 계정이 휴면 상태로 전환되었습니다.\n\n"
+        f"마지막 접속으로부터 180일이 경과하여 계정이 휴면 처리되었습니다.\n\n"
+        f"다시 이용하시려면 아래 링크에서 로그인하면 계정이 즉시 복구됩니다:\n{login_url}\n\n"
+        f"문의: {SUPPORT_EMAIL}\n"
+    )
+
+    html_body = f"""\
+<div style="font-family:Apple SD Gothic Neo,Malgun Gothic,sans-serif;max-width:560px;margin:0 auto;color:#1f2937">
+  <h2 style="color:#253900">계정 휴면 안내</h2>
+  <p><strong>{user.name}</strong>님, Career.zip 계정이 <strong>휴면 상태</strong>로 전환되었습니다.</p>
+  <p>마지막 접속으로부터 <strong>180일</strong>이 경과하여 계정이 자동으로 휴면 처리되었습니다.</p>
+  <p>다시 이용하시려면 아래 버튼을 눌러 로그인해 주세요. 로그인 즉시 계정이 복구됩니다.</p>
+  <p style="margin:24px 0">
+    <a href="{login_url}"
+       style="background:#08CB00;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:600">
+       로그인하여 계정 복구
+    </a>
+  </p>
+  <hr style="border:none;border-top:1px solid #e5e7eb;margin:24px 0"/>
+  <p style="font-size:13px;color:#6b7280">문의: <a href="mailto:{SUPPORT_EMAIL}">{SUPPORT_EMAIL}</a></p>
+</div>
+"""
+
+    msg = EmailMultiAlternatives(subject, text_body, from_email, [user.email])
+    msg.attach_alternative(html_body, "text/html")
+    msg.send(fail_silently=False)
+    logger.info("dormancy email sent to user_id=%s", user.id)
+
+
 def send_admin_signup_notification(user, signup_method: str = "email") -> None:
     """관리자에게 신규 가입 알림 메일을 발송한다. (민감정보 미포함)"""
     admin_email = getattr(settings, "ADMIN_NOTIFICATION_EMAIL", "")

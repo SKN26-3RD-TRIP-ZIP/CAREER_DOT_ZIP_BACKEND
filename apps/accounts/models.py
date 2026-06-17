@@ -88,6 +88,7 @@ class User(AbstractBaseUser, PermissionsMixin):
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='active')
     is_staff = models.BooleanField(default=False)
     is_active = models.BooleanField(default=True)
+    dormancy_warning_sent_at = models.DateTimeField(null=True, blank=True, default=None)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     

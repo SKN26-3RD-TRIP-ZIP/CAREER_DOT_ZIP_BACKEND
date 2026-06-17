@@ -225,6 +225,16 @@ class LoginView(APIView):
         if serializer.is_valid():
             user = serializer.validated_data['user']
             update_last_login(None, user)
+            update_fields = []
+            if user.status == "dormant":
+                user.status = "active"
+                update_fields.append("status")
+            if user.dormancy_warning_sent_at is not None:
+                user.dormancy_warning_sent_at = None
+                update_fields.append("dormancy_warning_sent_at")
+            if update_fields:
+                update_fields.append("updated_at")
+                user.save(update_fields=update_fields)
             refresh = RefreshToken.for_user(user)
             access_token = str(refresh.access_token)
 
