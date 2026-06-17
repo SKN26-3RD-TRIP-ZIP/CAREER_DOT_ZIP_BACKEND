@@ -5,6 +5,8 @@ from collections import Counter
 from django.utils import timezone
 
 from apps.evaluation.services.session_evaluation import evaluate_session_answers
+from apps.evaluation.services.sufficiency_bridge import get_answer_text_for_evaluation
+from apps.report.services.improvement_suggester import generate_improvement_suggestions
 
 logger = logging.getLogger("feedback_ai.report_generator")
 
@@ -49,18 +51,30 @@ def _get_persona_config(persona: str | None) -> dict:
 def _apply_persona_weights(
     bei_avg: float,
     cbi_avg: float,
-    grounding_avg: float,
+    grounding_avg: float | None,
     speech_avg: float,
     persona: str | None,
 ) -> float:
     cfg = _get_persona_config(persona)
     w = cfg["weights"]
-    raw = (
-        bei_avg * w["bei"]
-        + cbi_avg * w["cbi"]
-        + grounding_avg * w["grounding"]
-        + speech_avg * w["speech"]
-    )
+    # option-C: grounding_avg가 None이면(기술 답변 없는 세션) 해당 가중치를
+    # 제외하고 나머지 가중치를 정규화해 100점 만점 유지.
+    if grounding_avg is None:
+        active_weight = 1.0 - w["grounding"]
+        if active_weight <= 0:
+            active_weight = 1.0
+        raw = (
+            bei_avg * w["bei"]
+            + cbi_avg * w["cbi"]
+            + speech_avg * w["speech"]
+        ) / active_weight
+    else:
+        raw = (
+            bei_avg * w["bei"]
+            + cbi_avg * w["cbi"]
+            + grounding_avg * w["grounding"]
+            + speech_avg * w["speech"]
+        )
     return min(round(raw, 1), 100.0)
 
 
@@ -176,15 +190,30 @@ def generate_final_report(session):
         if speech_delivery.get("speech_score") is not None:
             speech_scores.append(speech_delivery["speech_score"])
 
-        grounding_block = score_detail.get("grounding", {})
-        if isinstance(grounding_block, dict) and "is_grounded" in grounding_block:
-            grounding_flags.append(bool(grounding_block.get("is_grounded")))
+        # E7 option-C: 기술 근거(grounding)가 의미 있는 세션에만 집계.
+        # 인성면접 답변은 tech_stack/수치 근거가 원천적으로 없어 is_grounded가
+        # 항상 False → grounding_score 왜곡. 따라서 personality 세션은 분모에서 제외
+        # (grounding_avg=None → 레이더/가중치에서 제거).
+        #
+        # ⚠️ 주의: 분류 기준은 세션의 interview_type 이다.
+        #   InterviewQuestion.question_type 은 'main'/'follow_up' 값만 가지며
+        #   'technical' 값을 갖지 않는다(질문 단위 기술/인성 구분은 스키마에 없음).
+        #   과거 `ans.question.question_type == "technical"` 비교는 항상 False라
+        #   모든 세션에서 grounding이 None이 되는 버그였다.
+        if session.interview_type in ("technical", "comprehensive"):
+            grounding_block = score_detail.get("grounding", {})
+            if isinstance(grounding_block, dict) and "is_grounded" in grounding_block:
+                grounding_flags.append(bool(grounding_block.get("is_grounded")))
 
     top_strength_names = [name for name, _ in strength_counter.most_common(5)]
     top_weakness_names = [name for name, _ in weakness_counter.most_common(5)]
 
     total_filler_count = 0
     global_filler_words_counter: Counter = Counter()
+    # E7.6 — pause_analysis 집계
+    total_long_pause_count = 0
+    pause_pattern_counter: Counter = Counter()
+    answers_with_pause = 0
     for ans in evaluated_answers:
         filler_data = getattr(ans.evaluation, "filler_words", {}) or {}
         if isinstance(filler_data, dict):
@@ -193,6 +222,14 @@ def generate_final_report(session):
             if isinstance(counts, dict):
                 for word, cnt in counts.items():
                     global_filler_words_counter[word] += cnt
+
+        pause_data = getattr(ans.evaluation, "pause_analysis", {}) or {}
+        if isinstance(pause_data, dict) and pause_data:
+            answers_with_pause += 1
+            total_long_pause_count += pause_data.get("long_pause_count", 0)
+            severity = pause_data.get("pause_severity")
+            if severity and severity != "none":
+                pause_pattern_counter[severity] += 1
 
     n = len(evaluated_answers)
     avg_fillers_per_answer = round(total_filler_count / n, 2) if n else 0
@@ -267,8 +304,11 @@ def generate_final_report(session):
         }
 
     # E7 리뷰 #3 — 실제 grounding 지표: is_grounded 비율 × 100.
-    # (기존엔 final_tech_score 평균을 grounding_score로 잘못 노출하고 있었음)
-    grounding_avg = round(sum(grounding_flags) / len(grounding_flags) * 100, 1) if grounding_flags else 0.0
+    # option-C: 기술 답변이 없는 세션(인성면접 전용)은 None → overall_score 가중치에서 제외.
+    grounding_avg: float | None = (
+        round(sum(grounding_flags) / len(grounding_flags) * 100, 1)
+        if grounding_flags else None
+    )
     technical_avg = round((sum(sbert_scores) / len(sbert_scores)) * 100, 1) if sbert_scores else 0.0
     strength_tags = _aggregate_tag_objects(evaluated_answers, "strength_mappings", "strength_tag")
     weakness_tags = _aggregate_tag_objects(evaluated_answers, "weakness_mappings", "weakness_tag")
@@ -295,26 +335,74 @@ def generate_final_report(session):
         "persona_weights": persona_cfg["weights"],
     }
 
+    # ── 질문별 개선 액션 ────────────────────────────────────────────────
+    # 1차로 약점 태그 템플릿 기반 폴백 문구를 만들고,
+    # 2차로 LLM이 질문별 맞춤 개선 문구를 생성하면 그 값으로 대체한다.
+    # (LLM 실패/mock 시에는 템플릿 폴백 유지 → 리포트는 항상 생성된다.)
     question_breakdown: list[dict] = []
+    suggester_inputs: list[dict] = []
     for ans in evaluated_answers:
         q = ans.question
         eval_obj = ans.evaluation
         q_score = getattr(eval_obj, "final_tech_score", None)
         wmaps = list(ans.weakness_mappings.all())
-        improvement_action = ""
+
+        # 폴백용 템플릿 문구(기존 동작) — 최우선순위 약점 태그의 reason/description
+        fallback_action = ""
+        weakness_descs: list[str] = []
         if wmaps:
-            top_wm = sorted(wmaps, key=lambda m: getattr(m, "priority_rank", 99) or 99)[0]
-            improvement_action = top_wm.reason or (
+            ordered = sorted(wmaps, key=lambda m: getattr(m, "priority_rank", 99) or 99)
+            top_wm = ordered[0]
+            fallback_action = top_wm.reason or (
                 top_wm.weakness_tag.description if top_wm.weakness_tag else ""
             )
+            for m in ordered:
+                desc = (m.reason or (m.weakness_tag.description if m.weakness_tag else "")).strip()
+                if desc and desc not in weakness_descs:
+                    weakness_descs.append(desc)
+
+        # grounding 누락 항목 추출(LLM 컨텍스트 보강용)
+        sd = eval_obj.score_detail if isinstance(eval_obj.score_detail, dict) else {}
+        grounding_block = sd.get("grounding", {}) if isinstance(sd.get("grounding"), dict) else {}
+        grounding_gaps = [
+            label for label, key in (
+                ("기술스택 근거", "tech_stack"),
+                ("개선 전 수치", "before_metric"),
+                ("개선 후 수치", "after_metric"),
+            )
+            if str(grounding_block.get(key, "")).strip() in ("", "확인 불가")
+        ]
+
+        qid = str(q.id)
         question_breakdown.append({
-            "question_id": str(q.id),
+            "question_id": qid,
             "order": q.order_index,
             "question_type": q.question_type,
             "question_text": q.question_text,
-            "improvement_action": improvement_action,
+            "improvement_action": fallback_action,  # LLM 성공 시 아래에서 덮어씀
             "score": q_score if q_score is not None else 0,
         })
+        try:
+            answer_text = get_answer_text_for_evaluation(ans)
+        except Exception:
+            answer_text = ""
+        suggester_inputs.append({
+            "question_id": qid,
+            "question_text": q.question_text,
+            "answer_text": answer_text,
+            "weaknesses": weakness_descs,
+            "grounding_gaps": grounding_gaps,
+            "score": q_score if q_score is not None else 0,
+        })
+
+    # LLM 배치 호출(리포트당 1회). 실패/mock 시 빈 dict → 템플릿 폴백 유지.
+    llm_suggestions = generate_improvement_suggestions(suggester_inputs)
+    if llm_suggestions:
+        for item in question_breakdown:
+            suggestion = llm_suggestions.get(item["question_id"])
+            if suggestion:
+                item["improvement_action"] = suggestion
+
     question_breakdown.sort(key=lambda item: item["order"])
 
     return {
@@ -356,6 +444,12 @@ def generate_final_report(session):
                 "total_filler_count": total_filler_count,
                 "avg_fillers_per_answer": avg_fillers_per_answer,
                 "filler_word_distribution": dict(global_filler_words_counter),
+                # E7.6 — 세션 전체 휴지 패턴 집계
+                "pause_summary": {
+                    "total_long_pause_count": total_long_pause_count,
+                    "avg_long_pause_per_answer": round(total_long_pause_count / answers_with_pause, 2) if answers_with_pause else 0,
+                    "severity_distribution": dict(pause_pattern_counter),  # e.g. {"moderate": 2, "high": 1}
+                },
             },
         },
         "dynamically_triggered_tags": {
