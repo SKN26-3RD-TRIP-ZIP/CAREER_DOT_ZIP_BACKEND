@@ -373,10 +373,13 @@ def generate_final_report(session):
             ordered = sorted(wmaps, key=lambda m: getattr(m, "priority_rank", 99) or 99)
             top_wm = ordered[0]
             fallback_action = top_wm.reason or (
-                top_wm.weakness_tag.description if top_wm.weakness_tag else ""
+                (top_wm.weakness_tag.description or "") if top_wm.weakness_tag else ""
             )
             for m in ordered:
-                desc = (m.reason or (m.weakness_tag.description if m.weakness_tag else "")).strip()
+                raw_desc = m.reason or (
+                    (m.weakness_tag.description or "") if m.weakness_tag else ""
+                )
+                desc = str(raw_desc).strip()
                 if desc and desc not in weakness_descs:
                     weakness_descs.append(desc)
 

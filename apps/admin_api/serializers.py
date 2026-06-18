@@ -5,6 +5,7 @@ from .models import AuditLog
 
 
 User = get_user_model()
+ADMIN_MEMBER_STATUS_CHOICES = tuple(User.STATUS_CHOICES) + (('suspended', 'Suspended'),)
 
 
 class PageQuerySerializer(serializers.Serializer):
@@ -13,7 +14,7 @@ class PageQuerySerializer(serializers.Serializer):
 
 
 class MemberListQuerySerializer(PageQuerySerializer):
-    status = serializers.ChoiceField(choices=User.STATUS_CHOICES, required=False)
+    status = serializers.ChoiceField(choices=ADMIN_MEMBER_STATUS_CHOICES, required=False)
     search = serializers.CharField(required=False, max_length=255, allow_blank=True)
 
 
@@ -39,7 +40,7 @@ class MemberListSerializer(serializers.ModelSerializer):
 
 
 class MemberStatusSerializer(serializers.Serializer):
-    status = serializers.ChoiceField(choices=User.STATUS_CHOICES)
+    status = serializers.ChoiceField(choices=ADMIN_MEMBER_STATUS_CHOICES)
 
 
 class MemberInviteSerializer(serializers.Serializer):

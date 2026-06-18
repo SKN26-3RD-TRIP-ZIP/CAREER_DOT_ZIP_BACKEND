@@ -23,3 +23,19 @@ class AuditLog(models.Model):
 
     def __str__(self):
         return f'{self.action_type}: {self.target_type} {self.target_id}'
+
+
+class LlmUsageLog(models.Model):
+    model = models.CharField(max_length=64)
+    prompt_tokens = models.IntegerField()
+    completion_tokens = models.IntegerField()
+    created_at = models.DateTimeField(auto_now_add=True)
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+    )
+
+    class Meta:
+        db_table = 'llm_usage_log'
