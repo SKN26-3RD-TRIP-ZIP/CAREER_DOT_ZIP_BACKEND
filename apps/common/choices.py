@@ -25,6 +25,12 @@ QUESTION_TYPE_CHOICES = [
     ("follow_up", "꼬리질문"),
 ]
 
+QUESTION_CATEGORY_CHOICES = [
+    ("technical", "Technical"),
+    ("personality", "Personality"),
+    ("general", "General"),
+]
+
 ANSWER_SOURCE_CHOICES = [
     ("text", "텍스트"),
     ("stt", "음성 인식"),
