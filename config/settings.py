@@ -58,7 +58,12 @@ INTERVIEW_AI_OPENAI_ENABLE_REAL_CALL = _env_bool(
 SECRET_KEY = 'django-insecure-9cne6oo*j3&x+@c$--or6%i_caj((p(33^#kzc#&tni=2a2x$r'
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+# 운영(prod)에서는 .env 에 DEBUG=False 를 주입한다. 로컬 기본값은 True.
+DEBUG = _env_bool('DEBUG', True)
+
+# SECURITY: SECRET_KEY 는 .env 의 값을 우선 사용한다.
+# (.env 에 SECRET_KEY 미설정 시에만 위에서 정의된 로컬 개발용 기본값을 사용)
+SECRET_KEY = os.getenv('SECRET_KEY', SECRET_KEY)
 
 ALLOWED_HOSTS = [
     host.strip()
@@ -160,15 +165,23 @@ else:
 AUTH_PASSWORD_VALIDATORS = [
     {
         'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator',
+        # 이메일/이름이 포함된 비밀번호 차단 (Custom User 는 name 필드 사용)
+        'OPTIONS': {'user_attributes': ('email', 'name')},
     },
     {
         'NAME': 'django.contrib.auth.password_validation.MinimumLengthValidator',
+        'OPTIONS': {'min_length': 8},
     },
     {
         'NAME': 'django.contrib.auth.password_validation.CommonPasswordValidator',
     },
     {
         'NAME': 'django.contrib.auth.password_validation.NumericPasswordValidator',
+    },
+    {
+        # 영문/숫자/특수문자 조합 + 동일문자 3연속 금지 (qwer1234 등 차단)
+        'NAME': 'apps.accounts.validators.PasswordComplexityValidator',
+        'OPTIONS': {'min_length': 8},
     },
 ]
 
@@ -211,6 +224,20 @@ CORS_ALLOWED_ORIGINS = [
     ).split(",")
     if origin.strip()
 ]
+
+# ===== CSRF (운영 HTTPS / 크로스도메인 대비) =====
+# 운영에서는 .env 의 CSRF_TRUSTED_ORIGINS 에 프론트 도메인을 등록한다. (예: https://app.career.zip)
+CSRF_TRUSTED_ORIGINS = [
+    origin.strip()
+    for origin in os.getenv("CSRF_TRUSTED_ORIGINS", "").split(",")
+    if origin.strip()
+]
+
+# ===== refresh_token 쿠키 보안 (로컬/운영 분리) =====
+# 로컬(HTTP): SECURE=False, SAMESITE=Lax.
+# 운영(HTTPS): .env 로 REFRESH_COOKIE_SECURE=True 주입. 프론트/백 도메인이 다르면 SAMESITE=None 필요.
+REFRESH_COOKIE_SECURE = _env_bool("REFRESH_COOKIE_SECURE", False)
+REFRESH_COOKIE_SAMESITE = os.getenv("REFRESH_COOKIE_SAMESITE", "Lax")
 
 # ===== DRF Settings =====
 REST_FRAMEWORK = {
@@ -275,6 +302,15 @@ FRONTEND_BASE_URL = os.getenv("FRONTEND_BASE_URL", "http://localhost:5173")
 # 이메일 인증 토큰 만료 (초) — 기본 24시간
 EMAIL_VERIFICATION_TOKEN_MAX_AGE = int(
     os.getenv("EMAIL_VERIFICATION_TOKEN_MAX_AGE", str(60 * 60 * 24))
+)
+
+# ===== 이메일 인증번호(코드) 정책 =====
+# Gmail 등 수신 지연을 고려해 만료를 10분(600초)으로 둔다. (보안상 30분 이상은 비권장)
+# 재발송 쿨다운 60초 / 최대 시도 5회 유지. 모두 .env 로 재정의 가능.
+EMAIL_CODE_TTL_SECONDS = int(os.getenv("EMAIL_CODE_TTL_SECONDS", "600"))
+EMAIL_CODE_MAX_ATTEMPTS = int(os.getenv("EMAIL_CODE_MAX_ATTEMPTS", "5"))
+EMAIL_CODE_RESEND_COOLDOWN_SECONDS = int(
+    os.getenv("EMAIL_CODE_RESEND_COOLDOWN_SECONDS", "60")
 )
 
 # ===== 로깅 (메일/인증 실패 추적) =====

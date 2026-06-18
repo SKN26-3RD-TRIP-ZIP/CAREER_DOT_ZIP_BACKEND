@@ -75,11 +75,15 @@ def send_verification_code_email(user, code: str) -> None:
     """6자리 이메일 인증번호를 발송한다. (코드 방식) 코드는 로그에 남기지 않는다."""
     subject = "[Career.zip] 이메일 인증번호 안내"
     from_email = getattr(settings, "DEFAULT_FROM_EMAIL", "no-reply@career.zip")
+    # 유효시간은 settings.EMAIL_CODE_TTL_SECONDS 와 동기화한다(현재 10분).
+    ttl_min = max(1, int(getattr(settings, "EMAIL_CODE_TTL_SECONDS", 600)) // 60)
 
     text_body = (
         f"{user.name}님, Career.zip 이메일 인증번호를 안내드립니다.\n\n"
         f"인증번호: {code}\n\n"
-        f"인증 화면에 위 6자리 번호를 입력해 주세요. (유효시간 5분)\n"
+        f"인증 화면에 위 6자리 번호를 입력해 주세요. (유효시간 {ttl_min}분)\n"
+        f"메일이 늦게 도착할 수 있습니다(특히 Gmail). 도착 후 바로 입력해 주세요.\n"
+        f"번호가 만료되었다면 인증 화면에서 재전송할 수 있습니다.\n"
         f"본인이 요청하지 않았다면 이 메일을 무시하셔도 됩니다.\n\n"
         f"문의: {SUPPORT_EMAIL}\n"
     )
@@ -87,7 +91,7 @@ def send_verification_code_email(user, code: str) -> None:
     html_body = f"""\
 <div style="font-family:Apple SD Gothic Neo,Malgun Gothic,sans-serif;max-width:560px;margin:0 auto;color:#1f2937">
   <h2 style="color:#253900">이메일 인증번호 안내</h2>
-  <p><strong>{user.name}</strong>님, 아래 6자리 인증번호를 인증 화면에 입력해 주세요. (유효시간 5분)</p>
+  <p><strong>{user.name}</strong>님, 아래 6자리 인증번호를 인증 화면에 입력해 주세요. (유효시간 {ttl_min}분)</p>
   <p style="margin:24px 0;text-align:center">
     <span style="display:inline-block;background:#EEEEEE;color:#253900;font-size:32px;font-weight:700;letter-spacing:8px;padding:16px 24px;border-radius:12px">{code}</span>
   </p>
