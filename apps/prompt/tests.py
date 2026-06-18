@@ -194,7 +194,21 @@ class SeedInterviewPromptsCommandTests(APITestCase):
             ):
                 runtime_prompt = get_runtime_prompt_version(persona_type, prompt_type)
                 self.assertIsNotNone(runtime_prompt)
-                self.assertIn('Return only a JSON object', runtime_prompt.content)
+                self.assertIn('반드시 JSON object만 반환하세요.', runtime_prompt.content)
+
+        question_prompt = get_runtime_prompt_version('coach', 'question_generation')
+        self.assertIn('question_text', question_prompt.content)
+        self.assertIn('question_category', question_prompt.content)
+        self.assertIn('source_tags', question_prompt.content)
+        self.assertIn('한국어 면접 질문', question_prompt.content)
+
+        answer_prompt = get_runtime_prompt_version('coach', 'answer_evaluation')
+        self.assertIn('selected_weakness_tag', answer_prompt.content)
+        self.assertIn('next_action', answer_prompt.content)
+
+        followup_prompt = get_runtime_prompt_version('coach', 'follow_up_generation')
+        self.assertIn('followup_question', followup_prompt.content)
+        self.assertIn('selected_weakness_tag', followup_prompt.content)
 
         first_template_ids = set(PromptTemplate.objects.values_list('id', flat=True))
         first_version_ids = set(PromptVersion.objects.values_list('id', flat=True))
@@ -207,3 +221,90 @@ class SeedInterviewPromptsCommandTests(APITestCase):
         self.assertEqual(PromptVersion.objects.count(), 9)
         self.assertEqual(first_template_ids, set(PromptTemplate.objects.values_list('id', flat=True)))
         self.assertEqual(first_version_ids, set(PromptVersion.objects.values_list('id', flat=True)))
+
+    def test_seed_reuses_existing_persona_prompt_type_template(self):
+        persona = PersonaConfig.objects.create(persona_type='coach')
+        template = PromptTemplate.objects.create(
+            persona_config=persona,
+            title='코치형 템플릿 1',
+            prompt_type='question_generation',
+        )
+        version = PromptVersion.objects.create(
+            template=template,
+            version_number=1,
+            content='코치형 템플릿 1',
+        )
+        template.default_version = version
+        template.save(update_fields=('default_version', 'updated_at'))
+        persona.active_template = template
+        persona.save(update_fields=('active_template', 'updated_at'))
+
+        call_command('seed_interview_prompts', stdout=StringIO())
+
+        persona.refresh_from_db()
+        template.refresh_from_db()
+        version.refresh_from_db()
+
+        self.assertEqual(
+            PromptTemplate.objects.filter(
+                persona_config=persona,
+                prompt_type='question_generation',
+            ).count(),
+            1,
+        )
+        self.assertEqual(persona.active_template_id, template.id)
+        self.assertEqual(template.title, '기본 면접 질문 생성 프롬프트 (coach)')
+        self.assertTrue(template.is_active)
+        self.assertEqual(template.default_version_id, version.id)
+        self.assertIn('반드시 JSON object만 반환하세요.', version.content)
+        self.assertIn('question_category', version.content)
+
+    def test_seed_dedupe_deactivates_duplicate_templates_in_seed_scope(self):
+        persona = PersonaConfig.objects.create(persona_type='coach')
+        keep_template = PromptTemplate.objects.create(
+            persona_config=persona,
+            title='활성 질문 템플릿',
+            prompt_type='question_generation',
+            is_active=True,
+        )
+        keep_version = PromptVersion.objects.create(
+            template=keep_template,
+            version_number=1,
+            content='활성 질문 템플릿',
+        )
+        keep_template.default_version = keep_version
+        keep_template.save(update_fields=('default_version', 'updated_at'))
+        duplicate_template = PromptTemplate.objects.create(
+            persona_config=persona,
+            title='Seed Interview Question Generation (coach)',
+            prompt_type='question_generation',
+            is_active=True,
+        )
+        PromptVersion.objects.create(
+            template=duplicate_template,
+            version_number=1,
+            content='old english prompt',
+        )
+        persona.active_template = keep_template
+        persona.save(update_fields=('active_template', 'updated_at'))
+
+        call_command('seed_interview_prompts', '--dedupe', stdout=StringIO())
+
+        keep_template.refresh_from_db()
+        duplicate_template.refresh_from_db()
+        persona.refresh_from_db()
+
+        self.assertTrue(keep_template.is_active)
+        self.assertFalse(duplicate_template.is_active)
+        self.assertEqual(persona.active_template_id, keep_template.id)
+        self.assertEqual(
+            PromptTemplate.objects.filter(
+                persona_config=persona,
+                prompt_type='question_generation',
+                is_active=True,
+            ).count(),
+            1,
+        )
+        runtime_prompt = get_runtime_prompt_version('coach', 'question_generation')
+        self.assertEqual(runtime_prompt.version_id, keep_template.default_version_id)
+        self.assertIn('반드시 JSON object만 반환하세요.', runtime_prompt.content)
