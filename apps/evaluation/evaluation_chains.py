@@ -22,6 +22,10 @@ client = OpenAI(api_key=openai_key)
 USE_MOCK = getattr(settings, "OPENAI_USE_MOCK", False)
 
 
+def _use_mock() -> bool:
+    return getattr(settings, "OPENAI_USE_MOCK", False)
+
+
 def fetch_grounding(answer_text: str) -> dict:
     try:
         res = client.chat.completions.create(
@@ -36,7 +40,7 @@ def fetch_grounding(answer_text: str) -> dict:
         return json.loads(res.choices[0].message.content)
     except Exception as e:
         logger.error(f"OpenAI fetch_grounding failed: {str(e)}", exc_info=True)
-        if not USE_MOCK:
+        if not _use_mock():
             # real mode: 예외를 그대로 전파 → session_evaluation이 per-answer 격리 처리
             raise
         # mock mode에서만 fallback 허용
@@ -65,7 +69,7 @@ def fetch_competency(answer_text: str) -> dict:
 
     except Exception as e:
         logger.error(f"OpenAI fetch_competency failed: {str(e)}", exc_info=True)
-        if not USE_MOCK:
+        if not _use_mock():
             # real mode: 예외를 그대로 전파 → session_evaluation이 per-answer 격리 처리
             raise
         # mock mode에서만 fallback 허용
@@ -127,7 +131,7 @@ def fetch_emotion_intent(answer_text: str) -> dict:
 
     except Exception as e:
         logger.error(f"OpenAI fetch_emotion_intent failed: {str(e)}", exc_info=True)
-        if not USE_MOCK:
+        if not _use_mock():
             raise
         return {
             "emotion_labels": {"neutral": 1.0},

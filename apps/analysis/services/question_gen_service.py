@@ -13,7 +13,7 @@ Pipeline 3 - ③ LLM 예상 질문 생성
 """
 
 import json
-from .utils import get_client, clean_json
+from .utils import get_client, clean_json, log_llm_usage
 
 
 def generate_questions(
@@ -111,6 +111,7 @@ def generate_questions(
             },
         ],
     )
+    log_llm_usage(response)
 
     data = json.loads(clean_json(response.choices[0].message.content))
 

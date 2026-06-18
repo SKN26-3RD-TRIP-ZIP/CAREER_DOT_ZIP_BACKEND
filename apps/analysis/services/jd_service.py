@@ -10,7 +10,7 @@ Pipeline 1 - ① JD 분석
 """
 
 import json
-from .utils import get_client, clean_json
+from .utils import get_client, clean_json, log_llm_usage
 
 
 def extract_jd_keywords(jd_text: str, model: str = "gpt-4o-mini") -> dict:
@@ -60,6 +60,7 @@ def extract_jd_keywords(jd_text: str, model: str = "gpt-4o-mini") -> dict:
             },
         ],
     )
+    log_llm_usage(response)
     raw    = clean_json(response.choices[0].message.content)
     result = json.loads(raw)
 
@@ -130,6 +131,7 @@ def extract_jd_requirements(jd_text: str, model: str = "gpt-4o-mini") -> dict:
             },
         ],
     )
+    log_llm_usage(response)
     raw    = clean_json(response.choices[0].message.content)
     result = json.loads(raw)
 

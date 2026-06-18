@@ -469,6 +469,9 @@ class AIChainOpenAIEngine:
             max_tokens=max_tokens,
         )
 
+        from apps.analysis.services.utils import log_llm_usage
+        log_llm_usage(response)
+
         if not getattr(response, "choices", None):
             return ""
 
@@ -528,6 +531,9 @@ class AIChainOpenAIEngine:
                     "client_question_key": question.get("client_question_key") or f"q_{index:03d}",
                     "question_text": question_text,
                     "question_type": MAIN_QUESTION_TYPE,
+                    "question_category": self._normalize_question_category(
+                        question.get("question_category") or question.get("question_type")
+                    ),
                     "difficulty": question.get("difficulty"),
                     "order_index": int(question.get("order_index") or index),
                     "generation_reason": question.get(
@@ -550,6 +556,23 @@ class AIChainOpenAIEngine:
     def _normalize_question_source_type(self, source_type: Any) -> str:
         normalized_source_type = str(source_type or "general").strip().lower()
         return QUESTION_SOURCE_TYPE_ALIASES.get(normalized_source_type, "general")
+
+    def _normalize_question_category(self, question_category: Any) -> str:
+        normalized = str(question_category or "general").strip().lower()
+        aliases = {
+            "technical": "technical",
+            "tech": "technical",
+            "coding": "technical",
+            "personality": "personality",
+            "behavioral": "personality",
+            "behavioural": "personality",
+            "experience": "personality",
+            "job": "general",
+            "main": "general",
+            "general": "general",
+            "other": "general",
+        }
+        return aliases.get(normalized, "general")
 
     def _normalize_source_tags(self, source_tags: list[Any]) -> list[dict[str, Any]]:
         normalized = []

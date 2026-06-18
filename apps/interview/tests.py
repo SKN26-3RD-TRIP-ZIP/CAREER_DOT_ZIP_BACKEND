@@ -749,8 +749,11 @@ class FakeFollowupAIChainService:
     def __init__(self, *, fail=False, sufficiency_result=None):
         self.fail = fail
         self.sufficiency_result = sufficiency_result
+        self.sufficiency_call_count = 0
+        self.followup_call_count = 0
 
     def judge_answer_sufficiency(self, payload):
+        self.sufficiency_call_count += 1
         if self.fail:
             raise AIChainOpenAIError('followup_generation', 'followup failed')
         if self.sufficiency_result is not None:
@@ -765,6 +768,7 @@ class FakeFollowupAIChainService:
         }
 
     def generate_followup_question(self, payload):
+        self.followup_call_count += 1
         if self.fail:
             raise AIChainOpenAIError('followup_generation', 'followup failed')
         return {
@@ -836,6 +840,110 @@ class MVPAnswerFollowupRealModeAPITests(APITestCase):
             'mvp-answer-followup-create',
             kwargs={'answer_id': self.answer.id},
         )
+
+    def test_sufficient_answer_does_not_call_followup_generation_llm(self):
+        service = FakeFollowupAIChainService(
+            sufficiency_result={
+                'next_action': 'NEXT_QUESTION',
+                'should_generate_followup': False,
+                'selected_weakness_tag': None,
+                'prompt_source': 'db',
+                'prompt_version_id': 123,
+            },
+        )
+
+        with patch(
+            'apps.interview.services.follow_up_generator.FollowupGenerator._get_ai_chain_service',
+            return_value=service,
+        ):
+            response = self.client.post(self.followup_url(), {}, format='json')
+            second = self.client.post(self.followup_url(), {}, format='json')
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['next_action'], 'NEXT_QUESTION')
+        self.assertIsNone(response.data['followup_question'])
+        self.assertEqual(second.status_code, status.HTTP_200_OK)
+        self.assertEqual(second.data['next_action'], 'NEXT_QUESTION')
+        self.assertIsNone(second.data['followup_question'])
+        self.assertEqual(service.sufficiency_call_count, 1)
+        self.assertEqual(service.followup_call_count, 0)
+        self.assertFalse(
+            InterviewQuestion.objects.filter(
+                session=self.session,
+                question_type='follow_up',
+            ).exists()
+        )
+
+    def test_existing_followup_skips_sufficiency_and_generation_calls(self):
+        existing = InterviewQuestion.objects.create(
+            session=self.session,
+            order_index=2,
+            question_type='follow_up',
+            question_text='Existing follow-up question.',
+            source_type='general',
+            source_reference='ai_chain:existing',
+            parent_question=self.question,
+            source_answer=self.answer,
+        )
+        service = FakeFollowupAIChainService()
+
+        with patch(
+            'apps.interview.services.follow_up_generator.FollowupGenerator._get_ai_chain_service',
+            return_value=service,
+        ):
+            response = self.client.post(self.followup_url(), {}, format='json')
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['next_action'], 'GENERATE_FOLLOWUP')
+        self.assertEqual(
+            response.data['followup_question']['question_id'],
+            str(existing.id),
+        )
+        self.assertEqual(service.sufficiency_call_count, 0)
+        self.assertEqual(service.followup_call_count, 0)
+
+    def test_short_answer_calls_sufficiency_and_followup_generation_once(self):
+        service = FakeFollowupAIChainService()
+
+        with patch(
+            'apps.interview.services.follow_up_generator.FollowupGenerator._get_ai_chain_service',
+            return_value=service,
+        ):
+            response = self.client.post(self.followup_url(), {}, format='json')
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data['next_action'], 'GENERATE_FOLLOWUP')
+        self.assertEqual(service.sufficiency_call_count, 1)
+        self.assertEqual(service.followup_call_count, 1)
+
+    def test_abstract_answer_guardrail_calls_followup_generation_once(self):
+        self.answer.answer_text = 'I worked on the backend and did many things.'
+        self.answer.save(update_fields=['answer_text'])
+        service = GuardrailBackedFollowupAIChainService(
+            """{
+              "answer_id": "answer-id",
+              "is_sufficient": true,
+              "sufficiency_reason": "Model was too permissive.",
+              "answer_weakness_tags": [],
+              "selected_weakness_tag": null,
+              "should_generate_followup": false,
+              "next_action": "NEXT_QUESTION"
+            }"""
+        )
+
+        with patch(
+            'apps.interview.services.follow_up_generator.FollowupGenerator._get_ai_chain_service',
+            return_value=service,
+        ), patch.object(
+            service,
+            'generate_followup_question',
+            wraps=service.generate_followup_question,
+        ) as followup_mock:
+            response = self.client.post(self.followup_url(), {}, format='json')
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data['next_action'], 'GENERATE_FOLLOWUP')
+        self.assertEqual(followup_mock.call_count, 1)
 
     @patch(
         'apps.interview.services.follow_up_generator.FollowupGenerator._get_ai_chain_service',

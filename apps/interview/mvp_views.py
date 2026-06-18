@@ -164,6 +164,7 @@ class MVPQuestionGenerateView(APIView):
                 session=session,
                 question_text=question.get('question_text'),
                 question_type=question.get('question_type', 'main'),
+                question_category=question.get('question_category', 'general'),
                 order_index=question.get('order_index'),
                 difficulty=question.get('difficulty'),
                 source_type=question.get('source_type', 'general'),

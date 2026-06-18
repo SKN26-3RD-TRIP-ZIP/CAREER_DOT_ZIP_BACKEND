@@ -7,6 +7,7 @@ from apps.common.choices import (
     INTERVIEW_PERSONA_CHOICES,
     INTERVIEW_SESSION_STATUS_CHOICES,
     INTERVIEW_TYPE_CHOICES,
+    QUESTION_CATEGORY_CHOICES,
     QUESTION_TYPE_CHOICES,
 )
 
@@ -65,6 +66,7 @@ class InterviewQuestion(models.Model):
     session = models.ForeignKey(InterviewSession, on_delete=models.CASCADE, related_name='questions')
     order_index = models.PositiveIntegerField()
     question_type = models.CharField(max_length=20, choices=QUESTION_TYPE_CHOICES, default='main')
+    question_category = models.CharField(max_length=20, choices=QUESTION_CATEGORY_CHOICES, default='general')
     question_text = models.TextField()
     difficulty = models.CharField(max_length=20, blank=True, null=True)
     source_type = models.CharField(max_length=20, choices=SOURCE_TYPE_CHOICES, default='general')

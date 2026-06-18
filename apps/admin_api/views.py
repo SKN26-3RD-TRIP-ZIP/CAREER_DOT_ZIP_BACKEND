@@ -48,7 +48,11 @@ class MemberListView(AdminAPIView):
 
         now = timezone.now()
         members = User.objects.annotate(
-            practice_count=Count('interview_sessions', distinct=True),
+            practice_count=Count(
+                'interview_sessions',
+                filter=Q(interview_sessions__status='completed'),
+                distinct=True,
+            ),
             monthly_session_count=Count(
                 'interview_sessions',
                 filter=Q(
@@ -83,7 +87,7 @@ class MemberStatusView(AdminAPIView):
         serializer.is_valid(raise_exception=True)
         new_status = serializer.validated_data['status']
 
-        if request.user.id == member_id and new_status in ('dormant', 'banned'):
+        if request.user.id == member_id and new_status in ('dormant', 'banned', 'suspended'):
             return Response(
                 {'detail': 'You cannot change status of your own account.'},
                 status=status.HTTP_400_BAD_REQUEST,

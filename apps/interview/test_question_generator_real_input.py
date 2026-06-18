@@ -20,6 +20,84 @@ from apps.interview.models import InterviewQuestion, InterviewSession, QuestionS
 from apps.interview.services.question_generator import generate_interview_questions
 
 
+class InterviewQuestionCategoryDistributionTest(TestCase):
+    def setUp(self):
+        user_model = get_user_model()
+        self.user = user_model.objects.create_user(
+            email='category-owner@example.com',
+            password='password123',
+            name='Category Owner',
+        )
+
+    def create_session(self, interview_type):
+        return InterviewSession.objects.create(
+            user=self.user,
+            interview_type=interview_type,
+            persona='practical',
+            total_question_count=5,
+        )
+
+    def generate_with_empty_ai_sources(self, session):
+        ai_result = {
+            'session_id': str(session.id),
+            'questions': [
+                {
+                    'client_question_key': f'q_{index:03d}',
+                    'question_text': f'Generated question {index}',
+                    'question_type': 'main',
+                    'difficulty': 'medium',
+                    'order_index': index,
+                    'source_tags': [{'source_type': 'general'}],
+                }
+                for index in range(1, 6)
+            ],
+        }
+
+        with patch('apps.interview.services.question_generator.InterviewAIChainService') as service_class, \
+                patch('apps.interview.services.question_generator.select_questions_for_session') as selector:
+            service = service_class.return_value
+            service.generate_questions.return_value = ai_result
+            selector.return_value = []
+            questions = generate_interview_questions(session)
+
+        return questions, service.generate_questions.call_args.args[0]
+
+    def test_technical_interview_generates_all_technical_categories(self):
+        questions, payload = self.generate_with_empty_ai_sources(
+            self.create_session('technical')
+        )
+
+        self.assertEqual([q['question_category'] for q in questions], ['technical'] * 5)
+        self.assertEqual(
+            payload['generation_options']['question_category_plan'],
+            ['technical'] * 5,
+        )
+
+    def test_personality_interview_generates_all_personality_categories(self):
+        questions, payload = self.generate_with_empty_ai_sources(
+            self.create_session('personality')
+        )
+
+        self.assertEqual([q['question_category'] for q in questions], ['personality'] * 5)
+        self.assertEqual(
+            payload['generation_options']['question_category_plan'],
+            ['personality'] * 5,
+        )
+
+    def test_comprehensive_interview_generates_three_to_two_mix(self):
+        questions, payload = self.generate_with_empty_ai_sources(
+            self.create_session('comprehensive')
+        )
+
+        categories = [q['question_category'] for q in questions]
+        self.assertEqual(categories.count('technical'), 3)
+        self.assertEqual(categories.count('personality'), 2)
+        self.assertEqual(
+            payload['generation_options']['question_category_plan'],
+            ['technical', 'technical', 'technical', 'personality', 'personality'],
+        )
+
+
 class InterviewQuestionGeneratorRealInputTest(TestCase):
     def setUp(self):
         user_model = get_user_model()
@@ -149,9 +227,11 @@ class InterviewQuestionGeneratorRealInputTest(TestCase):
 
         self.assertEqual(len(questions), 3)
         self.assertEqual(questions[0]['question_type'], 'main')
+        self.assertEqual(questions[0]['question_category'], 'technical')
         self.assertEqual(questions[0]['source_type'], 'jd')
         self.assertEqual(questions[1]['source_type'], 'project_experience')
         self.assertEqual(questions[2]['source_type'], 'combined')
+        self.assertEqual(questions[2]['question_category'], 'technical')
         self.assertIn('analysis_generated_question', questions[2]['source_reference'])
 
         selector.assert_not_called()
@@ -257,6 +337,7 @@ class InterviewQuestionGenerateSourceTagsAPITest(APITestCase):
             {
                 'question_text': 'JD의 Django API 요구사항과 본인 경험을 연결해서 설명해주세요.',
                 'question_type': 'main',
+                'question_category': 'technical',
                 'order_index': 1,
                 'difficulty': 'medium',
                 'source_type': 'jd',
@@ -286,7 +367,9 @@ class InterviewQuestionGenerateSourceTagsAPITest(APITestCase):
         question = InterviewQuestion.objects.get(session=self.session)
         self.assertEqual(question.difficulty, 'medium')
         self.assertEqual(question.source_type, 'jd')
+        self.assertEqual(question.question_category, 'technical')
         self.assertEqual(QuestionSourceTag.objects.filter(question=question).count(), 1)
+        self.assertEqual(response.data['questions'][0]['question_category'], 'technical')
         self.assertEqual(response.data['questions'][0]['source_tags'][0]['source_type'], 'jd')
 
 
@@ -372,10 +455,13 @@ class MVPAnalysisQuestionLinkAPITest(APITestCase):
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data['generated_count'], 1)
+        self.assertEqual(response.data['questions'][0]['question_type'], 'main')
+        self.assertEqual(response.data['questions'][0]['question_category'], 'technical')
 
         question = InterviewQuestion.objects.get(session=session)
         self.assertEqual(question.question_text, self.generated_question.question_text)
         self.assertEqual(question.source_type, 'combined')
+        self.assertEqual(question.question_category, 'technical')
         self.assertEqual(
             question.source_reference,
             f'analysis_generated_question:{self.generated_question.id}',

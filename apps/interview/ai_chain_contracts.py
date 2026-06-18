@@ -23,6 +23,7 @@ class QuestionType(str, Enum):
     TECHNICAL = "technical"
     PERSONALITY = "personality"
     JOB = "job"
+    GENERAL = "general"
 
 
 class SourceType(str, Enum):
