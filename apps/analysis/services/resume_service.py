@@ -9,7 +9,7 @@ Pipeline 1 - ② 사용자 문서 분석
 """
 
 import json
-from .utils import get_client, clean_json
+from .utils import get_client, clean_json, log_llm_usage
 
 
 def analyze_resume(resume_text: str, cover_letter_text: str, model: str = "gpt-4o-mini") -> dict:
@@ -113,5 +113,6 @@ def analyze_resume(resume_text: str, cover_letter_text: str, model: str = "gpt-4
             },
         ],
     )
+    log_llm_usage(response)
     raw = clean_json(response.choices[0].message.content)
     return json.loads(raw)

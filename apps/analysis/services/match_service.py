@@ -13,7 +13,7 @@ Pipeline 1 - ③ 비교 & 점수 산출
 """
 
 import json
-from .utils import get_client, clean_json, get_embeddings, cosine_similarity
+from .utils import get_client, clean_json, get_embeddings, cosine_similarity, log_llm_usage
 
 # ────────────────────────────────────────────────────────
 # 신입 / 경력별 가중치 정의
@@ -327,6 +327,7 @@ def calculate_match_score(
         ],
     )
 
+    log_llm_usage(response)
     raw        = clean_json(response.choices[0].message.content)
     llm_result = json.loads(raw)
 
