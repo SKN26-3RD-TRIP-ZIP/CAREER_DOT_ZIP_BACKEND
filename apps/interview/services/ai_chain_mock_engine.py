@@ -55,8 +55,13 @@ class AIChainMockEngine:
             ]
 
         questions: list[dict[str, Any]] = []
+        category_plan = options.get("question_category_plan") or []
         for index in range(1, question_count + 1):
-            question_type = self._pick_question_type(index)
+            question_type = (
+                category_plan[index - 1]
+                if index - 1 < len(category_plan)
+                else self._pick_question_type(index)
+            )
             question_text = self._build_question_text(
                 index,
                 question_type,
@@ -68,7 +73,8 @@ class AIChainMockEngine:
                 {
                     "client_question_key": f"q_{index:03d}",
                     "question_text": question_text,
-                    "question_type": question_type,
+                    "question_type": "main",
+                    "question_category": question_type,
                     "difficulty": None,
                     "order_index": index,
                     "generation_reason": self._build_generation_reason(

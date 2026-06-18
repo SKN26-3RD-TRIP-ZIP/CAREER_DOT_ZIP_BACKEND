@@ -47,10 +47,63 @@ QUESTION_SOURCE_TYPE_ALIASES = {
     'general': 'general',
 }
 
+QUESTION_CATEGORY_ALIASES = {
+    'technical': 'technical',
+    'tech': 'technical',
+    'coding': 'technical',
+    'personality': 'personality',
+    'behavioral': 'personality',
+    'behavioural': 'personality',
+    'experience': 'personality',
+    'culture': 'personality',
+    'job': 'general',
+    'general': 'general',
+    'other': 'general',
+    'main': 'general',
+    'follow_up': 'general',
+}
+
 
 def _normalize_question_source_type(source_type):
     normalized = str(source_type or 'general').strip().lower()
     return QUESTION_SOURCE_TYPE_ALIASES.get(normalized, 'general')
+
+
+def _normalize_question_category(question_category):
+    normalized = str(question_category or 'general').strip().lower()
+    return QUESTION_CATEGORY_ALIASES.get(normalized, 'general')
+
+
+def _question_category_plan(interview_type, question_count):
+    count = max(int(question_count or 0), 0)
+    if count == 0:
+        return []
+
+    if interview_type == 'technical':
+        return ['technical'] * count
+    if interview_type == 'personality':
+        return ['personality'] * count
+
+    technical_count = int(round(count * 0.6))
+    if count > 1:
+        technical_count = min(max(technical_count, 1), count - 1)
+    return ['technical'] * technical_count + ['personality'] * (count - technical_count)
+
+
+def _apply_question_category_plan(questions, interview_type, question_count):
+    plan = _question_category_plan(interview_type, question_count)
+    categorized = []
+
+    for index, question in enumerate(questions[:question_count]):
+        planned_category = plan[index] if index < len(plan) else 'general'
+        categorized.append(
+            {
+                **question,
+                'question_category': planned_category,
+            }
+        )
+
+    return categorized
 
 
 def _candidate_key(question_text):
@@ -120,6 +173,9 @@ def _append_unique_questions(target, candidates, *, limit, excluded_texts=None):
         target.append(
             {
                 'question_text': question_text,
+                'question_category': _normalize_question_category(
+                    question.get('question_category') or question.get('question_type')
+                ),
                 'source_type': source_type,
                 'source_reference': source_reference,
                 'difficulty': question.get('difficulty') or 'medium',
@@ -152,6 +208,7 @@ def _rule_based_questions(session, count, excluded_texts=None):
         questions.append(
             {
                 'question_text': text,
+                'question_category': _normalize_question_category(session.interview_type),
                 'source_type': 'rule',
                 'source_reference': reference,
                 'difficulty': 'medium',
@@ -348,6 +405,7 @@ def _build_prepared_question_sources(session):
             'source_table': 'analysis_generated_question',
             'generated_question_id': str(question.id),
             'question_type': question.question_type,
+            'question_category': _normalize_question_category(question.question_type),
             'question_text': question.question_text,
             'source': question.source,
             'source_ref': question.source_ref,
@@ -430,6 +488,11 @@ def _build_ai_generation_payload(session, question_count):
         'input_sources': input_sources,
         'generation_options': {
             'question_count': question_count,
+            'interview_type': session.interview_type,
+            'question_category_plan': _question_category_plan(
+                session.interview_type,
+                question_count,
+            ),
             'allow_multiple_source_tags': True,
             'include_source_text_excerpt': True,
             'prefer_input_sources': bool(input_sources),
@@ -465,6 +528,9 @@ def _convert_ai_questions(ai_questions, excluded_texts=None):
         converted.append(
             {
                 'question_text': question_text,
+                'question_category': _normalize_question_category(
+                    question.get('question_category') or question.get('question_type')
+                ),
                 'source_type': source_type,
                 'source_reference': source_reference,
                 'difficulty': question.get('difficulty') or 'medium',
@@ -512,6 +578,7 @@ def _prepared_questions(session, count, excluded_texts=None):
         converted.append(
             {
                 'question_text': question.question_text,
+                'question_category': _normalize_question_category(question.question_type),
                 'source_type': source_type,
                 'source_reference': source_reference,
                 'difficulty': 'medium',
@@ -624,12 +691,19 @@ def generate_interview_questions(session):
             excluded_texts=_question_texts(selected),
         )
 
+    categorized = _apply_question_category_plan(
+        selected,
+        session.interview_type,
+        question_count,
+    )
+
     return [
         {
             **question,
             'source_type': _normalize_question_source_type(question.get('source_type')),
             'order_index': index,
             'question_type': 'main',
+            'question_category': _normalize_question_category(question.get('question_category')),
         }
-        for index, question in enumerate(selected[:question_count], start=1)
+        for index, question in enumerate(categorized, start=1)
     ]
