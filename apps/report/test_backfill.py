@@ -20,7 +20,7 @@ from apps.report.models import FinalReport
 
 
 def _mock_llm_chains():
-  """eval_llm_chains_parallel 의 (grounding, competency) 반환값 모킹."""
+  """eval_llm_chains_parallel_with_emotion 의 반환값 모킹."""
   grounding = {
       'tech_stack': 'FastAPI',
       'before_metric': '100ms',
@@ -36,7 +36,14 @@ def _mock_llm_chains():
       },
       'cbi_competency': {'assigned_level': 3, 'score': 60, 'evidence_sentence': '근거'},
   }
-  return grounding, competency
+  emotion = {
+      'emotion_labels': {'neutral': 1.0},
+      'competency_intent_labels': {'problem_solving': 1.0},
+      'dominant_emotion': 'neutral',
+      'dominant_competency': 'problem_solving',
+      'confidence_score': 0.0,
+  }
+  return grounding, competency, emotion
 
 
 @override_settings(OPENAI_USE_MOCK=True)
@@ -71,7 +78,7 @@ class ReportBackfillTests(APITestCase):
     )
     return session
 
-  @patch('apps.evaluation.services.evaluation_services.eval_llm_chains_parallel')
+  @patch('apps.evaluation.services.evaluation_services.eval_llm_chains_parallel_with_emotion')
   def test_report_request_backfills_missing_evaluation(self, mock_llm):
     mock_llm.return_value = _mock_llm_chains()
     session = self._completed_session_without_evaluation()
@@ -93,7 +100,7 @@ class ReportBackfillTests(APITestCase):
     self.assertEqual(len(questions), 1)
     self.assertGreater(questions[0]['score'], 0)
 
-  @patch('apps.evaluation.services.evaluation_services.eval_llm_chains_parallel')
+  @patch('apps.evaluation.services.evaluation_services.eval_llm_chains_parallel_with_emotion')
   def test_backfill_is_idempotent_on_regenerate(self, mock_llm):
     mock_llm.return_value = _mock_llm_chains()
     session = self._completed_session_without_evaluation()
