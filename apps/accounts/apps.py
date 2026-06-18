@@ -1,4 +1,5 @@
 import os
+import sys
 
 from django.apps import AppConfig
 
@@ -9,15 +10,25 @@ class AccountsConfig(AppConfig):
     verbose_name = 'Accounts'
 
     def ready(self):
-        # management command, test, migrate 실행 시에는 스케줄러를 시작하지 않는다.
-        import sys
-        skip_cmds = {"migrate", "makemigrations", "test", "shell", "run_dormancy_check", "seed_qa_users"}
-        if any(cmd in sys.argv for cmd in skip_cmds):
+        if not _should_start_scheduler():
             return
 
-        # 워커 프로세스가 여러 개일 때 중복 실행 방지 (gunicorn --workers>1 환경)
-        if os.environ.get("RUN_MAIN") == "true" or "gunicorn" not in sys.argv[0]:
-            _start_scheduler()
+        _start_scheduler()
+
+
+def _should_start_scheduler():
+    argv0 = os.path.basename(sys.argv[0] or "")
+    command = sys.argv[1] if len(sys.argv) > 1 else ""
+
+    # Management commands initialize apps before scheduler tables may exist.
+    if argv0 in {"manage.py", "django-admin", "django-admin.py"}:
+        return command == "runserver" and os.environ.get("RUN_MAIN") == "true"
+
+    # Multi-worker WSGI servers should opt in to one scheduler process.
+    if "gunicorn" in argv0:
+        return os.environ.get("ACCOUNTS_SCHEDULER_ENABLED") == "true"
+
+    return True
 
 
 def _start_scheduler():
@@ -33,9 +44,9 @@ def _start_scheduler():
         check_dormant_accounts,
         trigger=CronTrigger(hour=0, minute=0),
         id="check_dormant_accounts",
-        name="휴면 계정 감지 및 전환 (매일 00:00)",
+        name="Dormant account check and transition (daily 00:00)",
         jobstore="default",
         replace_existing=True,
-        misfire_grace_time=3600,  # 서버 재시작 등으로 1시간 내 실행 못 한 경우 보정
+        misfire_grace_time=3600,
     )
     scheduler.start()
