@@ -160,7 +160,12 @@ def create_evaluation_for_answer(answer, request_sufficiency=None):
         return existing
 
     answer_text = get_answer_text_for_evaluation(answer)
-    question_type = answer.session.interview_type or "technical"
+    # question_category: InterviewQuestion 스키마에 추가된 질문 내용 유형 필드.
+    # "technical" | "personality" | "general" 값을 가지며,
+    # 이 값에 따라 grounding 체인·SBERT 실행 여부가 결정된다.
+    # 필드가 없거나 비어 있는 구버전 데이터는 "technical"로 폴백
+    # (기존 평가 데이터의 scoring 방식과 동일하게 유지).
+    question_type = getattr(answer.question, "question_category", None) or "technical"
 
     llm_weakness_tags, selected_weakness_tag = resolve_answer_sufficiency(
         answer,

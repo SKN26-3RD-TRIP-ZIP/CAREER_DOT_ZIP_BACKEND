@@ -202,17 +202,21 @@ def generate_final_report(session):
         if speech_delivery.get("speech_score") is not None:
             speech_scores.append(speech_delivery["speech_score"])
 
-        # E7 option-C: 기술 근거(grounding)가 의미 있는 세션에만 집계.
-        # 인성면접 답변은 tech_stack/수치 근거가 원천적으로 없어 is_grounded가
-        # 항상 False → grounding_score 왜곡. 따라서 personality 세션은 분모에서 제외
-        # (grounding_avg=None → 레이더/가중치에서 제거).
+        # question_category 기준으로 grounding 집계 여부 결정.
+        # InterviewQuestion.question_category == "technical" 인 답변만 분모에 포함.
+        # "personality" / "general" 질문은 is_grounded 가 구조적으로 False이므로
+        # 분모에 넣으면 grounding_score 가 왜곡된다.
         #
-        # ⚠️ 주의: 분류 기준은 세션의 interview_type 이다.
-        #   InterviewQuestion.question_type 은 'main'/'follow_up' 값만 가지며
-        #   'technical' 값을 갖지 않는다(질문 단위 기술/인성 구분은 스키마에 없음).
-        #   과거 `ans.question.question_type == "technical"` 비교는 항상 False라
-        #   모든 세션에서 grounding이 None이 되는 버그였다.
-        if session.interview_type in ("technical", "comprehensive"):
+        # 구버전 데이터(question_category 필드 도입 이전): None/빈 값이면
+        # session.interview_type 으로 추정해 하위 호환을 유지한다.
+        q_category = getattr(ans.question, "question_category", None) or ""
+        if not q_category:
+            q_category = (
+                "technical"
+                if session.interview_type in ("technical", "comprehensive")
+                else "personality"
+            )
+        if q_category == "technical":
             grounding_block = score_detail.get("grounding", {})
             if isinstance(grounding_block, dict) and "is_grounded" in grounding_block:
                 grounding_flags.append(bool(grounding_block.get("is_grounded")))
