@@ -238,6 +238,8 @@ CSRF_TRUSTED_ORIGINS = [
 # 운영(HTTPS): .env 로 REFRESH_COOKIE_SECURE=True 주입. 프론트/백 도메인이 다르면 SAMESITE=None 필요.
 REFRESH_COOKIE_SECURE = _env_bool("REFRESH_COOKIE_SECURE", False)
 REFRESH_COOKIE_SAMESITE = os.getenv("REFRESH_COOKIE_SAMESITE", "Lax")
+REFRESH_COOKIE_PATH = os.getenv("REFRESH_COOKIE_PATH", "/")
+REFRESH_COOKIE_DOMAIN = os.getenv("REFRESH_COOKIE_DOMAIN") or None
 
 # ===== DRF Settings =====
 REST_FRAMEWORK = {
@@ -291,6 +293,8 @@ EMAIL_PORT = int(os.getenv("EMAIL_PORT", "587"))
 EMAIL_HOST_USER = os.getenv("EMAIL_HOST_USER", "")
 EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD", "")
 EMAIL_USE_TLS = _env_bool("EMAIL_USE_TLS", True)
+EMAIL_USE_SSL = _env_bool("EMAIL_USE_SSL", False)
+EMAIL_TIMEOUT = int(os.getenv("EMAIL_TIMEOUT", "10"))
 DEFAULT_FROM_EMAIL = os.getenv("DEFAULT_FROM_EMAIL", "Career.zip <no-reply@career.zip>")
 
 # 관리자 신규가입 알림 수신 주소. 미설정 시 알림 생략.
@@ -305,7 +309,7 @@ EMAIL_VERIFICATION_TOKEN_MAX_AGE = int(
 )
 
 # ===== 이메일 인증번호(코드) 정책 =====
-# Gmail 등 수신 지연을 고려해 만료를 10분(600초)으로 둔다. (보안상 30분 이상은 비권장)
+# 외부 메일 서비스의 수신 지연 가능성을 고려해 만료를 10분(600초)으로 둔다. (보안상 30분 이상은 비권장)
 # 재발송 쿨다운 60초 / 최대 시도 5회 유지. 모두 .env 로 재정의 가능.
 EMAIL_CODE_TTL_SECONDS = int(os.getenv("EMAIL_CODE_TTL_SECONDS", "600"))
 EMAIL_CODE_MAX_ATTEMPTS = int(os.getenv("EMAIL_CODE_MAX_ATTEMPTS", "5"))

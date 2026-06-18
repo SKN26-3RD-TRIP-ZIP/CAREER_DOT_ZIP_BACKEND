@@ -11,18 +11,50 @@ from django.conf import settings
 from django.contrib.auth.models import update_last_login
 
 from .serializers import SignupSerializer, LoginSerializer, SignupResponseSerializer
-from .models import User
-from .codes import issue_code, verify_code, VerifyResult, ResendCooldownError
+from .models import User, EmailVerificationCode
+from .codes import (
+    issue_code,
+    verify_code,
+    VerifyResult,
+    ResendCooldownError,
+    get_ttl_seconds,
+    get_resend_cooldown_seconds,
+)
 from .emails import send_admin_signup_notification, send_verification_code_email
 
 logger = logging.getLogger("apps.accounts")
 
 REFRESH_COOKIE_NAME = "refresh_token"
 REFRESH_COOKIE_MAX_AGE = 7 * 24 * 60 * 60  # 7 days
+EMAIL_SEND_FAILED_RESPONSE = {
+    "detail": "인증 메일 발송에 실패했습니다. 잠시 후 재전송해 주세요.",
+    "code": "EMAIL_SEND_FAILED",
+}
+
+
+def _mask_email(email: str) -> str:
+    local, sep, domain = (email or "").partition("@")
+    if not sep:
+        return "***"
+    visible = local[:2] if len(local) >= 2 else local[:1]
+    return f"{visible}***@{domain}"
+
+
+def _verification_meta() -> dict:
+    return {
+        "expires_in": get_ttl_seconds(),
+        "resend_after": get_resend_cooldown_seconds(),
+    }
+
+
+def _invalidate_active_codes(user) -> None:
+    EmailVerificationCode.objects.filter(user=user, is_used=False).update(is_used=True)
 
 
 class SignupView(APIView):
-    """회원가입 엔드포인트. 성공 시 환영/관리자 알림 메일을 발송(실패해도 가입은 성공).
+    """회원가입 엔드포인트. 성공 시 인증번호 메일과 관리자 알림 메일을 발송한다.
+
+    인증번호 메일 발송 실패는 503으로 반환한다. 관리자 알림 실패는 가입 흐름을 막지 않는다.
 
     중복 이메일 정책:
     - banned 계정      → 403 (가입 차단)
@@ -31,6 +63,7 @@ class SignupView(APIView):
     이렇게 하여 인증 메일을 받지 못한 미인증 계정이 재가입 흐름에서 막히지 않도록 한다.
     """
     permission_classes = [permissions.AllowAny]
+    authentication_classes = []
 
     def post(self, request):
         email = (request.data.get('email') or '').strip()
@@ -56,27 +89,38 @@ class SignupView(APIView):
         if serializer.is_valid():
             user = serializer.save()
 
-            mail_failed = False
             try:
                 code = issue_code(user)
                 send_verification_code_email(user, code)
-            except Exception:  # noqa: BLE001
-                mail_failed = True
-                logger.exception("인증번호 메일 발송 실패 user_id=%s", user.id)
+                logger.info(
+                    "signup verification email sent user_id=%s email=%s",
+                    user.id,
+                    _mask_email(user.email),
+                )
+            except Exception as exc:  # noqa: BLE001
+                _invalidate_active_codes(user)
+                logger.warning(
+                    "signup verification email failed user_id=%s email=%s exc=%s",
+                    user.id,
+                    _mask_email(user.email),
+                    exc.__class__.__name__,
+                )
+                data = {
+                    **EMAIL_SEND_FAILED_RESPONSE,
+                    "requires_verification": True,
+                    "email": user.email,
+                }
+                return Response(data, status=status.HTTP_503_SERVICE_UNAVAILABLE)
             try:
                 send_admin_signup_notification(user, signup_method="email")
-            except Exception:  # noqa: BLE001
-                logger.exception("admin signup 알림 발송 실패 user_id=%s", user.id)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("admin signup notification failed user_id=%s exc=%s", user.id, exc.__class__.__name__)
 
             response_serializer = SignupResponseSerializer(user)
             data = dict(response_serializer.data)
             data["requires_verification"] = True
-            data["mail_sent"] = not mail_failed
-            if mail_failed:
-                data["message"] = (
-                    "가입은 완료되었지만 인증 메일 발송에 실패했습니다. "
-                    "인증 화면에서 인증번호 재전송을 눌러주세요."
-                )
+            data["mail_sent"] = True
+            data.update(_verification_meta())
             return Response(data, status=status.HTTP_201_CREATED)
 
         return Response(
@@ -89,19 +133,36 @@ class SignupView(APIView):
         """미인증 기존 계정의 재가입 시도 — 새 인증번호 발급 후 재발송.
 
         - 쿨다운 미경과 시: 직전에 보낸 인증번호가 아직 유효하므로 재발송 없이 안내.
-        - 발송 실패 시: 사용자가 갇히지 않도록 200 + 재발송 안내 메시지를 반환.
+        - 발송 실패 시: 503 + EMAIL_SEND_FAILED 로 반환.
         """
         resent = False
-        mail_failed = False
+        retry_after = None
         try:
             code = issue_code(user)
             send_verification_code_email(user, code)
             resent = True
-        except ResendCooldownError:
+            logger.info(
+                "signup duplicate verification email sent user_id=%s email=%s",
+                user.id,
+                _mask_email(user.email),
+            )
+        except ResendCooldownError as exc:
+            retry_after = exc.retry_after
             logger.info("signup resend skipped(cooldown) user_id=%s", user.id)
-        except Exception:  # noqa: BLE001
-            mail_failed = True
-            logger.exception("미인증 재가입 인증번호 재발송 실패 user_id=%s", user.id)
+        except Exception as exc:  # noqa: BLE001
+            _invalidate_active_codes(user)
+            logger.warning(
+                "signup duplicate verification email failed user_id=%s email=%s exc=%s",
+                user.id,
+                _mask_email(user.email),
+                exc.__class__.__name__,
+            )
+            data = {
+                **EMAIL_SEND_FAILED_RESPONSE,
+                "requires_verification": True,
+                "email": user.email,
+            }
+            return Response(data, status=status.HTTP_503_SERVICE_UNAVAILABLE)
 
         data = {
             "user_id": user.id,
@@ -111,12 +172,11 @@ class SignupView(APIView):
             "resent": resent,
             "mail_sent": resent,
         }
-        if mail_failed:
-            data["message"] = (
-                "이미 가입 시도한 이메일입니다. 다만 인증 메일 발송에 실패했어요. "
-                "인증 화면에서 인증번호 재전송을 눌러주세요."
-            )
-        elif resent:
+        data.update(_verification_meta())
+        if retry_after is not None:
+            data["resend_after"] = retry_after
+            data["retry_after"] = retry_after
+        if resent:
             data["message"] = "이미 가입 시도한 이메일입니다. 인증번호를 다시 보냈습니다."
         else:
             data["message"] = (
@@ -145,7 +205,7 @@ class VerifyEmailView(APIView):
         except User.DoesNotExist:
             # 열거 방지: 코드 불일치와 동일한 응답
             return Response(
-                {'detail': '인증번호가 올바르지 않습니다.'},
+                {'detail': '인증번호가 올바르지 않습니다.', 'code': 'VERIFY_CODE_INVALID'},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
@@ -160,16 +220,22 @@ class VerifyEmailView(APIView):
             return Response({'message': '이메일 인증이 완료되었습니다.'}, status=status.HTTP_200_OK)
         if result == VerifyResult.TOO_MANY:
             return Response(
-                {'detail': '인증 시도 횟수를 초과했습니다. 인증번호를 재발송해 주세요.'},
+                {
+                    'detail': '인증 시도 횟수를 초과했습니다. 인증번호를 재발송해 주세요.',
+                    'code': 'VERIFY_TOO_MANY_ATTEMPTS',
+                },
                 status=status.HTTP_429_TOO_MANY_REQUESTS,
             )
         if result == VerifyResult.EXPIRED:
             return Response(
-                {'detail': '인증번호가 만료되었거나 존재하지 않습니다. 재발송해 주세요.'},
+                {
+                    'detail': '인증번호가 만료되었거나 존재하지 않습니다. 재발송해 주세요.',
+                    'code': 'VERIFY_CODE_EXPIRED',
+                },
                 status=status.HTTP_400_BAD_REQUEST,
             )
         return Response(
-            {'detail': '인증번호가 올바르지 않습니다.'},
+            {'detail': '인증번호가 올바르지 않습니다.', 'code': 'VERIFY_CODE_INVALID'},
             status=status.HTTP_400_BAD_REQUEST,
         )
 
@@ -180,12 +246,12 @@ class ResendVerificationView(APIView):
 
     - 이메일 열거(enumeration) 방지를 위해 가입/미가입 여부와 무관하게 항상 동일한 200 메시지를 반환한다.
     - 실제 발송은 '가입되어 있고 아직 미인증' 인 경우에만 수행한다.
-    - 메일 발송 실패가 요청 실패로 이어지지 않게 한다(로그만 남김, 토큰은 로그에 미기록).
+    - 메일 발송 실패는 503 으로 반환한다. 토큰/인증번호는 로그에 미기록.
     """
     permission_classes = [permissions.AllowAny]
     authentication_classes = []
 
-    GENERIC_MESSAGE = "입력하신 이메일이 가입되어 있고 아직 인증 전이라면, 인증 메일을 다시 보냈습니다."
+    GENERIC_MESSAGE = "입력하신 이메일이 가입되어 있고 아직 인증 전이라면, 인증번호를 다시 발송했습니다."
 
     def post(self, request):
         email = (request.data.get('email') or '').strip()
@@ -195,24 +261,47 @@ class ResendVerificationView(APIView):
         try:
             user = User.objects.get(email=email)
         except User.DoesNotExist:
-            return Response({'message': self.GENERIC_MESSAGE}, status=status.HTTP_200_OK)
+            return Response({'detail': self.GENERIC_MESSAGE, 'message': self.GENERIC_MESSAGE}, status=status.HTTP_200_OK)
 
         if user.is_verified:
             # 이미 인증된 계정 — 메일 재발송 없이 동일 메시지(열거 방지)
-            return Response({'message': self.GENERIC_MESSAGE}, status=status.HTTP_200_OK)
+            return Response({'detail': self.GENERIC_MESSAGE, 'message': self.GENERIC_MESSAGE}, status=status.HTTP_200_OK)
 
         try:
             code = issue_code(user)
             send_verification_code_email(user, code)
+            logger.info(
+                "verification code resend sent user_id=%s email=%s",
+                user.id,
+                _mask_email(user.email),
+            )
         except ResendCooldownError as exc:
             return Response(
-                {'detail': f'잠시 후 다시 시도해 주세요. ({exc.retry_after}초 후 재발송 가능)'},
+                {
+                    'detail': '잠시 후 다시 시도해 주세요.',
+                    'code': 'RESEND_COOLDOWN',
+                    'retry_after': exc.retry_after,
+                },
                 status=status.HTTP_429_TOO_MANY_REQUESTS,
             )
-        except Exception:  # noqa: BLE001
-            logger.exception("verification code resend 실패 user_id=%s", user.id)
+        except Exception as exc:  # noqa: BLE001
+            _invalidate_active_codes(user)
+            logger.warning(
+                "verification code resend failed user_id=%s email=%s exc=%s",
+                user.id,
+                _mask_email(user.email),
+                exc.__class__.__name__,
+            )
+            return Response(EMAIL_SEND_FAILED_RESPONSE, status=status.HTTP_503_SERVICE_UNAVAILABLE)
 
-        return Response({'message': self.GENERIC_MESSAGE}, status=status.HTTP_200_OK)
+        return Response(
+            {
+                'detail': '인증번호를 다시 발송했습니다.',
+                'message': '인증번호를 다시 발송했습니다.',
+                **_verification_meta(),
+            },
+            status=status.HTTP_200_OK,
+        )
 
 
 class LoginView(APIView):
@@ -250,6 +339,8 @@ class LoginView(APIView):
                 # 로컬은 False/Lax, 운영(HTTPS)은 .env 로 REFRESH_COOKIE_SECURE=True 주입.
                 secure=getattr(settings, "REFRESH_COOKIE_SECURE", False),
                 samesite=getattr(settings, "REFRESH_COOKIE_SAMESITE", "Lax"),
+                path=getattr(settings, "REFRESH_COOKIE_PATH", "/"),
+                domain=getattr(settings, "REFRESH_COOKIE_DOMAIN", None),
                 max_age=REFRESH_COOKIE_MAX_AGE,
             )
             return response
@@ -269,6 +360,7 @@ class LoginView(APIView):
 class CookieTokenRefreshView(APIView):
     """HttpOnly cookie 의 refresh token 으로 access token 재발급."""
     permission_classes = [permissions.AllowAny]
+    authentication_classes = []
 
     def post(self, request):
         refresh_token = request.COOKIES.get(REFRESH_COOKIE_NAME)
@@ -277,10 +369,23 @@ class CookieTokenRefreshView(APIView):
         try:
             serializer = TokenRefreshSerializer(data={'refresh': refresh_token})
             if serializer.is_valid():
-                return Response(
+                response = Response(
                     {'access_token': serializer.validated_data['access']},
                     status=status.HTTP_200_OK,
                 )
+                rotated_refresh = serializer.validated_data.get('refresh')
+                if rotated_refresh:
+                    response.set_cookie(
+                        key=REFRESH_COOKIE_NAME,
+                        value=rotated_refresh,
+                        httponly=True,
+                        secure=getattr(settings, "REFRESH_COOKIE_SECURE", False),
+                        samesite=getattr(settings, "REFRESH_COOKIE_SAMESITE", "Lax"),
+                        path=getattr(settings, "REFRESH_COOKIE_PATH", "/"),
+                        domain=getattr(settings, "REFRESH_COOKIE_DOMAIN", None),
+                        max_age=REFRESH_COOKIE_MAX_AGE,
+                    )
+                return response
             return Response({'error': 'Invalid or expired refresh token.'}, status=status.HTTP_401_UNAUTHORIZED)
         except (InvalidToken, TokenError):
             return Response({'error': 'Invalid or expired refresh token.'}, status=status.HTTP_401_UNAUTHORIZED)
@@ -298,6 +403,8 @@ class LogoutView(APIView):
         response.delete_cookie(
             REFRESH_COOKIE_NAME,
             samesite=getattr(settings, "REFRESH_COOKIE_SAMESITE", "Lax"),
+            path=getattr(settings, "REFRESH_COOKIE_PATH", "/"),
+            domain=getattr(settings, "REFRESH_COOKIE_DOMAIN", None),
         )
         # 참고: simplejwt token_blacklist 앱 미설치 → 서버측 blacklist 미적용.
         # 서버측 폐기 필요 시 INSTALLED_APPS 에 token_blacklist 추가 + migration 선행

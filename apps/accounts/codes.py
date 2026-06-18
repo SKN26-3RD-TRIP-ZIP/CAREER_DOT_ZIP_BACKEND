@@ -2,7 +2,7 @@
 6자리 이메일 인증번호 생성/발급/검증 로직.
 
 - 평문 코드는 저장/로그하지 않는다. 해시(HMAC-SHA256, SECRET_KEY 페퍼)만 DB에 저장.
-- 만료(기본 5분), 입력 시도 제한(기본 5회), 재발송 쿨다운(기본 60초)을 지원.
+- 만료(기본 10분), 입력 시도 제한(기본 5회), 재발송 쿨다운(기본 60초)을 지원.
 - 기본값은 settings 로 재정의 가능:
     EMAIL_CODE_TTL_SECONDS / EMAIL_CODE_MAX_ATTEMPTS / EMAIL_CODE_RESEND_COOLDOWN_SECONDS
 """
@@ -16,10 +16,10 @@ from django.utils import timezone
 
 from .models import EmailVerificationCode
 
-# 기본값(설정 미지정 시): 만료 5분 / 시도 5회 / 재발송 쿨다운 60초.
+# 기본값(설정 미지정 시): 만료 10분 / 시도 5회 / 재발송 쿨다운 60초.
 # settings(EMAIL_CODE_*) 로 재정의 가능. 테스트의 override_settings 가 반영되도록
 # 모듈 로드 시점이 아니라 호출 시점에 읽는다.
-DEFAULT_TTL_SECONDS = 300
+DEFAULT_TTL_SECONDS = 600
 DEFAULT_MAX_ATTEMPTS = 5
 DEFAULT_RESEND_COOLDOWN_SECONDS = 60
 
