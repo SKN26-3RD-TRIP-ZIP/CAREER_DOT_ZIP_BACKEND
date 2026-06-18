@@ -37,6 +37,7 @@ class FinalReportIntegrationTests(APITestCase):
     question = InterviewQuestion.objects.create(
         session=session,
         question_text='기술적 한계를 극복한 경험을 설명해주세요.',
+        question_category='technical',
         order_index=1,
     )
     answer = InterviewAnswer.objects.create(
@@ -91,7 +92,7 @@ class FinalReportIntegrationTests(APITestCase):
     self.assertIn('summary', response.data)
     self.assertAlmostEqual(response.data['summary']['score_summary']['overall_score'], 90.6, places=0)  # persona(practical): BEI86×.30+CBI85×.25+Grounding100×.30+Speech90×.15=90.6
 
-  @patch('apps.evaluation.services.evaluation_services.eval_llm_chains_parallel')
+  @patch('apps.evaluation.services.evaluation_services.eval_llm_chains_parallel_with_emotion')
   def test_evaluation_create_uses_interview_sufficiency_bridge(self, mock_llm):
     mock_llm.return_value = (
         {
@@ -109,6 +110,13 @@ class FinalReportIntegrationTests(APITestCase):
             },
             'cbi_competency': {'assigned_level': 3, 'score': 60, 'evidence_sentence': '근거'},
         },
+        {
+            'emotion_labels': {'neutral': 1.0},
+            'competency_intent_labels': {'problem_solving': 1.0},
+            'dominant_emotion': 'neutral',
+            'dominant_competency': 'problem_solving',
+            'confidence_score': 0.0,
+        },
     )
 
     session = InterviewSession.objects.create(
@@ -120,6 +128,7 @@ class FinalReportIntegrationTests(APITestCase):
     question = InterviewQuestion.objects.create(
         session=session,
         question_text='질문',
+        question_category='technical',
         order_index=1,
     )
     answer = InterviewAnswer.objects.create(
@@ -156,6 +165,7 @@ class FinalReportIntegrationTests(APITestCase):
     question = InterviewQuestion.objects.create(
         session=session,
         question_text='자신의 강점을 말해보세요.',
+        question_category='personality',
         order_index=1,
     )
     answer = InterviewAnswer.objects.create(
@@ -180,6 +190,64 @@ class FinalReportIntegrationTests(APITestCase):
 
     grounding = summary['score_summary']['metrics']['grounding_score']
     self.assertIsNone(grounding, "personality 세션 grounding_score는 None이어야 함")
+    self.assertIsNone(summary['score_summary']['metrics']['technical_score'])
     # 종합 점수가 grounding 없이도 정상 산출되는지
     self.assertGreater(summary['score_summary']['overall_score'], 0)
 
+  def test_comprehensive_mixed_session_applies_persona_weighting(self):
+    """기술+인성 혼합 세션에서도 grounding 분모는 기술 질문만 사용한다."""
+    session = InterviewSession.objects.create(
+        user=self.user,
+        interview_type='comprehensive',
+        persona='practical',
+        interview_mode='text',
+        status='completed',
+    )
+    technical_q = InterviewQuestion.objects.create(
+        session=session,
+        question_text='Redis 캐시 스탬피드를 어떻게 방어했나요?',
+        question_category='technical',
+        order_index=1,
+    )
+    personality_q = InterviewQuestion.objects.create(
+        session=session,
+        question_text='팀 갈등을 어떻게 조율했나요?',
+        question_category='personality',
+        order_index=2,
+    )
+    technical_answer = InterviewAnswer.objects.create(
+        session=session,
+        question=technical_q,
+        answer_text='Redis TTL 조정과 락으로 장애를 줄였습니다.',
+    )
+    personality_answer = InterviewAnswer.objects.create(
+        session=session,
+        question=personality_q,
+        answer_text='회의를 열어 각자의 우려를 정리하고 합의했습니다.',
+    )
+
+    for answer in (technical_answer, personality_answer):
+      Evaluation.objects.create(
+          answer=answer,
+          final_tech_score=50,
+          bei_score={
+              'situation': {'score': 20},
+              'task': {'score': 20},
+              'action': {'score': 20},
+              'result': {'score': 20},
+          },
+          cbi_score={'assigned_level': 3, 'score': 60},
+          filler_words={'total': 0, 'counts': {}},
+          score_detail={
+              'speech_delivery': {'speech_score': 80},
+              'grounding': {'is_grounded': answer == technical_answer},
+          },
+          sbert_db_similarity=0.6 if answer == technical_answer else None,
+      )
+
+    summary = generate_final_report(session)
+
+    self.assertEqual(summary['score_summary']['metrics']['grounding_score'], 100.0)
+    self.assertEqual(summary['score_summary']['metrics']['technical_score'], 60.0)
+    # practical: BEI80*.30 + CBI60*.25 + Grounding100*.30 + Speech80*.15 = 81.0
+    self.assertAlmostEqual(summary['score_summary']['overall_score'], 81.0, places=1)

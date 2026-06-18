@@ -15,6 +15,7 @@ project_service 단위 테스트
 """
 
 import pytest
+from unittest.mock import patch
 from apps.analysis.services.project_service import (
     extract_projects,
     merge_with_github,
@@ -32,13 +33,160 @@ class TestNotImplemented:
         with pytest.raises(NotImplementedError):
             extract_projects("이력서 내용", "자소서 내용")
 
-    def test_merge_with_github_미구현(self):
-        with pytest.raises(NotImplementedError):
-            merge_with_github([], "github_user")
-
     def test_score_projects_미구현(self):
         with pytest.raises(NotImplementedError):
             score_projects([], ["Python", "Django"])
+
+
+# ══════════════════════════════════════════════════════════════
+# merge_with_github — GitHub repo 검증 병합 (analyze_repo 모킹)
+#   ★ 예외 안전성 중심: 연결 실패해도 전체가 죽지 않는지 확인
+# ══════════════════════════════════════════════════════════════
+
+def _ok_repo(url, frameworks, languages=None, evidence=None):
+    return {
+        "github_url": url, "ok": True, "error": None, "error_kind": None,
+        "frameworks": frameworks, "raw_packages": [], "evidence": evidence or {},
+        "languages": languages or {},
+    }
+
+
+def _fail_repo(url, kind, msg):
+    return {
+        "github_url": url, "ok": False, "error": msg, "error_kind": kind,
+        "frameworks": [], "raw_packages": [], "evidence": {}, "languages": {},
+    }
+
+
+class TestMergeWithGithub:
+
+    PATCH = "apps.analysis.services.project_service.analyze_repo"
+
+    def test_repo_없으면_검증_스킵(self):
+        projects = [{"name": "P", "tech": ["Python"]}]
+        result = merge_with_github(projects)
+        assert result[0]["is_github_verified"] is False
+        assert result[0]["github_errors"] == []
+
+    def test_tech_검증_verified_unverified_분리(self):
+        projects = [{
+            "name": "마켓", "tech": ["Django", "Redis"],
+            "github_url": "https://github.com/u/market",
+        }]
+        with patch(self.PATCH, return_value=_ok_repo(
+            "https://github.com/u/market", ["Django"], {"Python": 1000}
+        )):
+            result = merge_with_github(projects)
+        p = result[0]
+        assert p["is_github_verified"] is True
+        assert "Django" in p["verified_tech"]
+        assert "Redis" in p["unverified_tech"]      # repo에 근거 없음 → 추궁 질문감
+
+    def test_언어로도_검증됨(self):
+        # "Python"은 프레임워크가 아니라 언어통계로 검증되어야 함
+        projects = [{"name": "P", "tech": ["Python"],
+                     "github_url": "https://github.com/u/p"}]
+        with patch(self.PATCH, return_value=_ok_repo(
+            "https://github.com/u/p", [], {"Python": 5000}
+        )):
+            result = merge_with_github(projects)
+        assert "Python" in result[0]["verified_tech"]
+
+    def test_repo_여러개_합산(self):
+        projects = [{
+            "name": "풀스택", "tech": ["Django", "React"],
+            "github_urls": ["https://github.com/u/be", "https://github.com/u/fe"],
+        }]
+        def side(url):
+            if url.endswith("/be"):
+                return _ok_repo(url, ["Django"], {"Python": 1000})
+            return _ok_repo(url, ["React"], {"JavaScript": 500})
+        with patch(self.PATCH, side_effect=side):
+            result = merge_with_github(projects)
+        assert set(result[0]["verified_tech"]) == {"Django", "React"}
+
+    # ── 예외 안전성 ──
+
+    def test_연결실패해도_전체_안죽음(self):
+        projects = [{"name": "P", "tech": ["Django"],
+                     "github_url": "https://github.com/u/private"}]
+        with patch(self.PATCH, return_value=_fail_repo(
+            "https://github.com/u/private", "not_found",
+            "repo를 찾을 수 없습니다 (비공개·삭제·URL 오타).",
+        )):
+            result = merge_with_github(projects)      # 예외 안 터져야 함
+        p = result[0]
+        assert p["is_github_verified"] is False
+        assert p["github_errors"][0]["kind"] == "not_found"
+        assert "Django" in p["unverified_tech"]       # 검증 못 했으니 미검증으로
+
+    def test_일부_repo만_실패시_부분성공(self):
+        projects = [{
+            "name": "풀스택", "tech": ["Django", "React"],
+            "github_urls": ["https://github.com/u/be", "https://github.com/u/fe"],
+        }]
+        def side(url):
+            if url.endswith("/be"):
+                return _ok_repo(url, ["Django"], {"Python": 1000})
+            return _fail_repo(url, "rate_limit", "한도 초과")
+        with patch(self.PATCH, side_effect=side):
+            result = merge_with_github(projects)
+        p = result[0]
+        assert p["is_github_verified"] is True        # be가 성공했으므로 True
+        assert "Django" in p["verified_tech"]
+        assert "React" in p["unverified_tech"]        # fe 실패 → React 미검증
+        assert len(p["github_errors"]) == 1
+
+    def test_여러_프로젝트_독립처리(self):
+        projects = [
+            {"name": "A", "tech": ["Django"], "github_url": "https://github.com/u/a"},
+            {"name": "B", "tech": ["React"],  "github_url": "https://github.com/u/b"},
+        ]
+        def side(url):
+            if url.endswith("/a"):
+                return _ok_repo(url, ["Django"])
+            return _fail_repo(url, "network", "연결 실패")
+        with patch(self.PATCH, side_effect=side):
+            result = merge_with_github(projects)
+        assert result[0]["is_github_verified"] is True
+        assert result[1]["is_github_verified"] is False
+
+    # ── 전역 상한 (분석 전체 합산 최대 5개) ──
+
+    def test_전역_상한_5개_초과분은_분석_안함(self):
+        # 한 프로젝트에 repo 7개 → 5개만 analyze_repo 호출, 2개는 limit_skipped
+        urls = [f"https://github.com/u/r{i}" for i in range(7)]
+        projects = [{"name": "P", "tech": ["Django"], "github_urls": urls}]
+
+        calls = []
+        def side(url):
+            calls.append(url)
+            return _ok_repo(url, ["Django"])
+
+        with patch(self.PATCH, side_effect=side):
+            result = merge_with_github(projects)
+
+        assert len(calls) == 5                  # 실제 분석은 5개까지만
+        errors = result[0]["github_errors"]
+        skipped = [e for e in errors if e["kind"] == "limit_skipped"]
+        assert len(skipped) == 2                # 초과 2개는 건너뜀 기록
+        assert result[0]["is_github_verified"] is True
+
+    def test_전역_상한_여러_프로젝트_합산(self):
+        # 프로젝트 A(3개) + B(4개) = 7개 → 합산 5개까지만 분석
+        projects = [
+            {"name": "A", "tech": ["Django"],
+             "github_urls": [f"https://github.com/u/a{i}" for i in range(3)]},
+            {"name": "B", "tech": ["React"],
+             "github_urls": [f"https://github.com/u/b{i}" for i in range(4)]},
+        ]
+        calls = []
+        with patch(self.PATCH, side_effect=lambda u: calls.append(u) or _ok_repo(u, [])):
+            result = merge_with_github(projects)
+
+        assert len(calls) == 5                   # A 3개 + B 2개 = 5
+        b_skipped = [e for e in result[1]["github_errors"] if e["kind"] == "limit_skipped"]
+        assert len(b_skipped) == 2               # B의 나머지 2개는 상한 초과
 
 
 # ══════════════════════════════════════════════════════════════

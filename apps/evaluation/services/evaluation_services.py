@@ -8,7 +8,6 @@ from django.conf import settings
 
 # 💡 동기식으로 매핑된 기존 파일 및 외부 유틸 반입
 from apps.evaluation.evaluation_chains import (
-    eval_llm_chains_parallel,
     eval_llm_chains_parallel_with_emotion,
     eval_llm_chains_competency_emotion,
 )
@@ -163,18 +162,7 @@ class EvaluationService:
         logger.info("📡 외부 LLM 동기 오케스트레이션(Task B, C, D) 병렬 호출 시작... (question_type=%s)", question_type)
 
         if question_type == "technical":
-            if getattr(settings, "OPENAI_USE_MOCK", False):
-                grounding_res, cbi_res = eval_llm_chains_parallel(answer_text)
-                emotion_intent_res = {
-                    "emotion_labels": {"neutral": 1.0},
-                    "competency_intent_labels": {"problem_solving": 1.0},
-                    "dominant_emotion": "neutral",
-                    "dominant_competency": "problem_solving",
-                    "confidence_score": 0.0,
-                    "evidence_note": "mock mode",
-                }
-            else:
-                grounding_res, cbi_res, emotion_intent_res = eval_llm_chains_parallel_with_emotion(answer_text)
+            grounding_res, cbi_res, emotion_intent_res = eval_llm_chains_parallel_with_emotion(answer_text)
             logger.info("📡 LLM 체인 응답 수신 완료 (grounding / competency / emotion_intent)")
         else:
             cbi_res, emotion_intent_res = eval_llm_chains_competency_emotion(answer_text)

@@ -57,16 +57,21 @@ def _check_evaluation_failure(report):
 
 
 def _create_report(session):
-    # 동시 GET 요청이 같은 세션 리포트를 중복 생성하거나 IntegrityError를 내는 것을
-    # 막기 위해 세션 행에 select_for_update 락을 건다. 이미 생성됐으면 그대로 반환.
+    # LLM 평가/리포트 요약 생성은 외부 API 호출을 포함할 수 있으므로 DB 락 밖에서 수행한다.
+    # 저장 직전에만 짧게 세션 row lock을 잡아 중복 FinalReport 생성을 방지한다.
+    existing = FinalReport.objects.filter(session=session).first()
+    if existing:
+        return existing
+
+    summary = generate_final_report(session)
+    if is_failed_report_summary(summary):
+        raise ReportGenerationFailed()
+
     with transaction.atomic():
         InterviewSession.objects.select_for_update().get(pk=session.pk)
-        existing = FinalReport.objects.filter(session=session).first()
-        if existing:
-            return existing
-        summary = generate_final_report(session)
-        if is_failed_report_summary(summary):
-            raise ReportGenerationFailed()
+        report = FinalReport.objects.filter(session=session).first()
+        if report:
+            return report
         return FinalReport.objects.create(session=session, summary=summary)
 
 
@@ -117,13 +122,14 @@ class FinalReportGenerateView(APIView):
             return Response(serializer.data, status=status.HTTP_200_OK)
 
         try:
+            # LLM 호출/백필은 락 밖에서 수행하고, 저장 구간만 잠근다.
+            summary = generate_final_report(session)
+            if is_failed_report_summary(summary):
+                raise ReportGenerationFailed()
+
             with transaction.atomic():
-                # 동시 강제재생성 경합 방지: 세션 행에 락을 걸고 락 안에서 리포트 재확인.
                 InterviewSession.objects.select_for_update().get(pk=session.pk)
                 report = FinalReport.objects.filter(session=session).first()
-                summary = generate_final_report(session)
-                if is_failed_report_summary(summary):
-                    raise ReportGenerationFailed()
                 is_new = report is None
                 if report:
                     report.summary = summary

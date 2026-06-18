@@ -36,7 +36,7 @@ def to_db_records(
     jd_analysis_id: str,
 ) -> list[dict]:
     """
-    최終 질문 목록을 GeneratedQuestion 모델 저장용 레코드로 변환한다.
+    최종 질문 목록을 GeneratedQuestion 모델 저장용 레코드로 변환한다.
 
     반환 형식 (GeneratedQuestion 필드에 맞춤):
     [

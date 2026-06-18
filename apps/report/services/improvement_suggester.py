@@ -24,7 +24,6 @@ logger = logging.getLogger("feedback_ai.improvement_suggester")
 
 # evaluation_chains와 동일 컨벤션: 키/모델/모의 플래그 재사용
 _OPENAI_KEY = getattr(settings, "OPENAI_API_KEY", None)
-_USE_MOCK = getattr(settings, "OPENAI_USE_MOCK", False)
 _MODEL = getattr(settings, "IMPROVEMENT_SUGGESTER_MODEL", "gpt-4o-mini")
 _ANSWER_EXCERPT_LIMIT = 700  # 토큰 제어용 답변 발췌 길이
 
@@ -76,7 +75,7 @@ def generate_improvement_suggestions(items: list[dict]) -> dict[str, str]:
     if not items:
         return {}
 
-    if _use_mock() or _USE_MOCK or not _OPENAI_KEY:
+    if _use_mock() or not _OPENAI_KEY:
         logger.info("improvement_suggester: mock/no-key 모드 — 템플릿 폴백 사용")
         return {}
 

@@ -12,7 +12,7 @@ Pipeline 3 - ④ 질문 통합 & 중복 제거
 
 from .utils import get_client, get_embeddings, cosine_similarity
 
-_DEFAULT_TARGET = {"personality": 3, "technical": 4, "experience": 3}
+_DEFAULT_TARGET = {"personality": 2, "technical": 2, "experience": 1}
 
 
 def merge_and_deduplicate(
@@ -20,6 +20,7 @@ def merge_and_deduplicate(
     llm_questions: list[dict],
     target_counts: dict | None = None,
     similarity_threshold: float = 0.88,
+    github_questions: list[dict] | None = None,
 ) -> list[dict]:
     """
     RAG 검색 질문과 LLM 생성 질문을 합쳐 중복을 제거하고 유형별 개수를 맞춘다.
@@ -29,9 +30,15 @@ def merge_and_deduplicate(
       2. 유형별 그룹 내에서 threshold 이상 유사 쌍 발견 시 RAG 질문 제거 (LLM 우선)
       3. 남은 질문에서 target_counts만큼 선택 (LLM → RAG 순)
       4. 부족하면 RAG 보충, 남으면 임베딩 순 상위 N개 선택
+
+    github_questions:
+      GitHub repo 검증 기반 질문 (source=project|combined).
+      target_counts 슬롯을 뺏지 않고 결과에 '추가'된다 — 단, 최종 결과와
+      의미 중복인 것만 제거하고 덧붙인다. (검증 질문은 차별화 가치라 보존)
     """
     if target_counts is None:
         target_counts = _DEFAULT_TARGET
+    github_questions = github_questions or []
 
     for q in llm_questions:
         q["_priority"] = 1
@@ -39,7 +46,7 @@ def merge_and_deduplicate(
         q["_priority"] = 2
 
     all_questions = llm_questions + rag_questions
-    if not all_questions:
+    if not all_questions and not github_questions:
         return []
 
     client = get_client()
@@ -78,5 +85,24 @@ def merge_and_deduplicate(
     for q in all_questions:
         q.pop("_emb", None)
         q.pop("_priority", None)
+
+    # GitHub 검증 질문은 슬롯과 무관하게 '추가'한다.
+    # 단, 이미 선정된 result와 의미 중복인 것만 제거하고 덧붙인다.
+    if github_questions:
+        base_texts = [q.get("text") or q.get("question_text", "") for q in result]
+        gh_texts   = [q.get("text", "") for q in github_questions]
+        embs       = get_embeddings(base_texts + gh_texts, client)
+        base_embs  = embs[:len(base_texts)]
+        gh_embs    = embs[len(base_texts):]
+
+        for gq, ge in zip(github_questions, gh_embs):
+            is_dup = any(
+                cosine_similarity(ge, be) >= similarity_threshold for be in base_embs
+            )
+            if not is_dup:
+                gq.pop("_emb", None)
+                gq.pop("_priority", None)
+                result.append(gq)
+                base_embs.append(ge)        # 이후 GitHub 질문끼리도 중복 제거
 
     return result
