@@ -1,5 +1,7 @@
 from rest_framework import serializers
 from django.contrib.auth import authenticate
+from django.contrib.auth.password_validation import validate_password as dj_validate_password
+from django.core.exceptions import ValidationError as DjangoValidationError
 from .models import User
 
 
@@ -19,6 +21,20 @@ class SignupSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError('This email is banned.')
             raise serializers.ValidationError('This email is already registered.')
         return value
+
+    def validate(self, attrs):
+        """AUTH_PASSWORD_VALIDATORS 를 적용해 비밀번호 정책을 강제한다.
+
+        이메일/이름 포함 비밀번호 차단을 위해 미저장 User 인스턴스를 함께 넘긴다.
+        (12345678 / qwer1234 / password123 등은 여기서 400 으로 거부된다.)
+        """
+        password = attrs.get('password', '')
+        candidate = User(email=attrs.get('email', ''), name=attrs.get('name', ''))
+        try:
+            dj_validate_password(password, user=candidate)
+        except DjangoValidationError as exc:
+            raise serializers.ValidationError({'password': list(exc.messages)})
+        return attrs
 
     def create(self, validated_data):
         """Create a new user with the validated data."""

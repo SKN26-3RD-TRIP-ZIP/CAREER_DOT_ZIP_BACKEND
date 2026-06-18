@@ -7,6 +7,7 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.serializers import TokenRefreshSerializer
 from rest_framework_simplejwt.exceptions import InvalidToken, TokenError
 
+from django.conf import settings
 from django.contrib.auth.models import update_last_login
 
 from .serializers import SignupSerializer, LoginSerializer, SignupResponseSerializer
@@ -246,8 +247,9 @@ class LoginView(APIView):
                 key=REFRESH_COOKIE_NAME,
                 value=str(refresh),
                 httponly=True,
-                secure=False,  # 운영(prod)에서는 True 로 전환 필요
-                samesite='Lax',
+                # 로컬은 False/Lax, 운영(HTTPS)은 .env 로 REFRESH_COOKIE_SECURE=True 주입.
+                secure=getattr(settings, "REFRESH_COOKIE_SECURE", False),
+                samesite=getattr(settings, "REFRESH_COOKIE_SAMESITE", "Lax"),
                 max_age=REFRESH_COOKIE_MAX_AGE,
             )
             return response
@@ -292,7 +294,11 @@ class LogoutView(APIView):
 
     def post(self, request):
         response = Response({'message': '로그아웃 완료'}, status=status.HTTP_200_OK)
-        response.delete_cookie(REFRESH_COOKIE_NAME, samesite='Lax')
+        # 삭제 쿠키의 samesite 는 설정 시점과 동일해야 브라우저가 정확히 제거한다.
+        response.delete_cookie(
+            REFRESH_COOKIE_NAME,
+            samesite=getattr(settings, "REFRESH_COOKIE_SAMESITE", "Lax"),
+        )
         # 참고: simplejwt token_blacklist 앱 미설치 → 서버측 blacklist 미적용.
         # 서버측 폐기 필요 시 INSTALLED_APPS 에 token_blacklist 추가 + migration 선행
         # (DB 변경 → ERD/마이그레이션: NEEDS_CONFIRMATION).
