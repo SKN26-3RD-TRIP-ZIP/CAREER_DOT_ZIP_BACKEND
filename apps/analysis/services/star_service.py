@@ -13,7 +13,7 @@ Pipeline 3 - ⑤ STAR 답변 생성
 """
 
 import json
-from .utils import get_client, clean_json
+from .utils import get_client, clean_json, log_llm_usage
 
 
 def generate_star_answers(
@@ -111,6 +111,7 @@ def generate_star_answers(
             },
         ],
     )
+    log_llm_usage(response)
 
     answer_list = json.loads(clean_json(response.choices[0].message.content))
     answer_map  = {item["question_index"]: item for item in answer_list}

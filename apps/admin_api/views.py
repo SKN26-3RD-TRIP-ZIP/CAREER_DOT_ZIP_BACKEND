@@ -48,7 +48,13 @@ class MemberListView(AdminAPIView):
 
         now = timezone.now()
         members = User.objects.annotate(
-            practice_count=Count('interview_sessions', distinct=True),
+            practice_count=Count(
+                'interview_sessions',
+            
+            filter=Q(interview_sessions__status='completed'),
+                distinct=True,
+            ),
+            
             monthly_session_count=Count(
                 'interview_sessions',
                 filter=Q(

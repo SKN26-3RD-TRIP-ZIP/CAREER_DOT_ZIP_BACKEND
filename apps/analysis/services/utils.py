@@ -16,6 +16,20 @@ def get_client() -> OpenAI:
     return wrappers.wrap_openai(OpenAI())
 
 
+def log_llm_usage(response, user=None):
+    """chat.completions.create() 응답에서 토큰 사용량을 DB에 저장."""
+    from apps.admin_api.models import LlmUsageLog
+    try:
+        LlmUsageLog.objects.create(
+            user=user,
+            model=response.model,
+            prompt_tokens=response.usage.prompt_tokens,
+            completion_tokens=response.usage.completion_tokens,
+        )
+    except Exception:
+        pass
+
+
 def clean_json(text: str) -> str:
     """LLM 응답에서 마크다운 코드블록을 제거하고 순수 JSON 문자열만 반환."""
     return text.strip().replace("```json", "").replace("```", "").strip()
