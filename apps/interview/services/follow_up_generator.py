@@ -1,4 +1,5 @@
 from django.conf import settings
+from django.core.cache import cache
 from django.db import transaction
 from django.db.models import Max, Q
 
@@ -19,6 +20,7 @@ class FollowupGenerator:
     """
 
     ai_chain_service = None
+    sufficiency_cache_timeout_seconds = 60 * 60 * 24
 
     @classmethod
     def create_followup(cls, answer):
@@ -33,6 +35,9 @@ class FollowupGenerator:
         if existing:
             return existing, False
 
+        if cls._has_cached_no_followup_decision(answer):
+            return None, False
+
         ai_chain_service = cls._get_ai_chain_service()
 
         sufficiency_payload = cls._build_sufficiency_payload(answer)
@@ -41,6 +46,7 @@ class FollowupGenerator:
         )
 
         if not cls._should_generate_followup(sufficiency_result):
+            cls._cache_no_followup_decision(answer, sufficiency_result)
             return None, False
 
         selected_weakness_tag = sufficiency_result.get("selected_weakness_tag")
@@ -308,6 +314,22 @@ class FollowupGenerator:
             return should_generate_followup
 
         return False
+
+    @classmethod
+    def _has_cached_no_followup_decision(cls, answer):
+        return cache.get(cls._no_followup_cache_key(answer)) is True
+
+    @classmethod
+    def _cache_no_followup_decision(cls, answer, sufficiency_result):
+        cache.set(
+            cls._no_followup_cache_key(answer),
+            True,
+            timeout=cls.sufficiency_cache_timeout_seconds,
+        )
+
+    @staticmethod
+    def _no_followup_cache_key(answer):
+        return f"interview:no_followup:{answer.id}:{answer.updated_at.timestamp()}"
 
     @staticmethod
     def _is_real_call_mode():
