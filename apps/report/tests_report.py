@@ -58,7 +58,10 @@ class FinalReportIntegrationTests(APITestCase):
         filler_words={'total': filler_count, 'counts': {'어': filler_count}},
         score_detail={
             'speech_delivery': {'speech_score': 90, 'total_filler_count': filler_count},
-            'technical_depth': {'is_grounded': True},
+                # 'grounding' 키 사용 — report_generator는 score_detail.get("grounding")을 읽음.
+                # 이전 'technical_depth' 키는 읽히지 않아 grounding_flags가 항상 비어
+                # grounding_avg=None이 되는 버그였음.
+                'grounding': {'is_grounded': True},
         },
     )
     AnswerStrengthTag.objects.create(answer=answer, strength_tag=self.strength_tag, priority_rank=1)
@@ -73,7 +76,7 @@ class FinalReportIntegrationTests(APITestCase):
         set(summary.keys()),
         {'evaluation_metadata', 'score_summary', 'score_detail', 'dynamically_triggered_tags'},
     )
-    self.assertEqual(summary['score_summary']['overall_score'], 85)
+    self.assertAlmostEqual(summary['score_summary']['overall_score'], 90.6, places=0)  # persona(practical): BEI86×.30+CBI85×.25+Grounding100×.30+Speech90×.15=90.6
     self.assertIn('metrics', summary['score_summary'])
     self.assertIn('speech_diagnostics', summary['score_detail'])
     self.assertTrue(summary['dynamically_triggered_tags']['strength_tags'])
@@ -86,7 +89,7 @@ class FinalReportIntegrationTests(APITestCase):
 
     self.assertEqual(response.status_code, status.HTTP_200_OK)
     self.assertIn('summary', response.data)
-    self.assertEqual(response.data['summary']['score_summary']['overall_score'], 85)
+    self.assertAlmostEqual(response.data['summary']['score_summary']['overall_score'], 90.6, places=0)  # persona(practical): BEI86×.30+CBI85×.25+Grounding100×.30+Speech90×.15=90.6
 
   @patch('apps.evaluation.services.evaluation_services.eval_llm_chains_parallel')
   def test_evaluation_create_uses_interview_sufficiency_bridge(self, mock_llm):
@@ -134,3 +137,49 @@ class FinalReportIntegrationTests(APITestCase):
 
     self.assertEqual(response.status_code, status.HTTP_201_CREATED)
     self.assertTrue(Evaluation.objects.filter(answer=answer).exists())
+
+
+  def test_personality_session_grounding_is_null(self):
+    """personality 세션은 grounding_avg가 None이어야 한다.
+
+    session.interview_type='personality'이면 report_generator는
+    grounding_flags를 수집하지 않으므로 grounding_score=None.
+    PDF에서 None 크래시 없이 '—' 표기가 돼야 한다(pdf_generator None 가드).
+    """
+    session = InterviewSession.objects.create(
+        user=self.user,
+        interview_type='personality',
+        persona='coach',
+        interview_mode='text',
+        status='completed',
+    )
+    question = InterviewQuestion.objects.create(
+        session=session,
+        question_text='자신의 강점을 말해보세요.',
+        order_index=1,
+    )
+    answer = InterviewAnswer.objects.create(
+        session=session, question=question,
+        answer_text='저는 문제 해결력이 뛰어납니다.',
+        long_pause_count=0,
+    )
+    Evaluation.objects.create(
+        answer=answer,
+        final_tech_score=70,
+        bei_score={'situation': {'score': 18}, 'task': {'score': 17}, 'action': {'score': 16}, 'result': {'score': 15}},
+        cbi_score={'assigned_level': 3, 'score': 70},
+        filler_words={'total': 0, 'counts': {}},
+        score_detail={
+            'speech_delivery': {'speech_score': 75},
+            # personality 세션: grounding 키 없음 → grounding_avg=None 이 정상
+        },
+    )
+    AnswerStrengthTag.objects.create(answer=answer, strength_tag=self.strength_tag, priority_rank=1)
+
+    summary = generate_final_report(session)
+
+    grounding = summary['score_summary']['metrics']['grounding_score']
+    self.assertIsNone(grounding, "personality 세션 grounding_score는 None이어야 함")
+    # 종합 점수가 grounding 없이도 정상 산출되는지
+    self.assertGreater(summary['score_summary']['overall_score'], 0)
+

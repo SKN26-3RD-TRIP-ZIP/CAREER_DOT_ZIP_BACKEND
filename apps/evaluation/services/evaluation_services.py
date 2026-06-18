@@ -10,6 +10,7 @@ from django.conf import settings
 from apps.evaluation.evaluation_chains import (
     eval_llm_chains_parallel,
     eval_llm_chains_parallel_with_emotion,
+    eval_llm_chains_competency_emotion,
 )
 from apps.evaluation.utils.tag_router import route_deterministic_tags
 
@@ -155,23 +156,35 @@ class EvaluationService:
         # 2. [Task A] 로컬 비유창성 언어분석 엔진 구동
         dysfluency_res = EvaluationService.analyze_dysfluency_local(answer_text, long_pause_count)
 
-        # 3. [Django 동기화 개편]: 3-chain 병렬 실행 (E7.4 감정/의도 분류 포함)
-        logger.info("📡 외부 LLM 동기 오케스트레이션(Task B, C, D) 병렬 호출 시작...")
+        # 3. [Django 동기화 개편]: LLM 체인 병렬 실행 (E7.4 감정/의도 분류 포함)
+        # question_category == "technical" 인 경우에만 grounding 체인을 실행한다.
+        # 비기술(personality/general) 질문은 grounding 지표가 의미 없으므로
+        # 해당 LLM 호출을 생략해 비용·지연을 줄인다.
+        logger.info("📡 외부 LLM 동기 오케스트레이션(Task B, C, D) 병렬 호출 시작... (question_type=%s)", question_type)
 
-        if getattr(settings, "OPENAI_USE_MOCK", False):
-            grounding_res, cbi_res = eval_llm_chains_parallel(answer_text)
-            emotion_intent_res = {
-                "emotion_labels": {"neutral": 1.0},
-                "competency_intent_labels": {"problem_solving": 1.0},
-                "dominant_emotion": "neutral",
-                "dominant_competency": "problem_solving",
-                "confidence_score": 0.0,
-                "evidence_note": "mock mode",
-            }
+        if question_type == "technical":
+            if getattr(settings, "OPENAI_USE_MOCK", False):
+                grounding_res, cbi_res = eval_llm_chains_parallel(answer_text)
+                emotion_intent_res = {
+                    "emotion_labels": {"neutral": 1.0},
+                    "competency_intent_labels": {"problem_solving": 1.0},
+                    "dominant_emotion": "neutral",
+                    "dominant_competency": "problem_solving",
+                    "confidence_score": 0.0,
+                    "evidence_note": "mock mode",
+                }
+            else:
+                grounding_res, cbi_res, emotion_intent_res = eval_llm_chains_parallel_with_emotion(answer_text)
+            logger.info("📡 LLM 체인 응답 수신 완료 (grounding / competency / emotion_intent)")
         else:
-            grounding_res, cbi_res, emotion_intent_res = eval_llm_chains_parallel_with_emotion(answer_text)
-
-        logger.info("📡 LLM 체인 응답 수신 완료 (grounding / competency / emotion_intent)")
+            cbi_res, emotion_intent_res = eval_llm_chains_competency_emotion(answer_text)
+            grounding_res = {
+                "tech_stack": None,
+                "before_metric": None,
+                "after_metric": None,
+                "is_grounded": False,
+            }
+            logger.info("📡 LLM 체인 응답 수신 완료 (competency / emotion_intent) — grounding 생략")
 
         # 4. [정성 지표 정산 레이어]
         bei_star = cbi_res.get("bei_star", {})

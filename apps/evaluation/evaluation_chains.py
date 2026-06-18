@@ -170,3 +170,15 @@ def eval_llm_chains_parallel_with_emotion(answer_text: str) -> tuple[dict, dict,
         competency_future = executor.submit(fetch_competency, answer_text)
         emotion_future = executor.submit(fetch_emotion_intent, answer_text)
         return grounding_future.result(), competency_future.result(), emotion_future.result()
+
+
+def eval_llm_chains_competency_emotion(answer_text: str) -> tuple[dict, dict]:
+    """grounding 체인 없이 competency + emotion_intent 만 병렬 실행.
+
+    비기술(personality/general) 질문은 grounding 지표가 의미 없으므로
+    해당 LLM 호출을 생략해 비용·지연을 줄인다.
+    """
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        competency_future = executor.submit(fetch_competency, answer_text)
+        emotion_future = executor.submit(fetch_emotion_intent, answer_text)
+        return competency_future.result(), emotion_future.result()
