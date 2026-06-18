@@ -8,8 +8,14 @@ Pipeline 1 - ② 사용자 문서 분석 / 프로젝트 경험
 
 포함 함수:
   extract_projects()    이력서·자소서에서 프로젝트 정보 추출 (미구현)
-  merge_with_github()   GitHub 연동 데이터와 병합 — ProjectMerger (미구현, 나중에)
+  merge_with_github()   GitHub 연동 데이터와 병합 — ProjectMerger
 """
+
+from .github_service import analyze_repo, FRAMEWORK_ALIASES
+
+# 분석 전체에서 실제로 가져올 repo 상한 (0 ~ MAX_REPOS).
+# 입력 개수 검증은 input 앱 책임이고, 여기서는 "꺼내 쓸 때"의 안전망만 둔다.
+MAX_REPOS = 5
 
 
 def extract_projects(resume_text: str, cover_letter_text: str) -> list[dict]:
@@ -47,30 +53,134 @@ def extract_projects(resume_text: str, cover_letter_text: str) -> list[dict]:
     raise NotImplementedError("extract_projects 미구현")
 
 
-def merge_with_github(
-    projects: list[dict],
-    github_username: str,
-) -> list[dict]:
+def _reconcile_tech(
+    claimed: list[str],
+    frameworks: set[str],
+    languages: dict,
+) -> tuple[list[str], list[str]]:
+    """
+    이력서 tech 주장을 repo 실제(frameworks + languages)와 대조한다.
+    대소문자·별칭(패키지명 표기)을 흡수해 매칭한다.
+
+    반환: (verified, unverified)
+      verified   — repo에서 근거를 찾은 기술
+      unverified — 이력서엔 있으나 repo에서 근거 못 찾은 기술 (질문의 금광)
+    """
+    fw_lower   = {f.lower() for f in frameworks}
+    lang_lower = {l.lower() for l in languages}
+
+    verified, unverified = [], []
+    for tech in claimed:
+        t = tech.strip().lower()
+        # 이력서가 패키지명으로 적었을 수도 있어 별칭 정규화도 함께 시도
+        normalized = FRAMEWORK_ALIASES.get(t, tech).lower()
+        if t in fw_lower or normalized in fw_lower or t in lang_lower:
+            verified.append(tech)
+        else:
+            unverified.append(tech)
+    return verified, unverified
+
+
+def _languages_to_pct(languages: dict) -> dict:
+    """언어 바이트 수 → 백분율. 빈 dict면 그대로 빈 dict."""
+    total = sum(languages.values())
+    if not total:
+        return {}
+    return {lang: round(b / total * 100, 1) for lang, b in languages.items()}
+
+
+def merge_with_github(projects: list[dict]) -> list[dict]:
     """
     추출된 ProjectProfile에 GitHub 실제 데이터를 병합한다 — ProjectMerger.
-    이력서에 적힌 기술 스택을 GitHub 커밋·언어 통계로 검증하고 신뢰도를 보강한다.
 
-    반환: is_github_verified=True 항목이 포함된 ProjectProfile 리스트
+    각 project는 ProjectExperience.github_url에서 온 repo 링크를 들고 있다.
+      project["github_urls"]  : list[str]  (1개 이상 — backend/frontend 분리 대비)
+      project["github_url"]   : str        (단일 — ProjectExperience.github_url 직매핑 시)
+    둘 중 있는 쪽을 사용하며, 여러 repo는 합산해 하나의 "실제 모습"으로 본다.
 
-    병합 로직 (예시):
-      - GitHub repo 이름으로 이력서 프로젝트와 매칭
-      - 매칭된 repo의 언어 통계 → tech 필드 검증
-        (이력서에 Python이라 했는데 Python 비중이 낮으면 신뢰도 보통)
-      - 커밋 수, 기여자 수 → contribution, team_size 보강
-      - 최근 커밋일 → 현재 유지보수 여부
+    ★ 전역 상한: 분석 전체에서 최대 MAX_REPOS(=5)개 repo만 실제로 가져온다.
+       초과분은 에러 없이 github_errors에 kind="limit_skipped"로만 기록한다.
+       (입력 개수 검증은 input 앱 책임 — 여기서는 꺼내 쓸 때의 안전망만)
 
-    TODO:
-      - GitHub API 연동 (PyGitHub 또는 직접 REST 호출)
-      - repo 이름 매칭 전략 (이름이 다를 수 있으므로 퍼지 매칭 필요)
-      - 나중에 구현 예정 — 지금은 is_github_verified=False 고정
+    ★ 예외 안전: repo 연결 실패(비공개·삭제·오타·rate limit·네트워크)는
+       project를 죽이지 않고 is_github_verified=False + github_errors로 흡수한다.
+       전체 분석 파이프라인은 이력서 기반으로 계속 진행된다.
+
+    각 project에 추가되는 필드:
+      is_github_verified : bool   — repo 1개라도 분석 성공했는가
+      github_urls        : list   — 사용한 repo 링크
+      github_frameworks  : list   — repo에서 실제 검출된 프레임워크
+      github_languages   : dict   — 언어 비중(%)
+      verified_tech      : list   — 이력서 tech 중 repo로 검증된 것
+      unverified_tech    : list   — 이력서 tech 중 근거 못 찾은 것
+      github_evidence    : dict   — 프레임워크별 근거 파일
+      github_errors      : list   — 실패한 repo 내역 [{github_url, error, kind}]
     """
-    # TODO: 나중에 구현 (GitHub 연동 스프린트 시)
-    raise NotImplementedError("merge_with_github 미구현 (GitHub 연동 스프린트 예정)")
+    remaining = MAX_REPOS                  # 분석 전체에 걸친 전역 예산
+    for project in projects:
+        urls = project.get("github_urls")
+        if not urls:
+            single = project.get("github_url")
+            urls = [single] if single else []
+
+        # repo 링크가 아예 없는 프로젝트 — GitHub 검증 스킵 (정상 흐름)
+        if not urls:
+            project.setdefault("is_github_verified", False)
+            project.setdefault("github_errors", [])
+            continue
+
+        # 전역 상한: 분석 전체에서 최대 MAX_REPOS개까지만 실제로 가져온다.
+        # 초과분은 에러를 던지지 않고 limit_skipped로 기록 (분석은 계속 진행).
+        use_urls   = urls[:remaining]
+        over_limit = urls[len(use_urls):]
+        remaining -= len(use_urls)
+
+        all_frameworks: set[str] = set()
+        all_languages: dict = {}
+        evidence: dict = {}
+        errors: list = []
+        any_ok = False
+
+        for url in use_urls:
+            repo = analyze_repo(url)        # 절대 예외를 던지지 않음
+            if not repo["ok"]:
+                errors.append({
+                    "github_url": url,
+                    "error":      repo["error"],
+                    "kind":       repo["error_kind"],
+                })
+                continue
+
+            any_ok = True
+            all_frameworks.update(repo["frameworks"])
+            for lang, b in repo["languages"].items():
+                all_languages[lang] = all_languages.get(lang, 0) + b
+            for fw, files in repo["evidence"].items():
+                evidence.setdefault(fw, [])
+                evidence[fw].extend(f for f in files if f not in evidence[fw])
+
+        for url in over_limit:
+            errors.append({
+                "github_url": url,
+                "error":      f"분석 repo 상한({MAX_REPOS}개) 초과로 건너뜀.",
+                "kind":       "limit_skipped",
+            })
+
+        claimed = project.get("tech") or project.get("tech_stack") or []
+        verified, unverified = _reconcile_tech(claimed, all_frameworks, all_languages)
+
+        project.update({
+            "is_github_verified": any_ok,
+            "github_urls":        urls,
+            "github_frameworks":  sorted(all_frameworks),
+            "github_languages":   _languages_to_pct(all_languages),
+            "verified_tech":      verified,
+            "unverified_tech":    unverified,
+            "github_evidence":    evidence,
+            "github_errors":      errors,    # 비어있으면 전부 성공
+        })
+
+    return projects
 
 
 def score_projects(

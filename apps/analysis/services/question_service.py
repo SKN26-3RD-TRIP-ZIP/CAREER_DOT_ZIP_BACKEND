@@ -19,7 +19,7 @@ Pipeline 3 - 예상 질문 & STAR 답변 생성 / 오케스트레이터
 from concurrent.futures import ThreadPoolExecutor
 
 from .question_rag_service    import search_similar_questions
-from .question_gen_service    import generate_questions
+from .question_gen_service    import generate_questions, generate_github_questions_for_projects
 from .star_service            import generate_star_answers
 from .question_merge_service  import merge_and_deduplicate
 from .question_output_service import build_question_output
@@ -33,6 +33,7 @@ def generate_all_questions(
     jd_text: str = "",
     resume_text: str = "",
     cover_letter_text: str = "",
+    projects: list[dict] | None = None,
 ) -> list[dict]:
     """
     Pipeline 3 ②~⑥를 순서대로 실행해 최종 질문 + STAR 답변 목록을 반환한다.
@@ -41,12 +42,18 @@ def generate_all_questions(
       - dict  {"tech_keywords": [...], "trait_keywords": [...]} → 신규 형식
       - list  ["Python", "Django", ...] → 구형 형식 (tech_keywords로 래핑)
 
+    projects:
+      merge_with_github()를 거친 ProjectProfile 리스트 (선택).
+      GitHub 검증된 repo가 있으면 코드 기반 질문(③')을 추가로 생성한다.
+      None이거나 검증된 repo가 없으면 GitHub 가지는 건너뛴다 (하위 호환).
+
     실행 순서:
-      ② RAG 검색   (question_rag_service — MySQL 폴백)
-      ③ LLM 질문 생성  (question_gen_service)
-      ④ 통합/중복 제거 (question_merge_service)
-      ⑤ STAR 답변 생성 (star_service)
-      ⑥ 출력 포맷 변환 (question_output_service)
+      ②  RAG 검색       (question_rag_service — MySQL 폴백)
+      ③  LLM 질문 생성   (question_gen_service)
+      ③' GitHub 검증 질문 (question_gen_service — repo+이력서+자소서 결합)
+      ④  통합/중복 제거   (question_merge_service)
+      ⑤  STAR 답변 생성   (star_service)
+      ⑥  출력 포맷 변환   (question_output_service)
 
     반환 형식:
     [
@@ -73,8 +80,10 @@ def generate_all_questions(
     else:
         jd_keywords_dict = jd_keywords
 
-    # ②③ RAG 검색 + LLM 질문 생성 — 병렬 실행
-    with ThreadPoolExecutor(max_workers=2) as executor:
+    projects = projects or []
+
+    # ②③③' RAG 검색 + LLM 질문 생성 + GitHub 검증 질문 — 병렬 실행
+    with ThreadPoolExecutor(max_workers=3) as executor:
         f_rag = executor.submit(search_similar_questions, jd_keywords_dict, 20)
         f_llm = executor.submit(
             generate_questions,
@@ -83,11 +92,22 @@ def generate_all_questions(
             jd_keywords=jd_keywords_dict,
             resume_analysis=resume_analysis,
         )
-        rag_questions = f_rag.result()
-        llm_questions = f_llm.result()
+        # projects가 GitHub 검증(merge_with_github)을 거친 경우에만 코드 기반 질문 생성.
+        # 검증된 repo가 없으면 generate_github_questions_for_projects가 [] 반환.
+        f_github = executor.submit(
+            generate_github_questions_for_projects,
+            projects,
+            resume_analysis,
+            cover_letter_text,
+        )
+        rag_questions    = f_rag.result()
+        llm_questions    = f_llm.result()
+        github_questions = f_github.result()
 
-    # ④ RAG + LLM 질문 통합 & 중복 제거
-    questions = merge_and_deduplicate(rag_questions, llm_questions)
+    # ④ RAG + LLM + GitHub 질문 통합 & 중복 제거
+    questions = merge_and_deduplicate(
+        rag_questions, llm_questions, github_questions=github_questions
+    )
 
     # ⑤ STAR 답변 생성
     questions_with_star = generate_star_answers(

@@ -14,7 +14,12 @@ question_gen_service 프롬프트 품질 테스트 (실제 GPT 호출)
 """
 
 import pytest
-from apps.analysis.services.question_gen_service import generate_questions
+from apps.analysis.services.question_gen_service import (
+    generate_questions,
+    generate_github_questions,
+    generate_github_questions_for_projects,
+    _build_github_context,
+)
 
 
 # ══════════════════════════════════════════════════════════════
@@ -270,3 +275,63 @@ class TestGenerateQuestionsEdgeCases:
             print(f"\n  질문: '{text}'")
             # 물음표로 끝나거나 적당한 길이의 질문이어야 함
             assert len(text) > 10, f"질문이 너무 짧음: '{text}'"
+
+
+# ══════════════════════════════════════════════════════════════
+# GitHub 질문 생성 — 오프라인 검증 (GPT 호출 없는 부분만)
+# ══════════════════════════════════════════════════════════════
+
+class TestGithubQuestionsOffline:
+
+    def test_미검증이면_빈리스트(self):
+        """repo를 못 읽었으면(is_github_verified=False) GPT 호출 없이 빈 리스트"""
+        project = {"name": "P", "tech": ["Django"], "is_github_verified": False}
+        assert generate_github_questions(project) == []     # GPT 호출 안 함
+
+    def test_컨텍스트에_미검증기술_강조(self):
+        project = {
+            "name": "마켓",
+            "tech": ["Django", "Redis"],
+            "verified_tech": ["Django"],
+            "unverified_tech": ["Redis"],
+            "github_frameworks": ["Django"],
+            "github_languages": {"Python": 100.0},
+            "contribution": 70,
+        }
+        ctx = _build_github_context(project, {"models.py": "class User: pass"})
+        assert "Redis" in ctx                  # 미검증 기술이 컨텍스트에 들어감
+        assert "근거 못 찾은 기술" in ctx
+        assert "models.py" in ctx              # 코드 스니펫 포함
+        assert "70" in ctx                     # 기여도 주장 포함
+
+    def test_스니펫_없어도_컨텍스트_생성(self):
+        project = {"name": "P", "tech": ["Python"], "github_languages": {}}
+        ctx = _build_github_context(project, {})
+        assert "코드 스니펫 없음" in ctx        # 빈 스니펫도 안전하게 처리
+
+    def test_컨텍스트에_자소서_이력서_결합(self):
+        """combined 질문용 — 이력서 경험 + 자소서 내용이 컨텍스트에 포함"""
+        project = {"name": "마켓", "tech": ["Django"], "is_github_verified": True}
+        resume = {
+            "key_experiences": ["Redis 캐싱으로 응답속도 40% 개선"],
+            "trait_evidence":  ["성능 최적화를 주도적으로 진행"],
+        }
+        ctx = _build_github_context(
+            project, {}, resume_analysis=resume,
+            cover_letter_text="저는 성능 병목을 직접 찾아 해결한 경험이 있습니다.",
+        )
+        assert "40% 개선" in ctx                 # 이력서 경험 포함
+        assert "성능 최적화를 주도적으로" in ctx   # 자소서 역량 문장 포함
+        assert "성능 병목을 직접" in ctx          # 자소서 원문 일부 포함
+
+    def test_for_projects_검증된게_없으면_빈리스트(self):
+        """검증 성공 프로젝트가 없으면 GPT 호출 없이 빈 리스트"""
+        projects = [
+            {"name": "A", "is_github_verified": False},
+            {"name": "B"},     # 필드 없음
+        ]
+        assert generate_github_questions_for_projects(projects) == []
+
+    def test_for_projects_빈입력(self):
+        assert generate_github_questions_for_projects([]) == []
+        assert generate_github_questions_for_projects(None) == []
