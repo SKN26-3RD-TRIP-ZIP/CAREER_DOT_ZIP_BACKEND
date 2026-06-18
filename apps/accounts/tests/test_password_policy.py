@@ -14,7 +14,7 @@ from django.test import override_settings
 from rest_framework import status
 from rest_framework.test import APITestCase
 
-from apps.accounts.models import User
+from apps.accounts.models import PendingRegistration, User
 
 # 로컬 메모리 메일 백엔드 — 회원가입 시 인증번호 메일 발송이 실제 SMTP 로 나가지 않도록.
 LOCMEM_EMAIL = "django.core.mail.backends.locmem.EmailBackend"
@@ -26,7 +26,15 @@ class PasswordPolicyTests(APITestCase):
 
     def _signup(self, password, email="pw.user@example.com", name="홍길동"):
         return self.client.post(
-            self.signup_url, {"email": email, "name": name, "password": password}
+            self.signup_url,
+            {
+                "email": email,
+                "name": name,
+                "password": password,
+                "terms_agreed": True,
+                "privacy_agreed": True,
+                "marketing_agreed": False,
+            },
         )
 
     def test_rejects_numeric_only(self):
@@ -55,7 +63,8 @@ class PasswordPolicyTests(APITestCase):
     def test_accepts_strong_password(self):
         res = self._signup("StrongPw!234", email="good.user@example.com")
         self.assertEqual(res.status_code, status.HTTP_201_CREATED)
-        self.assertTrue(User.objects.filter(email="good.user@example.com").exists())
+        self.assertFalse(User.objects.filter(email="good.user@example.com").exists())
+        self.assertTrue(PendingRegistration.objects.filter(email="good.user@example.com").exists())
 
 
 @override_settings(EMAIL_CODE_TTL_SECONDS=600)

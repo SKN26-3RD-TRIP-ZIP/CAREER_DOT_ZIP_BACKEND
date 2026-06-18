@@ -21,7 +21,7 @@ from rest_framework.test import APITestCase
 
 import re
 
-from apps.accounts.models import User
+from apps.accounts.models import PendingRegistration, User
 
 
 def _code_from_outbox(email):
@@ -48,23 +48,33 @@ class SignupVerifyLoginFlowTests(APITestCase):
 
     def _signup(self, email="qa.user@example.com", name="[QA] 사용자"):
         return self.client.post(
-            self.signup_url, {"email": email, "name": name, "password": PASSWORD}
+            self.signup_url,
+            {
+                "email": email,
+                "name": name,
+                "password": PASSWORD,
+                "terms_agreed": True,
+                "privacy_agreed": True,
+                "marketing_agreed": False,
+            },
         )
 
-    def test_signup_success_creates_unverified_user(self):
+    def test_signup_success_creates_pending_without_user(self):
         res = self._signup()
         self.assertEqual(res.status_code, status.HTTP_201_CREATED)
-        self.assertEqual(res.data["email"], "qa.user@example.com")
-        user = User.objects.get(email="qa.user@example.com")
-        self.assertFalse(user.is_verified)
+        self.assertNotIn("user_id", res.data)
+        self.assertTrue(PendingRegistration.objects.filter(email="qa.user@example.com").exists())
+        self.assertFalse(User.objects.filter(email="qa.user@example.com").exists())
 
     def test_signup_sends_welcome_and_admin_emails(self):
         self._signup()
         # 환영(사용자) + 관리자 알림 = 2통
-        self.assertEqual(len(mail.outbox), 2)
+        self.assertEqual(len(mail.outbox), 1)
         recipients = [m.to[0] for m in mail.outbox]
         self.assertIn("qa.user@example.com", recipients)
-        self.assertIn("qa-admin@example.com", recipients)
+        code = _code_from_outbox("qa.user@example.com")
+        self.client.post(self.verify_url, {"email": "qa.user@example.com", "code": code})
+        self.assertEqual(len(mail.outbox), 2)
         # 관리자 알림에 민감정보(비밀번호) 미포함
         admin_mail = next(m for m in mail.outbox if m.to[0] == "qa-admin@example.com")
         self.assertNotIn(PASSWORD, admin_mail.body)
@@ -74,22 +84,21 @@ class SignupVerifyLoginFlowTests(APITestCase):
         self._signup()
         res = self._signup()
         self.assertEqual(res.status_code, status.HTTP_200_OK)
-        self.assertTrue(res.data.get("requires_verification"))
-        self.assertEqual(res.data.get("email"), "qa.user@example.com")
+        self.assertIn("retry_after", res.data)
+        self.assertFalse(User.objects.filter(email="qa.user@example.com").exists())
 
     def test_duplicate_verified_signup_returns_409(self):
         # 인증 완료된 이메일만 "이미 가입된 이메일"로 막는다.
         self._signup()
-        user = User.objects.get(email="qa.user@example.com")
-        user.is_verified = True
-        user.save(update_fields=["is_verified"])
+        code = _code_from_outbox("qa.user@example.com")
+        self.client.post(self.verify_url, {"email": "qa.user@example.com", "code": code})
         res = self._signup()
         self.assertEqual(res.status_code, status.HTTP_409_CONFLICT)
 
     def test_unverified_login_returns_403(self):
         self._signup()
         res = self.client.post(self.login_url, {"email": "qa.user@example.com", "password": PASSWORD})
-        self.assertEqual(res.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(res.status_code, status.HTTP_401_UNAUTHORIZED)
 
     def test_verify_code_success_then_login_issues_token_and_cookie(self):
         self._signup()
@@ -116,7 +125,8 @@ class SignupVerifyLoginFlowTests(APITestCase):
         self.client.post(self.verify_url, {"email": "qa.user@example.com", "code": code})
         # 이미 인증된 계정 — 임의 코드로도 200(이미 인증)
         res = self.client.post(self.verify_url, {"email": "qa.user@example.com", "code": "000000"})
-        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        self.assertEqual(res.status_code, status.HTTP_409_CONFLICT)
+        self.assertEqual(res.data["code"], "REGISTRATION_ALREADY_VERIFIED")
 
     def test_verify_invalid_code_400(self):
         self._signup()
@@ -132,13 +142,13 @@ class SignupVerifyLoginFlowTests(APITestCase):
     def test_verify_expired_code_400(self):
         from datetime import timedelta
         from django.utils import timezone
-        from apps.accounts.models import EmailVerificationCode
+        from apps.accounts.models import PendingRegistration
 
         self._signup()
         code = _code_from_outbox("qa.user@example.com")
-        EmailVerificationCode.objects.filter(
-            user__email="qa.user@example.com", is_used=False
-        ).update(expires_at=timezone.now() - timedelta(seconds=1))
+        PendingRegistration.objects.filter(email="qa.user@example.com").update(
+            expires_at=timezone.now() - timedelta(seconds=1)
+        )
         res = self.client.post(self.verify_url, {"email": "qa.user@example.com", "code": code})
         self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)
 
@@ -209,7 +219,7 @@ class SignupVerifyLoginFlowTests(APITestCase):
             "/api/v1/auth/resend-verification",
             {"email": "public@example.com"},
         )
-        self.assertEqual(resend_res.status_code, status.HTTP_200_OK)
+        self.assertEqual(resend_res.status_code, status.HTTP_409_CONFLICT)
 
     def test_suspended_account_login_blocked(self):
         user = User.objects.create_user(email="suspended@example.com", name="s", password=PASSWORD)

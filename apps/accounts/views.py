@@ -8,15 +8,22 @@ from rest_framework_simplejwt.serializers import TokenRefreshSerializer
 from rest_framework_simplejwt.exceptions import InvalidToken, TokenError
 
 from django.conf import settings
+from django.contrib.auth.hashers import make_password
 from django.contrib.auth.models import update_last_login
+from django.db import IntegrityError, transaction
+from django.utils import timezone
 
 from .serializers import SignupSerializer, LoginSerializer, SignupResponseSerializer
-from .models import User, EmailVerificationCode
+from .models import User, EmailVerificationCode, PendingRegistration
 from .codes import (
     issue_code,
+    issue_pending_code,
     verify_code,
+    verify_pending_code,
     VerifyResult,
     ResendCooldownError,
+    invalidate_pending_code,
+    pending_resend_retry_after,
     get_ttl_seconds,
     get_resend_cooldown_seconds,
 )
@@ -51,6 +58,27 @@ def _invalidate_active_codes(user) -> None:
     EmailVerificationCode.objects.filter(user=user, is_used=False).update(is_used=True)
 
 
+def _email_send_failed_payload(email=None) -> dict:
+    data = {
+        "detail": "인증 메일 발송에 실패했습니다. 잠시 후 다시 시도해 주세요.",
+        "code": "EMAIL_SEND_FAILED",
+    }
+    if email:
+        data["email"] = email
+    return data
+
+
+def _pending_signup_payload(*, detail="인증번호를 발송했습니다.", retry_after=None) -> dict:
+    data = {
+        "detail": detail,
+        **_verification_meta(),
+    }
+    if retry_after is not None:
+        data["resend_after"] = retry_after
+        data["retry_after"] = retry_after
+    return data
+
+
 class SignupView(APIView):
     """회원가입 엔드포인트. 성공 시 인증번호 메일과 관리자 알림 메일을 발송한다.
 
@@ -65,7 +93,7 @@ class SignupView(APIView):
     permission_classes = [permissions.AllowAny]
     authentication_classes = []
 
-    def post(self, request):
+    def _legacy_signup_post_unused(self, request):
         email = (request.data.get('email') or '').strip()
 
         # 1) 이미 존재하는 이메일 — 인증 완료/차단 계정만 가입을 막는다.
@@ -165,7 +193,6 @@ class SignupView(APIView):
             return Response(data, status=status.HTTP_503_SERVICE_UNAVAILABLE)
 
         data = {
-            "user_id": user.id,
             "email": user.email,
             "name": user.name,
             "requires_verification": True,
@@ -186,12 +213,138 @@ class SignupView(APIView):
         return Response(data, status=status.HTTP_200_OK)
 
 
+    def post(self, request):
+        data = request.data.copy()
+        email = (data.get('email') or '').strip()
+        if email:
+            data['email'] = email
+
+        existing_user = User.objects.filter(email=email).first() if email else None
+        if existing_user is not None:
+            if existing_user.status == 'banned':
+                return Response(
+                    {
+                        'detail': 'This account has been banned. Please contact the administrator.',
+                        'code': 'ACCOUNT_BANNED',
+                    },
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+            if existing_user.is_verified:
+                return Response(
+                    {
+                        'detail': 'This email is already registered.',
+                        'code': 'EMAIL_ALREADY_REGISTERED',
+                    },
+                    status=status.HTTP_409_CONFLICT,
+                )
+            return self._resend_for_unverified(existing_user)
+
+        serializer = SignupSerializer(data=data)
+        if not serializer.is_valid():
+            return Response({'error': serializer.errors}, status=status.HTTP_400_BAD_REQUEST)
+
+        attrs = serializer.validated_data
+        now = timezone.now()
+        password_hash = make_password(attrs['password'])
+        pending = None
+        code = None
+
+        try:
+            with transaction.atomic():
+                pending = (
+                    PendingRegistration.objects
+                    .select_for_update()
+                    .filter(email=attrs['email'])
+                    .first()
+                )
+                if pending is None:
+                    pending = PendingRegistration.objects.create(
+                        email=attrs['email'],
+                        password_hash=password_hash,
+                        name=attrs['name'],
+                        expires_at=now,
+                        resend_available_at=now,
+                        max_attempts=getattr(settings, "EMAIL_CODE_MAX_ATTEMPTS", 5),
+                        terms_version=attrs.get('terms_version') or 'v1',
+                        privacy_version=attrs.get('privacy_version') or 'v1',
+                        terms_agreed=attrs['terms_agreed'],
+                        privacy_agreed=attrs['privacy_agreed'],
+                        marketing_agreed=attrs.get('marketing_agreed', False),
+                        agreed_at=now,
+                    )
+                else:
+                    retry_after = pending_resend_retry_after(pending, now=now)
+                    pending.password_hash = password_hash
+                    pending.name = attrs['name']
+                    pending.terms_version = attrs.get('terms_version') or 'v1'
+                    pending.privacy_version = attrs.get('privacy_version') or 'v1'
+                    pending.terms_agreed = attrs['terms_agreed']
+                    pending.privacy_agreed = attrs['privacy_agreed']
+                    pending.marketing_agreed = attrs.get('marketing_agreed', False)
+                    pending.agreed_at = now
+                    pending.is_used = False
+                    pending.verified_at = None
+                    pending.save(
+                        update_fields=[
+                            'password_hash',
+                            'name',
+                            'terms_version',
+                            'privacy_version',
+                            'terms_agreed',
+                            'privacy_agreed',
+                            'marketing_agreed',
+                            'agreed_at',
+                            'is_used',
+                            'verified_at',
+                            'updated_at',
+                        ]
+                    )
+                    if retry_after > 0:
+                        return Response(
+                            _pending_signup_payload(
+                                detail='이미 인증 대기 중인 이메일입니다. 앞서 보낸 인증번호를 확인해 주세요.',
+                                retry_after=retry_after,
+                            ),
+                            status=status.HTTP_200_OK,
+                        )
+
+                code = issue_pending_code(pending)
+        except IntegrityError:
+            return Response(
+                {
+                    'detail': 'This email already has a pending registration.',
+                    'code': 'PENDING_REGISTRATION_EXISTS',
+                    **_verification_meta(),
+                },
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        try:
+            send_verification_code_email(pending, code)
+            logger.info(
+                "pending signup verification email sent pending_id=%s email=%s",
+                pending.id,
+                _mask_email(pending.email),
+            )
+        except Exception as exc:  # noqa: BLE001
+            invalidate_pending_code(pending)
+            logger.warning(
+                "pending signup verification email failed pending_id=%s email=%s exc=%s",
+                pending.id,
+                _mask_email(pending.email),
+                exc.__class__.__name__,
+            )
+            return Response(_email_send_failed_payload(pending.email), status=status.HTTP_503_SERVICE_UNAVAILABLE)
+
+        return Response(_pending_signup_payload(), status=status.HTTP_201_CREATED)
+
+
 class VerifyEmailView(APIView):
     """이메일 인증(6자리 인증번호). POST /api/v1/auth/verify-email  body: {"email","code"}"""
     permission_classes = [permissions.AllowAny]
     authentication_classes = []
 
-    def post(self, request):
+    def _legacy_verify_post_unused(self, request):
         email = (request.data.get('email') or '').strip()
         code = (request.data.get('code') or '').strip()
         if not email or not code:
@@ -240,6 +393,140 @@ class VerifyEmailView(APIView):
         )
 
 
+    def post(self, request):
+        email = (request.data.get('email') or '').strip()
+        code = (request.data.get('code') or '').strip()
+        if not email or not code:
+            return Response(
+                {'detail': '이메일과 인증번호를 모두 입력해 주세요.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        pending = PendingRegistration.objects.filter(email=email).first()
+        if pending is not None:
+            return self._verify_pending(email=email, code=code)
+
+        return self._verify_legacy(email=email, code=code)
+
+    def _verify_pending(self, *, email, code):
+        user = None
+        try:
+            with transaction.atomic():
+                pending = PendingRegistration.objects.select_for_update().get(email=email)
+                if pending.is_used:
+                    return Response(
+                        {
+                            'detail': '이미 인증이 완료된 가입 요청입니다.',
+                            'code': 'REGISTRATION_ALREADY_VERIFIED',
+                        },
+                        status=status.HTTP_409_CONFLICT,
+                    )
+
+                result = verify_pending_code(pending, code)
+                if result == VerifyResult.OK:
+                    if User.objects.filter(email=pending.email).exists():
+                        return Response(
+                            {
+                                'detail': 'This email is already registered.',
+                                'code': 'EMAIL_ALREADY_REGISTERED',
+                            },
+                            status=status.HTTP_409_CONFLICT,
+                        )
+                    user = User.objects.create_user_with_password_hash(
+                        email=pending.email,
+                        password_hash=pending.password_hash,
+                        name=pending.name,
+                        is_verified=True,
+                    )
+                elif result == VerifyResult.TOO_MANY:
+                    return Response(
+                        {
+                            'detail': '인증 시도 횟수를 초과했습니다. 인증번호를 재발송해 주세요.',
+                            'code': 'VERIFY_TOO_MANY_ATTEMPTS',
+                        },
+                        status=status.HTTP_429_TOO_MANY_REQUESTS,
+                    )
+                elif result == VerifyResult.EXPIRED:
+                    return Response(
+                        {
+                            'detail': '인증번호가 만료되었거나 존재하지 않습니다. 재발송해 주세요.',
+                            'code': 'VERIFY_CODE_EXPIRED',
+                        },
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+                else:
+                    return Response(
+                        {'detail': '인증번호가 올바르지 않습니다.', 'code': 'VERIFY_CODE_INVALID'},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+        except PendingRegistration.DoesNotExist:
+            return Response(
+                {
+                    'detail': '인증 대기 중인 가입 요청을 찾을 수 없습니다.',
+                    'code': 'PENDING_REGISTRATION_NOT_FOUND',
+                },
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        except IntegrityError:
+            return Response(
+                {
+                    'detail': 'This email is already registered.',
+                    'code': 'EMAIL_ALREADY_REGISTERED',
+                },
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        try:
+            send_admin_signup_notification(user, signup_method="email")
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("admin signup notification failed user_id=%s exc=%s", user.id, exc.__class__.__name__)
+
+        logger.info("email verified pending_id=%s user_id=%s", pending.id, user.id)
+        return Response({'message': '이메일 인증이 완료되었습니다.'}, status=status.HTTP_200_OK)
+
+    def _verify_legacy(self, *, email, code):
+        try:
+            user = User.objects.get(email=email)
+        except User.DoesNotExist:
+            return Response(
+                {
+                    'detail': '인증 대기 중인 가입 요청을 찾을 수 없습니다.',
+                    'code': 'PENDING_REGISTRATION_NOT_FOUND',
+                },
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        if user.is_verified:
+            return Response({'message': '이미 인증된 계정입니다.'}, status=status.HTTP_200_OK)
+
+        result = verify_code(user, code)
+        if result == VerifyResult.OK:
+            user.is_verified = True
+            user.save(update_fields=['is_verified', 'updated_at'])
+            logger.info("email verified(code legacy) user_id=%s", user.id)
+            return Response({'message': '이메일 인증이 완료되었습니다.'}, status=status.HTTP_200_OK)
+        if result == VerifyResult.TOO_MANY:
+            return Response(
+                {
+                    'detail': '인증 시도 횟수를 초과했습니다. 인증번호를 재발송해 주세요.',
+                    'code': 'VERIFY_TOO_MANY_ATTEMPTS',
+                },
+                status=status.HTTP_429_TOO_MANY_REQUESTS,
+            )
+        if result == VerifyResult.EXPIRED:
+            return Response(
+                {
+                    'detail': '인증번호가 만료되었거나 존재하지 않습니다. 재발송해 주세요.',
+                    'code': 'VERIFY_CODE_EXPIRED',
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        return Response(
+            {'detail': '인증번호가 올바르지 않습니다.', 'code': 'VERIFY_CODE_INVALID'},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+
 class ResendVerificationView(APIView):
     """
     이메일 인증 재발송. POST /api/v1/auth/resend-verification  body: {"email": "..."}
@@ -253,7 +540,7 @@ class ResendVerificationView(APIView):
 
     GENERIC_MESSAGE = "입력하신 이메일이 가입되어 있고 아직 인증 전이라면, 인증번호를 다시 발송했습니다."
 
-    def post(self, request):
+    def _legacy_resend_post_unused(self, request):
         email = (request.data.get('email') or '').strip()
         if not email:
             return Response({'error': 'Email is required.'}, status=status.HTTP_400_BAD_REQUEST)
@@ -293,6 +580,132 @@ class ResendVerificationView(APIView):
                 exc.__class__.__name__,
             )
             return Response(EMAIL_SEND_FAILED_RESPONSE, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+
+        return Response(
+            {
+                'detail': '인증번호를 다시 발송했습니다.',
+                'message': '인증번호를 다시 발송했습니다.',
+                **_verification_meta(),
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+    def post(self, request):
+        email = (request.data.get('email') or '').strip()
+        if not email:
+            return Response({'error': 'Email is required.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        pending = PendingRegistration.objects.filter(email=email).first()
+        if pending is not None:
+            return self._resend_pending(email)
+
+        return self._resend_legacy(email)
+
+    def _resend_pending(self, email):
+        try:
+            with transaction.atomic():
+                pending = PendingRegistration.objects.select_for_update().get(email=email)
+                if pending.is_used:
+                    return Response(
+                        {
+                            'detail': '이미 인증이 완료된 가입 요청입니다.',
+                            'code': 'REGISTRATION_ALREADY_VERIFIED',
+                        },
+                        status=status.HTTP_409_CONFLICT,
+                    )
+                code = issue_pending_code(pending)
+        except PendingRegistration.DoesNotExist:
+            return Response(
+                {
+                    'detail': '인증 대기 중인 가입 요청을 찾을 수 없습니다.',
+                    'code': 'PENDING_REGISTRATION_NOT_FOUND',
+                },
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        except ResendCooldownError as exc:
+            return Response(
+                {
+                    'detail': '잠시 후 다시 시도해 주세요.',
+                    'code': 'RESEND_COOLDOWN',
+                    'retry_after': exc.retry_after,
+                },
+                status=status.HTTP_429_TOO_MANY_REQUESTS,
+            )
+
+        try:
+            send_verification_code_email(pending, code)
+            logger.info(
+                "pending verification code resend sent pending_id=%s email=%s",
+                pending.id,
+                _mask_email(pending.email),
+            )
+        except Exception as exc:  # noqa: BLE001
+            invalidate_pending_code(pending)
+            logger.warning(
+                "pending verification code resend failed pending_id=%s email=%s exc=%s",
+                pending.id,
+                _mask_email(pending.email),
+                exc.__class__.__name__,
+            )
+            return Response(_email_send_failed_payload(), status=status.HTTP_503_SERVICE_UNAVAILABLE)
+
+        return Response(
+            {
+                'detail': '인증번호를 다시 발송했습니다.',
+                'message': '인증번호를 다시 발송했습니다.',
+                **_verification_meta(),
+            },
+            status=status.HTTP_200_OK,
+        )
+
+    def _resend_legacy(self, email):
+        try:
+            user = User.objects.get(email=email)
+        except User.DoesNotExist:
+            return Response(
+                {
+                    'detail': '인증 대기 중인 가입 요청을 찾을 수 없습니다.',
+                    'code': 'PENDING_REGISTRATION_NOT_FOUND',
+                },
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        if user.is_verified:
+            return Response(
+                {
+                    'detail': '이미 인증된 계정입니다.',
+                    'code': 'REGISTRATION_ALREADY_VERIFIED',
+                },
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        try:
+            code = issue_code(user)
+            send_verification_code_email(user, code)
+            logger.info(
+                "verification code resend sent user_id=%s email=%s",
+                user.id,
+                _mask_email(user.email),
+            )
+        except ResendCooldownError as exc:
+            return Response(
+                {
+                    'detail': '잠시 후 다시 시도해 주세요.',
+                    'code': 'RESEND_COOLDOWN',
+                    'retry_after': exc.retry_after,
+                },
+                status=status.HTTP_429_TOO_MANY_REQUESTS,
+            )
+        except Exception as exc:  # noqa: BLE001
+            _invalidate_active_codes(user)
+            logger.warning(
+                "verification code resend failed user_id=%s email=%s exc=%s",
+                user.id,
+                _mask_email(user.email),
+                exc.__class__.__name__,
+            )
+            return Response(_email_send_failed_payload(), status=status.HTTP_503_SERVICE_UNAVAILABLE)
 
         return Response(
             {

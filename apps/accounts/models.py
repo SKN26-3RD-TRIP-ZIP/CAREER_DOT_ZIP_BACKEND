@@ -58,6 +58,48 @@ class UserManager(BaseUserManager):
             return user
         user.save(using=self._db)
         return user
+
+    def create_user_with_password_hash(self, email, password_hash, name, **extra_fields):
+        """Create a user from an already-generated Django password hash."""
+        if not email:
+            raise ValueError('The Email field must be set')
+        email = self.normalize_email(email)
+        legacy_role = extra_fields.pop('role', None)
+        user = self.model(email=email, name=name, password=password_hash, **extra_fields)
+        if self._has_legacy_role_column():
+            now = timezone.now()
+            role = legacy_role or ('admin' if user.is_staff or user.is_superuser else 'user')
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    INSERT INTO accounts_user (
+                        password, last_login, is_superuser, email, name,
+                        is_verified, status, is_staff, is_active,
+                        created_at, updated_at, role
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    """,
+                    [
+                        user.password,
+                        user.last_login,
+                        user.is_superuser,
+                        user.email,
+                        user.name,
+                        user.is_verified,
+                        user.status,
+                        user.is_staff,
+                        user.is_active,
+                        now,
+                        now,
+                        role,
+                    ],
+                )
+                user.id = cursor.lastrowid
+            user.created_at = now
+            user.updated_at = now
+            return user
+        user.save(using=self._db)
+        return user
     
     def create_superuser(self, email, password, name, **extra_fields):
         """Create and save a superuser."""
@@ -139,3 +181,40 @@ class EmailVerificationCode(models.Model):
 
     def __str__(self):
         return f'EmailVerificationCode(user_id={self.user_id}, used={self.is_used})'
+
+
+class PendingRegistration(models.Model):
+    """Pending signup data stored until the email code is verified."""
+
+    id = models.BigAutoField(primary_key=True)
+    email = models.EmailField(unique=True, db_index=True)
+    password_hash = models.CharField(max_length=128)
+    name = models.CharField(max_length=255)
+    code_hash = models.CharField(max_length=128, blank=True)
+    expires_at = models.DateTimeField()
+    resend_available_at = models.DateTimeField()
+    attempt_count = models.PositiveSmallIntegerField(default=0)
+    max_attempts = models.PositiveSmallIntegerField(default=5)
+    is_used = models.BooleanField(default=False)
+    verified_at = models.DateTimeField(null=True, blank=True)
+    terms_version = models.CharField(max_length=50, default='v1')
+    privacy_version = models.CharField(max_length=50, default='v1')
+    terms_agreed = models.BooleanField(default=False)
+    privacy_agreed = models.BooleanField(default=False)
+    marketing_agreed = models.BooleanField(default=False)
+    agreed_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'accounts_pending_registration'
+        verbose_name = 'Pending Registration'
+        verbose_name_plural = 'Pending Registrations'
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['email', 'is_used'], name='pending_email_used_idx'),
+            models.Index(fields=['expires_at'], name='pending_expires_idx'),
+        ]
+
+    def __str__(self):
+        return f'PendingRegistration(email={self.email}, used={self.is_used})'

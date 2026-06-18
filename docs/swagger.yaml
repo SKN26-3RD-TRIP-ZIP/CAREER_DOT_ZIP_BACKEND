@@ -1,0 +1,178 @@
+openapi: 3.0.3
+info:
+  title: Career.zip API
+  version: 2026-06-18
+servers:
+  - url: /api/v1
+paths:
+  /auth/signup:
+    post:
+      summary: Create pending signup and send verification code
+      tags: [Auth]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SignupRequest'
+      responses:
+        '201':
+          description: Verification code sent. User is not created yet.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VerificationMetaResponse'
+        '200':
+          description: Pending registration already exists and resend is cooling down.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VerificationMetaResponse'
+        '400':
+          description: Validation error
+        '409':
+          description: Email already registered or pending conflict
+        '503':
+          description: Email send failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /auth/verify-email:
+    post:
+      summary: Verify pending signup code and create User
+      tags: [Auth]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VerifyEmailRequest'
+      responses:
+        '200':
+          description: Email verified and User created
+        '400':
+          description: Invalid or expired verification code
+        '404':
+          description: Pending registration not found
+        '409':
+          description: Already verified or registered
+        '429':
+          description: Too many attempts
+  /auth/verify-email/resend:
+    post:
+      summary: Resend pending signup verification code
+      tags: [Auth]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email:
+                  type: string
+                  format: email
+      responses:
+        '200':
+          description: Verification code resent
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VerificationMetaResponse'
+        '404':
+          description: Pending registration not found
+        '409':
+          description: Already verified
+        '429':
+          description: Resend cooldown
+        '503':
+          description: Email send failed
+  /auth/resend-verification:
+    post:
+      summary: Legacy resend endpoint for existing unverified User rows
+      tags: [Auth]
+      security: []
+      deprecated: true
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email:
+                  type: string
+                  format: email
+      responses:
+        '200':
+          description: Legacy code resent or cooldown notice
+components:
+  schemas:
+    SignupRequest:
+      type: object
+      required:
+        - email
+        - name
+        - password
+        - terms_agreed
+        - privacy_agreed
+      properties:
+        email:
+          type: string
+          format: email
+        name:
+          type: string
+        password:
+          type: string
+          format: password
+          minLength: 8
+        terms_version:
+          type: string
+          default: v1
+        privacy_version:
+          type: string
+          default: v1
+        terms_agreed:
+          type: boolean
+        privacy_agreed:
+          type: boolean
+        marketing_agreed:
+          type: boolean
+          default: false
+    VerifyEmailRequest:
+      type: object
+      required: [email, code]
+      properties:
+        email:
+          type: string
+          format: email
+        code:
+          type: string
+          pattern: '^[0-9]{6}$'
+    VerificationMetaResponse:
+      type: object
+      required: [detail, expires_in, resend_after]
+      properties:
+        detail:
+          type: string
+        expires_in:
+          type: integer
+          example: 600
+        resend_after:
+          type: integer
+          example: 60
+        retry_after:
+          type: integer
+    ErrorResponse:
+      type: object
+      properties:
+        detail:
+          type: string
+        code:
+          type: string

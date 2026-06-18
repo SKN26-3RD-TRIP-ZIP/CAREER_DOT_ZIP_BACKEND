@@ -98,6 +98,86 @@ def issue_code(user) -> str:
     return code
 
 
+def issue_pending_code(pending) -> str:
+    """Issue a code for a PendingRegistration without creating a User."""
+    now = timezone.now()
+    retry_after = pending_resend_retry_after(pending, now=now)
+    if retry_after > 0:
+        raise ResendCooldownError(retry_after)
+
+    code = generate_code()
+    pending.code_hash = hash_code(code)
+    pending.expires_at = now + timedelta(seconds=get_ttl_seconds())
+    pending.resend_available_at = now + timedelta(seconds=get_resend_cooldown_seconds())
+    pending.attempt_count = 0
+    pending.max_attempts = get_max_attempts()
+    pending.is_used = False
+    pending.verified_at = None
+    pending.save(
+        update_fields=[
+            "code_hash",
+            "expires_at",
+            "resend_available_at",
+            "attempt_count",
+            "max_attempts",
+            "is_used",
+            "verified_at",
+            "updated_at",
+        ]
+    )
+    return code
+
+
+def pending_resend_retry_after(pending, *, now=None) -> int:
+    """Return remaining resend cooldown seconds for a pending registration."""
+    now = now or timezone.now()
+    resend_available_at = getattr(pending, "resend_available_at", None)
+    if not resend_available_at or resend_available_at <= now:
+        return 0
+    return max(int((resend_available_at - now).total_seconds()), 1)
+
+
+def invalidate_pending_code(pending) -> None:
+    """Invalidate the current pending code while keeping the signup draft retryable."""
+    now = timezone.now()
+    pending.code_hash = ""
+    pending.expires_at = now
+    pending.resend_available_at = now
+    pending.attempt_count = 0
+    pending.save(
+        update_fields=[
+            "code_hash",
+            "expires_at",
+            "resend_available_at",
+            "attempt_count",
+            "updated_at",
+        ]
+    )
+
+
+def verify_pending_code(pending, code: str) -> str:
+    """Verify a PendingRegistration code under a row lock held by the caller."""
+    now = timezone.now()
+    if pending.is_used:
+        return VerifyResult.EXPIRED
+    if not pending.code_hash or pending.expires_at <= now:
+        return VerifyResult.EXPIRED
+    if pending.attempt_count >= pending.max_attempts:
+        pending.is_used = True
+        pending.save(update_fields=["is_used", "updated_at"])
+        return VerifyResult.TOO_MANY
+
+    pending.attempt_count += 1
+    if hmac.compare_digest(pending.code_hash, hash_code(code)):
+        pending.is_used = True
+        pending.verified_at = now
+        pending.save(update_fields=["attempt_count", "is_used", "verified_at", "updated_at"])
+        return VerifyResult.OK
+
+    pending.save(update_fields=["attempt_count", "updated_at"])
+    return VerifyResult.INVALID
+
+
 def verify_code(user, code: str) -> str:
     """
     사용자의 최신 미사용 코드와 입력 코드를 검증한다. VerifyResult 중 하나를 반환.
