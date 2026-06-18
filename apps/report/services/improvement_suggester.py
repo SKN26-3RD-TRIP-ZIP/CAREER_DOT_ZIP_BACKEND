@@ -40,6 +40,10 @@ _SYSTEM_PROMPT = (
 )
 
 
+def _use_mock() -> bool:
+    return getattr(settings, "OPENAI_USE_MOCK", False)
+
+
 def _build_user_payload(items: list[dict]) -> str:
     """LLM 입력용 질문 배열을 JSON 문자열로 직렬화한다."""
     compact = []
@@ -72,7 +76,7 @@ def generate_improvement_suggestions(items: list[dict]) -> dict[str, str]:
     if not items:
         return {}
 
-    if _USE_MOCK or not _OPENAI_KEY:
+    if _use_mock() or _USE_MOCK or not _OPENAI_KEY:
         logger.info("improvement_suggester: mock/no-key 모드 — 템플릿 폴백 사용")
         return {}
 

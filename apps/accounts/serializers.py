@@ -87,6 +87,9 @@ class LoginSerializer(serializers.Serializer):
         if not user.is_verified:
             raise serializers.ValidationError('Email not verified.')
 
+        if user.status == 'suspended':
+            raise serializers.ValidationError('Account is suspended.')
+
         if user.status == 'banned':
             raise serializers.ValidationError('Account is banned.')
 
