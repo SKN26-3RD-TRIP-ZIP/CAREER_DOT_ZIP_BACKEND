@@ -406,6 +406,7 @@ class InterviewQuestionGenerateView(APIView):
                 session=session,
                 order_index=q.get('order_index'),
                 question_type=q.get('question_type'),
+                question_category=q.get('question_category', 'general'),
                 question_text=q.get('question_text'),
                 difficulty=q.get('difficulty'),
                 source_type=q.get('source_type'),

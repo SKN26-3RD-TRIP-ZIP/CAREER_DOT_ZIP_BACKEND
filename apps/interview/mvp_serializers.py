@@ -218,7 +218,7 @@ class MVPQuestionGenerateSerializer(serializers.Serializer):
 
 class MVPQuestionSerializer(serializers.ModelSerializer):
     question_id = serializers.UUIDField(source='id', read_only=True)
-    question_type = serializers.SerializerMethodField()
+    question_category = serializers.CharField(read_only=True)
     difficulty = serializers.SerializerMethodField()
     parent_question_id = serializers.UUIDField(read_only=True)
 
@@ -228,6 +228,7 @@ class MVPQuestionSerializer(serializers.ModelSerializer):
             'question_id',
             'question_text',
             'question_type',
+            'question_category',
             'difficulty',
             'order_index',
             'parent_question_id',
@@ -241,15 +242,6 @@ class MVPQuestionSerializer(serializers.ModelSerializer):
             return QuestionBankItem.objects.filter(id=item_id).first()
         except (ValueError, TypeError):
             return None
-
-    def get_question_type(self, obj):
-        bank_item = self._bank_item(obj)
-        if bank_item:
-            return bank_item.question_type
-        return {
-            'technical': 'technical',
-            'personality': 'personality',
-        }.get(obj.session.interview_type, 'job')
 
     def get_difficulty(self, obj):
         bank_item = self._bank_item(obj)
@@ -284,10 +276,17 @@ class MVPSTTResultUpdateSerializer(serializers.ModelSerializer):
 class MVPFollowupQuestionSerializer(serializers.ModelSerializer):
     question_id = serializers.UUIDField(source='id', read_only=True)
     parent_question_id = serializers.UUIDField(read_only=True)
+    question_category = serializers.CharField(read_only=True)
 
     class Meta:
         model = InterviewQuestion
-        fields = ('question_id', 'question_text', 'parent_question_id')
+        fields = (
+            'question_id',
+            'question_text',
+            'question_type',
+            'question_category',
+            'parent_question_id',
+        )
 
 
 def serialize_mvp_session(session, include_created_at=False, prompt_version_id=None):
