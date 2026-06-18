@@ -23,6 +23,14 @@ from django.db import transaction
 
 from apps.accounts.models import User
 
+
+def _mask_email(email):
+    local, _, domain = email.partition("@")
+    if not domain:
+        return "***"
+    visible = local[:2] if len(local) > 2 else local[:1]
+    return f"{visible}***@{domain}"
+
 # (email, name, role) — 비밀번호는 코드에 두지 않는다.
 QA_ADMIN = ("tripdotzip@gmail.com", "Career.zip Admin", "admin")
 QA_USERS = [
@@ -88,7 +96,7 @@ class Command(BaseCommand):
             else:
                 updated += 1
             # 비밀번호는 출력하지 않는다.
-            self.stdout.write(f"  {'admin' if is_admin else 'user '} | {email} ({name})")
+            self.stdout.write(f"  {'admin' if is_admin else 'user '} | {_mask_email(email)} ({name})")
 
         self.stdout.write("QA seed 계정 처리 중...")
         upsert(*QA_ADMIN)

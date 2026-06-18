@@ -151,6 +151,19 @@ class SignupVerifyLoginFlowTests(APITestCase):
         res = self.client.post(self.refresh_url)
         self.assertEqual(res.status_code, status.HTTP_200_OK)
         self.assertIn("access_token", res.data)
+        self.assertIn("refresh_token", res.cookies)
+
+    def test_token_refresh_ignores_invalid_authorization_header(self):
+        user = User.objects.create_user(email="r2@example.com", name="r2", password=PASSWORD)
+        user.is_verified = True
+        user.save()
+        self.client.post(self.login_url, {"email": "r2@example.com", "password": PASSWORD})
+        self.client.credentials(HTTP_AUTHORIZATION="Bearer invalid-token")
+
+        res = self.client.post(self.refresh_url)
+
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        self.assertIn("access_token", res.data)
 
     def test_refresh_without_cookie_returns_401(self):
         res = self.client.post(self.refresh_url)
@@ -172,6 +185,44 @@ class SignupVerifyLoginFlowTests(APITestCase):
     def test_logout_requires_auth(self):
         res = self.client.post(self.logout_url)
         self.assertEqual(res.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_public_auth_endpoints_ignore_invalid_authorization_header(self):
+        self.client.credentials(HTTP_AUTHORIZATION="Bearer invalid-token")
+
+        signup_res = self._signup("public@example.com")
+        self.assertEqual(signup_res.status_code, status.HTTP_201_CREATED)
+
+        code = _code_from_outbox("public@example.com")
+        verify_res = self.client.post(
+            self.verify_url,
+            {"email": "public@example.com", "code": code},
+        )
+        self.assertEqual(verify_res.status_code, status.HTTP_200_OK)
+
+        login_res = self.client.post(
+            self.login_url,
+            {"email": "public@example.com", "password": PASSWORD},
+        )
+        self.assertEqual(login_res.status_code, status.HTTP_200_OK)
+
+        resend_res = self.client.post(
+            "/api/v1/auth/resend-verification",
+            {"email": "public@example.com"},
+        )
+        self.assertEqual(resend_res.status_code, status.HTTP_200_OK)
+
+    def test_suspended_account_login_blocked(self):
+        user = User.objects.create_user(email="suspended@example.com", name="s", password=PASSWORD)
+        user.is_verified = True
+        user.status = "suspended"
+        user.save(update_fields=["is_verified", "status"])
+
+        res = self.client.post(
+            self.login_url,
+            {"email": "suspended@example.com", "password": PASSWORD},
+        )
+
+        self.assertEqual(res.status_code, status.HTTP_403_FORBIDDEN)
 
 
 @override_settings(EMAIL_BACKEND=LOCMEM_EMAIL)

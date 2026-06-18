@@ -12,8 +12,9 @@ from django.core import mail
 from django.test import override_settings
 from rest_framework import status
 from rest_framework.test import APITestCase
+from unittest.mock import patch
 
-from apps.accounts.models import User
+from apps.accounts.models import User, EmailVerificationCode
 
 LOCMEM_EMAIL = "django.core.mail.backends.locmem.EmailBackend"
 PASSWORD = "QaTestPw!234"  # 테스트 전용 더미
@@ -69,8 +70,37 @@ class ResendVerificationTests(APITestCase):
         User.objects.create_user(email="rv1@example.com", name="rv1", password=PASSWORD)
         res = self.client.post(self.resend_url, {"email": "rv1@example.com"})
         self.assertEqual(res.status_code, status.HTTP_200_OK)
+        self.assertEqual(res.data["expires_in"], 600)
+        self.assertEqual(res.data["resend_after"], 60)
         self.assertEqual(len(mail.outbox), 1)
         self.assertIn("rv1@example.com", mail.outbox[0].to)
+
+    def test_resend_cooldown_returns_retry_after(self):
+        user = User.objects.create_user(email="rv.cooldown@example.com", name="rv", password=PASSWORD)
+        from apps.accounts.codes import issue_code
+
+        issue_code(user)
+        res = self.client.post(self.resend_url, {"email": "rv.cooldown@example.com"})
+
+        self.assertEqual(res.status_code, status.HTTP_429_TOO_MANY_REQUESTS)
+        self.assertEqual(res.data["code"], "RESEND_COOLDOWN")
+        self.assertGreaterEqual(res.data["retry_after"], 1)
+        self.assertLessEqual(res.data["retry_after"], 60)
+
+    def test_resend_email_send_failure_returns_503(self):
+        User.objects.create_user(email="rv.fail@example.com", name="rv", password=PASSWORD)
+
+        with patch("apps.accounts.views.send_verification_code_email", side_effect=RuntimeError("smtp down")):
+            res = self.client.post(self.resend_url, {"email": "rv.fail@example.com"})
+
+        self.assertEqual(res.status_code, status.HTTP_503_SERVICE_UNAVAILABLE)
+        self.assertEqual(res.data["code"], "EMAIL_SEND_FAILED")
+        self.assertFalse(
+            EmailVerificationCode.objects.filter(
+                user__email="rv.fail@example.com",
+                is_used=False,
+            ).exists()
+        )
 
     def test_resend_for_verified_sends_nothing_but_200(self):
         u = User.objects.create_user(email="rv2@example.com", name="rv2", password=PASSWORD)

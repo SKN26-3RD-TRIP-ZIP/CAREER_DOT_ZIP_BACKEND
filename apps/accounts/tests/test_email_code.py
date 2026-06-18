@@ -8,6 +8,7 @@
 """
 import re
 from datetime import timedelta
+from unittest.mock import patch
 
 from django.core import mail
 from django.test import override_settings
@@ -92,6 +93,20 @@ class VerifyEmailEndpointTests(APITestCase):
         self.assertTrue(any("code.user@example.com" in m.to for m in mail.outbox))
         self.assertIsNotNone(self._code_for("code.user@example.com"))
 
+    def test_signup_email_send_failure_returns_503(self):
+        with patch("apps.accounts.views.send_verification_code_email", side_effect=RuntimeError("smtp down")):
+            res = self._signup("mail.fail@example.com")
+
+        self.assertEqual(res.status_code, status.HTTP_503_SERVICE_UNAVAILABLE)
+        self.assertEqual(res.data["code"], "EMAIL_SEND_FAILED")
+        self.assertTrue(User.objects.filter(email="mail.fail@example.com").exists())
+        self.assertFalse(
+            EmailVerificationCode.objects.filter(
+                user__email="mail.fail@example.com",
+                is_used=False,
+            ).exists()
+        )
+
     def test_verify_success(self):
         self._signup()
         code = self._code_for("code.user@example.com")
@@ -109,3 +124,23 @@ class VerifyEmailEndpointTests(APITestCase):
     def test_verify_missing_fields_400(self):
         res = self.client.post(self.verify_url, {"email": "code.user@example.com"})
         self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)
+
+    @override_settings(EMAIL_CODE_MAX_ATTEMPTS=5)
+    def test_verify_max_attempts_five(self):
+        self._signup("attempt.user@example.com")
+        code = self._code_for("attempt.user@example.com")
+        wrong = "111111" if code != "111111" else "222222"
+
+        for _ in range(5):
+            res = self.client.post(
+                self.verify_url,
+                {"email": "attempt.user@example.com", "code": wrong},
+            )
+            self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)
+
+        res = self.client.post(
+            self.verify_url,
+            {"email": "attempt.user@example.com", "code": code},
+        )
+        self.assertEqual(res.status_code, status.HTTP_429_TOO_MANY_REQUESTS)
+        self.assertEqual(res.data["code"], "VERIFY_TOO_MANY_ATTEMPTS")
