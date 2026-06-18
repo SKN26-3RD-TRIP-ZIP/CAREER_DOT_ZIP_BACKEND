@@ -1,7 +1,35 @@
 # apps/evaluation/tests.py
-from django.test import TestCase
+from django.test import SimpleTestCase, TestCase
 from apps.evaluation.utils.tag_router import route_deterministic_tags
 from apps.evaluation.services.evaluation_services import EvaluationService
+from apps.evaluation.services.question_category import resolve_question_category
+
+
+class QuestionCategoryResolverTestCase(SimpleTestCase):
+    def test_explicit_question_category_wins(self):
+        question = type("Question", (), {
+            "question_category": "personality",
+            "question_text": "Redis 캐시 장애 경험을 설명해주세요.",
+        })()
+        session = type("Session", (), {"interview_type": "technical"})()
+        answer = type("Answer", (), {"question": question, "session": session})()
+
+        self.assertEqual(resolve_question_category(answer), "personality")
+
+    def test_personality_session_without_field_is_personality(self):
+        question = type("Question", (), {"question_text": "자신의 강점을 말해주세요."})()
+        session = type("Session", (), {"interview_type": "personality"})()
+        answer = type("Answer", (), {"question": question, "session": session})()
+
+        self.assertEqual(resolve_question_category(answer), "personality")
+
+    def test_comprehensive_session_uses_question_text_heuristic(self):
+        question = type("Question", (), {"question_text": "Redis 캐시 스탬피드를 어떻게 방어했나요?"})()
+        session = type("Session", (), {"interview_type": "comprehensive"})()
+        answer = type("Answer", (), {"question": question, "session": session})()
+
+        self.assertEqual(resolve_question_category(answer), "technical")
+
 
 class EvaluationLogicTestCase(TestCase):
     def setUp(self):

@@ -5,6 +5,7 @@ from collections import Counter
 from django.utils import timezone
 
 from apps.evaluation.services.session_evaluation import evaluate_session_answers
+from apps.evaluation.services.question_category import resolve_question_category
 from apps.evaluation.services.sufficiency_bridge import get_answer_text_for_evaluation
 from apps.report.services.improvement_suggester import generate_improvement_suggestions
 
@@ -156,6 +157,7 @@ def generate_final_report(session):
     speech_scores: list = []
     sbert_scores: list = []
     grounding_flags: list = []   # E7 리뷰 #3 — 답변별 is_grounded 수집
+    technical_answer_count = 0
 
     for ans in evaluated_answers:
         eval_obj = ans.evaluation
@@ -202,21 +204,12 @@ def generate_final_report(session):
         if speech_delivery.get("speech_score") is not None:
             speech_scores.append(speech_delivery["speech_score"])
 
-        # question_category 기준으로 grounding 집계 여부 결정.
-        # InterviewQuestion.question_category == "technical" 인 답변만 분모에 포함.
-        # "personality" / "general" 질문은 is_grounded 가 구조적으로 False이므로
-        # 분모에 넣으면 grounding_score 가 왜곡된다.
-        #
-        # 구버전 데이터(question_category 필드 도입 이전): None/빈 값이면
-        # session.interview_type 으로 추정해 하위 호환을 유지한다.
-        q_category = getattr(ans.question, "question_category", None) or ""
-        if not q_category:
-            q_category = (
-                "technical"
-                if session.interview_type in ("technical", "comprehensive")
-                else "personality"
-            )
+        # 질문 내용 기준으로 grounding 집계 여부 결정.
+        # InterviewQuestion.question_category가 있으면 그 값을 사용하고,
+        # 없으면 evaluation 파트의 호환 헬퍼로 분류한다.
+        q_category = resolve_question_category(ans)
         if q_category == "technical":
+            technical_answer_count += 1
             grounding_block = score_detail.get("grounding", {})
             if isinstance(grounding_block, dict) and "is_grounded" in grounding_block:
                 grounding_flags.append(bool(grounding_block.get("is_grounded")))
@@ -321,11 +314,18 @@ def generate_final_report(session):
 
     # E7 리뷰 #3 — 실제 grounding 지표: is_grounded 비율 × 100.
     # option-C: 기술 답변이 없는 세션(인성면접 전용)은 None → overall_score 가중치에서 제외.
-    grounding_avg: float | None = (
-        round(sum(grounding_flags) / len(grounding_flags) * 100, 1)
-        if grounding_flags else None
+    if technical_answer_count == 0:
+        grounding_avg = None
+    elif grounding_flags:
+        grounding_avg = round(sum(grounding_flags) / len(grounding_flags) * 100, 1)
+    else:
+        grounding_avg = None
+
+    technical_avg = (
+        round((sum(sbert_scores) / len(sbert_scores)) * 100, 1)
+        if sbert_scores
+        else (0.0 if technical_answer_count > 0 else None)
     )
-    technical_avg = round((sum(sbert_scores) / len(sbert_scores)) * 100, 1) if sbert_scores else 0.0
     strength_tags = _aggregate_tag_objects(evaluated_answers, "strength_mappings", "strength_tag")
     weakness_tags = _aggregate_tag_objects(evaluated_answers, "weakness_mappings", "weakness_tag")
 
@@ -339,12 +339,16 @@ def generate_final_report(session):
         speech_avg=speech_avg,
         persona=persona,
     )
+    has_grounding_inputs = (
+        technical_answer_count == 0
+        or len(grounding_flags) == technical_answer_count
+    )
     has_persona_weight_inputs = (
         n > 0
         and structured_bei_count == n
         and len(cbi_scores) == n
         and len(speech_scores) == n
-        and len(grounding_flags) == n
+        and has_grounding_inputs
     )
     overall_score = persona_weighted_score if has_persona_weight_inputs else overall_score
 

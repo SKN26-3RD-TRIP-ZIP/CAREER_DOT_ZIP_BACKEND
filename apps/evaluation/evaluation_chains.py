@@ -17,12 +17,8 @@ logger = logging.getLogger("feedback_ai.evaluation_chains")
 openai_key = getattr(settings, "OPENAI_API_KEY", None)
 client = OpenAI(api_key=openai_key)
 
-# OPENAI_USE_MOCK=True → 실패 시 mock fallback 허용 (개발/테스트용)
-# OPENAI_USE_MOCK=False(기본) → real mode: 실패 시 예외 전파, 0점 silent fallback 금지
-USE_MOCK = getattr(settings, "OPENAI_USE_MOCK", False)
-
-
 def _use_mock() -> bool:
+    """Read mock mode at call time so override_settings works in tests."""
     return getattr(settings, "OPENAI_USE_MOCK", False)
 
 
