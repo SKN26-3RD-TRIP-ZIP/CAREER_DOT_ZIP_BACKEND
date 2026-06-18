@@ -469,6 +469,9 @@ class AIChainOpenAIEngine:
             max_tokens=max_tokens,
         )
 
+        from apps.analysis.services.utils import log_llm_usage
+        log_llm_usage(response)
+
         if not getattr(response, "choices", None):
             return ""
 
