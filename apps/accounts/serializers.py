@@ -8,10 +8,24 @@ from .models import User
 class SignupSerializer(serializers.ModelSerializer):
     """Serializer for user registration."""
     password = serializers.CharField(write_only=True, min_length=8)
+    terms_version = serializers.CharField(required=False, default='v1', max_length=50)
+    privacy_version = serializers.CharField(required=False, default='v1', max_length=50)
+    terms_agreed = serializers.BooleanField(required=True)
+    privacy_agreed = serializers.BooleanField(required=True)
+    marketing_agreed = serializers.BooleanField(required=False, default=False)
 
     class Meta:
         model = User
-        fields = ('email', 'name', 'password')
+        fields = (
+            'email',
+            'name',
+            'password',
+            'terms_version',
+            'privacy_version',
+            'terms_agreed',
+            'privacy_agreed',
+            'marketing_agreed',
+        )
 
     def validate_email(self, value):
         """Validate email uniqueness."""
@@ -34,17 +48,14 @@ class SignupSerializer(serializers.ModelSerializer):
             dj_validate_password(password, user=candidate)
         except DjangoValidationError as exc:
             raise serializers.ValidationError({'password': list(exc.messages)})
+        if attrs.get('terms_agreed') is not True:
+            raise serializers.ValidationError({'terms_agreed': 'Terms agreement is required.'})
+        if attrs.get('privacy_agreed') is not True:
+            raise serializers.ValidationError({'privacy_agreed': 'Privacy agreement is required.'})
         return attrs
 
     def create(self, validated_data):
-        """Create a new user with the validated data."""
-        password = validated_data.pop('password')
-        user = User.objects.create_user(
-            email=validated_data['email'],
-            name=validated_data['name'],
-            password=password,
-        )
-        return user
+        raise NotImplementedError('SignupSerializer does not create User rows directly.')
 
 
 class SignupResponseSerializer(serializers.ModelSerializer):
