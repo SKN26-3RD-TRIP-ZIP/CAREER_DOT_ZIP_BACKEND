@@ -102,18 +102,20 @@ class ResendVerificationTests(APITestCase):
             ).exists()
         )
 
-    def test_resend_for_verified_sends_nothing_but_200(self):
+    def test_resend_for_verified_returns_already_verified(self):
         u = User.objects.create_user(email="rv2@example.com", name="rv2", password=PASSWORD)
         u.is_verified = True
         u.save(update_fields=["is_verified"])
         res = self.client.post(self.resend_url, {"email": "rv2@example.com"})
-        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        self.assertEqual(res.status_code, status.HTTP_409_CONFLICT)
+        self.assertEqual(res.data["code"], "REGISTRATION_ALREADY_VERIFIED")
         self.assertEqual(len(mail.outbox), 0)
 
-    def test_resend_for_unknown_email_returns_generic_200(self):
+    def test_resend_for_unknown_email_returns_pending_not_found(self):
         # 이메일 열거 방지: 미가입도 동일 200, 메일 미발송
         res = self.client.post(self.resend_url, {"email": "nobody@example.com"})
-        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        self.assertEqual(res.status_code, status.HTTP_404_NOT_FOUND)
+        self.assertEqual(res.data["code"], "PENDING_REGISTRATION_NOT_FOUND")
         self.assertEqual(len(mail.outbox), 0)
 
     def test_resend_requires_email(self):

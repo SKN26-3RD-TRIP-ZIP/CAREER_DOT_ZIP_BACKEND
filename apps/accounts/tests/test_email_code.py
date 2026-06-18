@@ -16,7 +16,7 @@ from django.utils import timezone
 from rest_framework import status
 from rest_framework.test import APITestCase
 
-from apps.accounts.models import User, EmailVerificationCode
+from apps.accounts.models import PendingRegistration, User, EmailVerificationCode
 from apps.accounts import codes as codes_mod
 
 LOCMEM_EMAIL = "django.core.mail.backends.locmem.EmailBackend"
@@ -76,7 +76,15 @@ class VerifyEmailEndpointTests(APITestCase):
 
     def _signup(self, email="code.user@example.com"):
         return self.client.post(
-            self.signup_url, {"email": email, "name": "[QA] 코드", "password": PASSWORD}
+            self.signup_url,
+            {
+                "email": email,
+                "name": "[QA] 코드",
+                "password": PASSWORD,
+                "terms_agreed": True,
+                "privacy_agreed": True,
+                "marketing_agreed": False,
+            },
         )
 
     @staticmethod
@@ -99,7 +107,7 @@ class VerifyEmailEndpointTests(APITestCase):
 
         self.assertEqual(res.status_code, status.HTTP_503_SERVICE_UNAVAILABLE)
         self.assertEqual(res.data["code"], "EMAIL_SEND_FAILED")
-        self.assertTrue(User.objects.filter(email="mail.fail@example.com").exists())
+        self.assertFalse(User.objects.filter(email="mail.fail@example.com").exists())
         self.assertFalse(
             EmailVerificationCode.objects.filter(
                 user__email="mail.fail@example.com",
