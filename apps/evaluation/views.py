@@ -57,9 +57,10 @@ class EvaluationDetailView(EvaluationAnswerMixin, APIView):
     if not answer:
       return Response({'detail': 'Answer not found or access denied.'}, status=status.HTTP_404_NOT_FOUND)
 
-    try:
-      evaluation = answer.evaluation
-    except Evaluation.DoesNotExist:
+    # OneToOneField 역참조 실패는 RelatedObjectDoesNotExist(DoesNotExist 서브클래스)를 발생시키므로
+    # hasattr/filter 방식으로 명시적으로 처리한다.
+    evaluation = Evaluation.objects.filter(answer=answer).first()
+    if evaluation is None:
       return Response({'detail': 'Evaluation not found.'}, status=status.HTTP_404_NOT_FOUND)
 
     serializer = EvaluationSerializer(evaluation)

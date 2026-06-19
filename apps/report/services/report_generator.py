@@ -11,11 +11,38 @@ from apps.report.services.improvement_suggester import generate_improvement_sugg
 
 logger = logging.getLogger("feedback_ai.report_generator")
 
+# ============================================================================
 # E7.10 -- 페르소나별 점수 가중치 및 피드백 설정
+#
 # DB 저장값은 common/choices.py INTERVIEW_PERSONA_CHOICES 기준:
 #   "coach" / "practical" / "verifier"
 # ※ "pressure"는 interview/migrations/0009에서 제거됨 (기존 데이터 → verifier 변환)
+#
+# ── 가중치 설계 원칙 ──────────────────────────────────────────────────────────
+#
+# 각 페르소나는 "면접에서 무엇을 판단하려 하는가"라는 핵심 질문을 가진다.
+# 가중치는 그 질문에 대한 답을 가장 잘 설명하는 지표에 높게 배분한다.
+#
+# 지표별 성격:
+#   BEI       경험을 얼마나 논리적으로 구조화해서 말하는가 (STAR 구조, 0~100)
+#   CBI       문제해결 역량의 성숙도 레벨이 어느 수준인가 (Lv.1~4 환산, 0~100)
+#   Grounding 기술 수치 근거를 실제로 제시했는가 (is_grounded 비율, 0~100 or None)
+#   Speech    발화 전달력이 얼마나 안정적인가 (필러워드·휴지 감점, 최대 80)
+#
+# 중요도 수치 범위:
+#   High        0.30 ~ 0.40
+#   Medium-High 0.25 ~ 0.35
+#   Medium      0.20 ~ 0.25
+#   Low         0.10 ~ 0.20
+#   Very Low    0.05 ~ 0.10
+#
+# ============================================================================
 PERSONA_CONFIG: dict[str, dict] = {
+    # ── 코치형: "이 사람은 성장할 수 있는가?" ──────────────────────────────
+    # BEI  High(0.40): 경험에서 교훈을 추출하는 능력 = 성장 가능성의 직접 지표
+    # CBI  Medium(0.25): 현재 레벨이 낮아도 괜찮지만, 현재 위치 파악은 필요
+    # GRD  Low(0.15): 성장 단계 지원자에게 수치 실적보다 방향성·태도가 더 중요
+    # SPE  Medium(0.20): 발화가 너무 불안하면 코칭 자체가 어려움, 기준은 낮게
     "coach": {
         "weights": {"bei": 0.40, "cbi": 0.25, "grounding": 0.15, "speech": 0.20},
         "label": "코치형",
@@ -24,6 +51,11 @@ PERSONA_CONFIG: dict[str, dict] = {
         "weakness_prefix": "집중 훈련이 필요한 영역:",
         "closing_template": "꾸준한 연습을 통해 충분히 개선할 수 있는 영역이 확인되었습니다. 재도전을 적극 권장합니다.",
     },
+    # ── 실전형: "이 사람을 지금 당장 현장에 투입할 수 있는가?" ──────────────
+    # BEI  Medium-High(0.30): "행동"·"결과" 요소 위주로 중요, 구조보다 내용의 무게감
+    # CBI  Medium(0.25): Lv.3 이상이어야 실무 투입 가능, Grounding이 더 직접적 지표
+    # GRD  High(0.30): 수치·기술스택으로 증명 가능한 성과인가 = 현장 투입 가능성의 핵심
+    # SPE  Low(0.15): 내용이 충분하면 발화는 부차적
     "practical": {
         "weights": {"bei": 0.30, "cbi": 0.25, "grounding": 0.30, "speech": 0.15},
         "label": "실전형",
@@ -32,6 +64,11 @@ PERSONA_CONFIG: dict[str, dict] = {
         "weakness_prefix": "현장 투입 전 보완이 필요한 기술 영역:",
         "closing_template": "기술 스택 심화 학습과 수치 기반 성과 정리가 취업 경쟁력을 높이는 핵심입니다.",
     },
+    # ── 검증형: "이 사람의 역량 주장이 실제인가?" ───────────────────────────
+    # BEI  High(0.35): 경험이 논리적으로 일관되는가 = 진위 검증의 핵심 도구
+    # CBI  High(0.35): 주장하는 역량 레벨이 실제 발화와 일치하는가
+    # GRD  Medium(0.20): BEI·CBI로 이미 검증하므로 보조 지표 수준
+    # SPE  Very Low(0.10): 역량 진위 검증에서 발화 습관은 가장 부차적
     "verifier": {
         "weights": {"bei": 0.35, "cbi": 0.35, "grounding": 0.20, "speech": 0.10},
         "label": "검증형",
@@ -41,6 +78,16 @@ PERSONA_CONFIG: dict[str, dict] = {
         "closing_template": "답변의 구체성과 일관성이 핵심 평가 기준입니다. 모호한 표현을 수치와 사례로 대체하세요.",
     },
 }
+
+# ── 가중치 합계 검증 ──────────────────────────────────────────────────────────
+# 누군가 가중치를 수정할 때 합계가 1.0을 벗어나면 점수가 100점 만점을 초과하거나
+# 과소 산정된다. 모듈 로드 시점에 한 번만 검증해 배포 전에 오류를 잡는다.
+for _persona_name, _persona_cfg in PERSONA_CONFIG.items():
+    _weight_sum = sum(_persona_cfg["weights"].values())
+    assert abs(_weight_sum - 1.0) < 1e-6, (
+        f"[PERSONA_CONFIG] '{_persona_name}' 페르소나 가중치 합계가 1.0이 아닙니다: "
+        f"{_weight_sum:.4f} (항목: {_persona_cfg['weights']})"
+    )
 
 _DEFAULT_PERSONA_CONFIG = PERSONA_CONFIG["practical"]
 
@@ -114,38 +161,29 @@ def _aggregate_tag_objects(evaluated_answers, mapping_attr, tag_attr):
     return ranked[:5]
 
 
-def generate_final_report(session):
-    """FinalReport.summary JSONB 페이로드를 생성한다.
+def _tag_display(tag_name: str, desc_map: dict) -> str:
+    """태그명 앞의 '[카테고리] ' 접두사를 제거하고 표시용 문자열을 반환한다."""
+    raw = desc_map.get(tag_name) or tag_name
+    cleaned = re.sub(r"^\[[^\]]+\]\s*", "", raw).strip()
+    return cleaned or raw
 
-    구조: evaluation_metadata / score_summary / score_detail / dynamically_triggered_tags
+
+# ── 집계 helper ──────────────────────────────────────────────────────────────
+
+def _aggregate_scores(evaluated_answers: list) -> dict:
+    """평가된 답변 목록에서 BEI·CBI·Speech·SBERT·Grounding 지표를 집계한다.
+
+    Returns:
+        {
+            bei_situations, bei_tasks, bei_actions, bei_results,
+            structured_bei_count,
+            cbi_levels, cbi_scores,
+            speech_scores, sbert_scores,
+            grounding_results, technical_answer_count,
+            strength_counter, weakness_counter,
+            strength_desc_map, weakness_desc_map,
+        }
     """
-    try:
-        evaluate_session_answers(session)
-    except Exception:
-        logger.exception(
-            "evaluate_session_answers backfill failed for session %s",
-            getattr(session, "id", "?"),
-        )
-
-    answers = session.answers.all().select_related("evaluation", "question").prefetch_related(
-        "strength_mappings__strength_tag",
-        "weakness_mappings__weakness_tag",
-    )
-
-    questions = list(session.questions.all())
-    answers_list = list(answers)
-    evaluated_answers = [
-        ans for ans in answers_list
-        if hasattr(ans, "evaluation") and ans.evaluation is not None
-    ]
-
-    final_scores = [
-        ans.evaluation.final_tech_score
-        for ans in evaluated_answers
-        if getattr(ans.evaluation, "final_tech_score", None) is not None
-    ]
-    overall_score = round(sum(final_scores) / len(final_scores)) if final_scores else 0
-
     strength_counter: Counter = Counter()
     weakness_counter: Counter = Counter()
     strength_desc_map: dict[str, str] = {}
@@ -156,12 +194,13 @@ def generate_final_report(session):
     cbi_scores: list = []
     speech_scores: list = []
     sbert_scores: list = []
-    grounding_flags: list = []   # E7 리뷰 #3 — 답변별 is_grounded 수집
+    grounding_results: list = []
     technical_answer_count = 0
 
     for ans in evaluated_answers:
         eval_obj = ans.evaluation
 
+        # 태그 집계
         for sm in ans.strength_mappings.all():
             name = sm.strength_tag.tag_name
             strength_counter[name] += 1
@@ -173,6 +212,7 @@ def generate_final_report(session):
             if name not in weakness_desc_map:
                 weakness_desc_map[name] = wm.weakness_tag.description or name
 
+        # SBERT
         sbert_sims = [
             s for s in (
                 getattr(eval_obj, "sbert_db_similarity", None),
@@ -183,6 +223,7 @@ def generate_final_report(session):
         if sbert_sims:
             sbert_scores.append(sum(sbert_sims) / len(sbert_sims))
 
+        # BEI
         bei = eval_obj.bei_score if isinstance(eval_obj.bei_score, dict) else {}
         if _has_structured_bei_scores(bei):
             structured_bei_count += 1
@@ -191,6 +232,7 @@ def generate_final_report(session):
         bei_actions.append(get_score(bei.get("action")))
         bei_results.append(get_score(bei.get("result")))
 
+        # CBI
         cbi = eval_obj.cbi_score if isinstance(eval_obj.cbi_score, dict) else {}
         if "assigned_level" in cbi:
             cbi_levels.append(cbi["assigned_level"])
@@ -199,12 +241,13 @@ def generate_final_report(session):
         if "score" in cbi:
             cbi_scores.append(cbi["score"])
 
+        # Speech
         score_detail = eval_obj.score_detail if isinstance(eval_obj.score_detail, dict) else {}
         speech_delivery = score_detail.get("speech_delivery", {})
         if speech_delivery.get("speech_score") is not None:
             speech_scores.append(speech_delivery["speech_score"])
 
-        # 질문 내용 기준으로 grounding 집계 여부 결정.
+        # Grounding (기술 질문만)
         # InterviewQuestion.question_category가 있으면 그 값을 사용하고,
         # 없으면 evaluation 파트의 호환 헬퍼로 분류한다.
         q_category = resolve_question_category(ans)
@@ -212,17 +255,38 @@ def generate_final_report(session):
             technical_answer_count += 1
             grounding_block = score_detail.get("grounding", {})
             if isinstance(grounding_block, dict) and "is_grounded" in grounding_block:
-                grounding_flags.append(bool(grounding_block.get("is_grounded")))
+                grounding_results.append({
+                    "is_grounded": bool(grounding_block.get("is_grounded")),
+                    "grounding_applicable": grounding_block.get("grounding_applicable", True),
+                })
 
-    top_strength_names = [name for name, _ in strength_counter.most_common(5)]
-    top_weakness_names = [name for name, _ in weakness_counter.most_common(5)]
+    return {
+        "bei_situations": bei_situations,
+        "bei_tasks": bei_tasks,
+        "bei_actions": bei_actions,
+        "bei_results": bei_results,
+        "structured_bei_count": structured_bei_count,
+        "cbi_levels": cbi_levels,
+        "cbi_scores": cbi_scores,
+        "speech_scores": speech_scores,
+        "sbert_scores": sbert_scores,
+        "grounding_results": grounding_results,
+        "technical_answer_count": technical_answer_count,
+        "strength_counter": strength_counter,
+        "weakness_counter": weakness_counter,
+        "strength_desc_map": strength_desc_map,
+        "weakness_desc_map": weakness_desc_map,
+    }
 
+
+def _aggregate_speech_diagnostics(evaluated_answers: list) -> dict:
+    """세션 전체 필러워드·휴지(E7.6) 진단 데이터를 집계한다."""
     total_filler_count = 0
     global_filler_words_counter: Counter = Counter()
-    # E7.6 — pause_analysis 집계
     total_long_pause_count = 0
     pause_pattern_counter: Counter = Counter()
     answers_with_pause = 0
+
     for ans in evaluated_answers:
         filler_data = getattr(ans.evaluation, "filler_words", {}) or {}
         if isinstance(filler_data, dict):
@@ -241,29 +305,114 @@ def generate_final_report(session):
                 pause_pattern_counter[severity] += 1
 
     n = len(evaluated_answers)
-    avg_fillers_per_answer = round(total_filler_count / n, 2) if n else 0
+    return {
+        "total_filler_count": total_filler_count,
+        "avg_fillers_per_answer": round(total_filler_count / n, 2) if n else 0,
+        "filler_word_distribution": dict(global_filler_words_counter),
+        "filler_words_counter": global_filler_words_counter,  # 요약 문구 생성용 Counter 객체
+        "pause_summary": {
+            "total_long_pause_count": total_long_pause_count,
+            "avg_long_pause_per_answer": (
+                round(total_long_pause_count / answers_with_pause, 2) if answers_with_pause else 0
+            ),
+            "severity_distribution": dict(pause_pattern_counter),
+        },
+    }
 
-    def _tag_display(tag_name: str, desc_map: dict) -> str:
-        raw = desc_map.get(tag_name) or tag_name
-        cleaned = re.sub(r"^\[[^\]]+\]\s*", "", raw).strip()
-        return cleaned or raw
 
-    recommendations: list[str] = []
+def _compute_avg_scores(agg: dict, n: int) -> tuple[float, float, float, float, dict]:
+    """집계 데이터에서 평균 지표와 상세 통계를 계산한다.
+
+    Returns:
+        (bei_avg, cbi_avg, speech_avg, grounding_avg, detailed_stats)
+        grounding_avg는 기술 답변이 없는 세션에서 None이 될 수 있다.
+    """
+    bei_avg = cbi_avg = speech_avg = 0.0
+    detailed_stats: dict = {}
+
+    if n > 0:
+        bei_situations = agg["bei_situations"]
+        bei_tasks      = agg["bei_tasks"]
+        bei_actions    = agg["bei_actions"]
+        bei_results    = agg["bei_results"]
+        cbi_scores     = agg["cbi_scores"]
+        cbi_levels     = agg["cbi_levels"]
+        speech_scores  = agg["speech_scores"]
+
+        avg_sit = round(sum(bei_situations) / n, 1)
+        avg_tsk = round(sum(bei_tasks) / n, 1)
+        avg_act = round(sum(bei_actions) / n, 1)
+        avg_res = round(sum(bei_results) / n, 1)
+        # bei_avg: 0~100 스케일(4요소 합) — 페르소나 가중치 입력용
+        bei_avg    = round(avg_sit + avg_tsk + avg_act + avg_res, 1)
+        cbi_avg    = round(sum(cbi_scores) / len(cbi_scores), 1) if cbi_scores else 0.0
+        speech_avg = round(sum(speech_scores) / len(speech_scores), 1) if speech_scores else 0.0
+        detailed_stats = {
+            "bei_metrics": {
+                "averages": {
+                    "situation": avg_sit,
+                    "task": avg_tsk,
+                    "action": avg_act,
+                    "result": avg_res,
+                },
+                # bei_element_avg: 0~25 스케일(요소 평균) — 상세 통계 표시용
+                "element_total_avg": round((avg_sit + avg_tsk + avg_act + avg_res) / 4, 1),
+            },
+            "cbi_metrics": {
+                "average_level": round(sum(cbi_levels) / len(cbi_levels), 1) if cbi_levels else 0,
+                "average_score": cbi_avg,
+            },
+        }
+
+    # E7 리뷰 #3 — grounding 지표: applicable한 답변 중 is_grounded 비율 × 100.
+    # option-C: 기술 답변이 없는 세션(인성면접 전용)은 None → 페르소나 가중치에서 제외.
+    technical_answer_count = agg["technical_answer_count"]
+    grounding_results      = agg["grounding_results"]
+    if technical_answer_count == 0:
+        grounding_avg = None
+    else:
+        applicable = [g for g in grounding_results if g.get("grounding_applicable", True)]
+        grounding_avg = (
+            round(sum(1 for g in applicable if g.get("is_grounded")) / len(applicable) * 100, 1)
+            if applicable
+            else None
+        )
+
+    return bei_avg, cbi_avg, speech_avg, grounding_avg, detailed_stats
+
+
+def _build_summary_text(
+    strength_counter: Counter,
+    weakness_counter: Counter,
+    strength_desc_map: dict,
+    weakness_desc_map: dict,
+    speech_diag: dict,
+) -> tuple[list[str], list[str]]:
+    """세션 요약 문구와 추천 문구를 생성한다.
+
+    Returns:
+        (summary_text_parts, recommendations)
+    """
     summary_text_parts: list[str] = []
+    recommendations: list[str] = []
+
     if strength_counter:
         top_s_name = strength_counter.most_common(1)[0][0]
-        top_s_label = _tag_display(top_s_name, strength_desc_map)
         summary_text_parts.append(
-            f"이번 세션에서 가장 강력하게 발휘된 역량은 '{top_s_label}' 입니다."
+            f"이번 세션에서 가장 강력하게 발휘된 역량은 '{_tag_display(top_s_name, strength_desc_map)}' 입니다."
         )
     if weakness_counter:
         top_w_name = weakness_counter.most_common(1)[0][0]
-        top_w_label = _tag_display(top_w_name, weakness_desc_map)
         summary_text_parts.append(
-            f"가장 빈번하게 노출된 보완점은 '{top_w_label}' 항목으로 확인됩니다."
+            f"가장 빈번하게 노출된 보완점은 '{_tag_display(top_w_name, weakness_desc_map)}' 항목으로 확인됩니다."
         )
+
+    total_filler_count      = speech_diag["total_filler_count"]
+    avg_fillers_per_answer  = speech_diag["avg_fillers_per_answer"]
+    filler_words_counter    = speech_diag["filler_words_counter"]
+
     if total_filler_count > 0:
-        most_common_fillers = [word for word, _ in global_filler_words_counter.most_common(2)]
+        most_common_fillers = [word for word, _ in filler_words_counter.most_common(2)]
         filler_str = ", ".join([f"'{w}'" for w in most_common_fillers])
         summary_text_parts.append(f"전체 면접 중 총 {total_filler_count}회의 습관어가 감지되었습니다.")
         if avg_fillers_per_answer >= 3.0:
@@ -281,100 +430,27 @@ def generate_final_report(session):
     if not recommendations:
         recommendations.append("세션 상세 답변의 꼬리질문 분석 내용을 점검해 보세요.")
 
-    detailed_stats: dict = {}
-    # bei_avg: 0~100 스케일(4요소 합) — score_summary 지표 및 페르소나 가중치 입력용.
-    #          cbi_avg / grounding_avg / speech_avg 와 스케일을 일치시킨다.
-    # bei_element_avg: 0~25 스케일(요소 평균) — 상세 통계 표시용.
-    bei_avg = cbi_avg = speech_avg = 0.0
-    bei_element_avg = 0.0
-    if n > 0:
-        avg_sit = round(sum(bei_situations) / n, 1)
-        avg_tsk = round(sum(bei_tasks) / n, 1)
-        avg_act = round(sum(bei_actions) / n, 1)
-        avg_res = round(sum(bei_results) / n, 1)
-        bei_element_avg = round((avg_sit + avg_tsk + avg_act + avg_res) / 4, 1)  # 0~25
-        bei_avg = round(avg_sit + avg_tsk + avg_act + avg_res, 1)                # 0~100
-        cbi_avg = round(sum(cbi_scores) / len(cbi_scores), 1) if cbi_scores else 0.0
-        speech_avg = round(sum(speech_scores) / len(speech_scores), 1) if speech_scores else 0.0
-        detailed_stats = {
-            "bei_metrics": {
-                "averages": {
-                    "situation": avg_sit,
-                    "task": avg_tsk,
-                    "action": avg_act,
-                    "result": avg_res,
-                },
-                "element_total_avg": bei_element_avg,
-            },
-            "cbi_metrics": {
-                "average_level": round(sum(cbi_levels) / len(cbi_levels), 1) if cbi_levels else 0,
-                "average_score": cbi_avg,
-            },
-        }
+    return summary_text_parts, recommendations
 
-    # E7 리뷰 #3 — 실제 grounding 지표: is_grounded 비율 × 100.
-    # option-C: 기술 답변이 없는 세션(인성면접 전용)은 None → overall_score 가중치에서 제외.
-    if technical_answer_count == 0:
-        grounding_avg = None
-    elif grounding_flags:
-        grounding_avg = round(sum(grounding_flags) / len(grounding_flags) * 100, 1)
-    else:
-        grounding_avg = None
 
-    technical_avg = (
-        round((sum(sbert_scores) / len(sbert_scores)) * 100, 1)
-        if sbert_scores
-        else (0.0 if technical_answer_count > 0 else None)
-    )
-    strength_tags = _aggregate_tag_objects(evaluated_answers, "strength_mappings", "strength_tag")
-    weakness_tags = _aggregate_tag_objects(evaluated_answers, "weakness_mappings", "weakness_tag")
+def _build_question_breakdown(evaluated_answers: list) -> tuple[list[dict], list[dict]]:
+    """질문별 점수·개선 액션·LLM 입력 데이터를 생성한다.
 
-    # E7.10: 페르소나 가중치 적용 overall_score 재산출
-    persona = getattr(session, "persona", None)
-    persona_cfg = _get_persona_config(persona)
-    persona_weighted_score = _apply_persona_weights(
-        bei_avg=bei_avg,
-        cbi_avg=cbi_avg,
-        grounding_avg=grounding_avg,
-        speech_avg=speech_avg,
-        persona=persona,
-    )
-    has_grounding_inputs = (
-        technical_answer_count == 0
-        or len(grounding_flags) == technical_answer_count
-    )
-    has_persona_weight_inputs = (
-        n > 0
-        and structured_bei_count == n
-        and len(cbi_scores) == n
-        and len(speech_scores) == n
-        and has_grounding_inputs
-    )
-    overall_score = persona_weighted_score if has_persona_weight_inputs else overall_score
-
-    persona_feedback = {
-        "persona": persona or "practical",
-        "persona_label": persona_cfg["label"],
-        "intro": persona_cfg["intro"],
-        "strength_prefix": persona_cfg["strength_prefix"],
-        "weakness_prefix": persona_cfg["weakness_prefix"],
-        "closing": persona_cfg["closing_template"],
-        "persona_weights": persona_cfg["weights"],
-    }
-
-    # ── 질문별 개선 액션 ────────────────────────────────────────────────
-    # 1차로 약점 태그 템플릿 기반 폴백 문구를 만들고,
-    # 2차로 LLM이 질문별 맞춤 개선 문구를 생성하면 그 값으로 대체한다.
-    # (LLM 실패/mock 시에는 템플릿 폴백 유지 → 리포트는 항상 생성된다.)
+    Returns:
+        (question_breakdown, suggester_inputs)
+        question_breakdown: 프론트엔드로 내려가는 질문별 평가 목록 (improvement_action은 폴백값)
+        suggester_inputs:   improvement_suggester LLM 배치 호출용 입력 목록
+    """
     question_breakdown: list[dict] = []
     suggester_inputs: list[dict] = []
-    for ans in evaluated_answers:
-        q = ans.question
-        eval_obj = ans.evaluation
-        q_score = getattr(eval_obj, "final_tech_score", None)
-        wmaps = list(ans.weakness_mappings.all())
 
-        # 폴백용 템플릿 문구(기존 동작) — 최우선순위 약점 태그의 reason/description
+    for ans in evaluated_answers:
+        q        = ans.question
+        eval_obj = ans.evaluation
+        q_score  = getattr(eval_obj, "final_tech_score", None)
+        wmaps    = list(ans.weakness_mappings.all())
+
+        # 폴백용 템플릿 문구 — 최우선순위 약점 태그의 reason/description
         fallback_action = ""
         weakness_descs: list[str] = []
         if wmaps:
@@ -391,7 +467,7 @@ def generate_final_report(session):
                 if desc and desc not in weakness_descs:
                     weakness_descs.append(desc)
 
-        # grounding 누락 항목 추출(LLM 컨텍스트 보강용)
+        # grounding 누락 항목 추출 (LLM 컨텍스트 보강용)
         sd = eval_obj.score_detail if isinstance(eval_obj.score_detail, dict) else {}
         grounding_block = sd.get("grounding", {}) if isinstance(sd.get("grounding"), dict) else {}
         grounding_gaps = [
@@ -412,10 +488,12 @@ def generate_final_report(session):
             "improvement_action": fallback_action,  # LLM 성공 시 아래에서 덮어씀
             "score": q_score if q_score is not None else 0,
         })
+
         try:
             answer_text = get_answer_text_for_evaluation(ans)
         except Exception:
             answer_text = ""
+
         suggester_inputs.append({
             "question_id": qid,
             "question_text": q.question_text,
@@ -425,15 +503,120 @@ def generate_final_report(session):
             "score": q_score if q_score is not None else 0,
         })
 
-    # LLM 배치 호출(리포트당 1회). 실패/mock 시 빈 dict → 템플릿 폴백 유지.
+    return question_breakdown, suggester_inputs
+
+
+# ── 공개 진입점 ──────────────────────────────────────────────────────────────
+
+def generate_final_report(session):
+    """FinalReport.summary JSONB 페이로드를 생성한다.
+
+    구조: evaluation_metadata / score_summary / score_detail / dynamically_triggered_tags
+    """
+    # 1. 미평가 답변 백필
+    try:
+        evaluate_session_answers(session)
+    except Exception:
+        logger.exception(
+            "evaluate_session_answers backfill failed for session %s",
+            getattr(session, "id", "?"),
+        )
+
+    # 2. 데이터 로드
+    answers = session.answers.all().select_related("evaluation", "question").prefetch_related(
+        "strength_mappings__strength_tag",
+        "weakness_mappings__weakness_tag",
+    )
+    questions     = list(session.questions.all())
+    answers_list  = list(answers)
+    evaluated_answers = [
+        ans for ans in answers_list
+        if hasattr(ans, "evaluation") and ans.evaluation is not None
+    ]
+    n = len(evaluated_answers)
+
+    # 단순 평균 overall_score (페르소나 가중치 미적용 fallback)
+    final_scores  = [
+        ans.evaluation.final_tech_score
+        for ans in evaluated_answers
+        if getattr(ans.evaluation, "final_tech_score", None) is not None
+    ]
+    overall_score = round(sum(final_scores) / len(final_scores)) if final_scores else 0
+
+    # 3. 지표 집계
+    agg        = _aggregate_scores(evaluated_answers)
+    speech_diag = _aggregate_speech_diagnostics(evaluated_answers)
+
+    # 4. 평균 지표 계산
+    bei_avg, cbi_avg, speech_avg, grounding_avg, detailed_stats = _compute_avg_scores(agg, n)
+
+    sbert_scores          = agg["sbert_scores"]
+    technical_answer_count = agg["technical_answer_count"]
+    technical_avg = (
+        round((sum(sbert_scores) / len(sbert_scores)) * 100, 1)
+        if sbert_scores
+        else (0.0 if technical_answer_count > 0 else None)
+    )
+
+    # 5. 페르소나 가중치 적용 overall_score 재산출 (E7.10)
+    persona     = getattr(session, "persona", None)
+    persona_cfg = _get_persona_config(persona)
+    persona_weighted_score = _apply_persona_weights(
+        bei_avg=bei_avg,
+        cbi_avg=cbi_avg,
+        grounding_avg=grounding_avg,
+        speech_avg=speech_avg,
+        persona=persona,
+    )
+    has_grounding_inputs = (
+        technical_answer_count == 0
+        or len(agg["grounding_results"]) == technical_answer_count
+    )
+    has_persona_weight_inputs = (
+        n > 0
+        and agg["structured_bei_count"] == n
+        and len(agg["cbi_scores"]) == n
+        and len(agg["speech_scores"]) == n
+        and has_grounding_inputs
+    )
+    overall_score = persona_weighted_score if has_persona_weight_inputs else overall_score
+
+    # 6. 태그 집계 및 요약 문구 생성
+    top_strength_names = [name for name, _ in agg["strength_counter"].most_common(5)]
+    top_weakness_names = [name for name, _ in agg["weakness_counter"].most_common(5)]
+    strength_tags = _aggregate_tag_objects(evaluated_answers, "strength_mappings", "strength_tag")
+    weakness_tags = _aggregate_tag_objects(evaluated_answers, "weakness_mappings", "weakness_tag")
+
+    summary_text_parts, recommendations = _build_summary_text(
+        agg["strength_counter"],
+        agg["weakness_counter"],
+        agg["strength_desc_map"],
+        agg["weakness_desc_map"],
+        speech_diag,
+    )
+
+    # 7. 질문별 개선 액션 생성
+    # 1차: 약점 태그 템플릿 폴백, 2차: LLM 배치 호출로 덮어씀
+    # LLM 실패/mock 시 템플릿 폴백 유지 → 리포트는 항상 생성된다.
+    question_breakdown, suggester_inputs = _build_question_breakdown(evaluated_answers)
     llm_suggestions = generate_improvement_suggestions(suggester_inputs)
     if llm_suggestions:
         for item in question_breakdown:
             suggestion = llm_suggestions.get(item["question_id"])
             if suggestion:
                 item["improvement_action"] = suggestion
-
     question_breakdown.sort(key=lambda item: item["order"])
+
+    # 8. 페르소나 피드백 구성
+    persona_feedback = {
+        "persona": persona or "practical",
+        "persona_label": persona_cfg["label"],
+        "intro": persona_cfg["intro"],
+        "strength_prefix": persona_cfg["strength_prefix"],
+        "weakness_prefix": persona_cfg["weakness_prefix"],
+        "closing": persona_cfg["closing_template"],
+        "persona_weights": persona_cfg["weights"],
+    }
 
     return {
         "evaluation_metadata": {
@@ -471,15 +654,10 @@ def generate_final_report(session):
             "questions": question_breakdown,
             "statistics": detailed_stats,
             "speech_diagnostics": {
-                "total_filler_count": total_filler_count,
-                "avg_fillers_per_answer": avg_fillers_per_answer,
-                "filler_word_distribution": dict(global_filler_words_counter),
-                # E7.6 — 세션 전체 휴지 패턴 집계
-                "pause_summary": {
-                    "total_long_pause_count": total_long_pause_count,
-                    "avg_long_pause_per_answer": round(total_long_pause_count / answers_with_pause, 2) if answers_with_pause else 0,
-                    "severity_distribution": dict(pause_pattern_counter),  # e.g. {"moderate": 2, "high": 1}
-                },
+                "total_filler_count": speech_diag["total_filler_count"],
+                "avg_fillers_per_answer": speech_diag["avg_fillers_per_answer"],
+                "filler_word_distribution": speech_diag["filler_word_distribution"],
+                "pause_summary": speech_diag["pause_summary"],
             },
         },
         "dynamically_triggered_tags": {
