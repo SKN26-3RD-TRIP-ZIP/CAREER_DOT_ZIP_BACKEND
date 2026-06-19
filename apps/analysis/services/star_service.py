@@ -14,6 +14,7 @@ Pipeline 3 - ⑤ STAR 답변 생성
 
 import json
 from .utils import get_client, clean_json, log_llm_usage
+from .answer_guardrail import check_answer
 
 
 def generate_star_answers(
@@ -80,6 +81,8 @@ def generate_star_answers(
                     "  복수 예: 'resume|coverletter', 'project:중고거래앱|jd'\n\n"
                     "공통 규칙:\n"
                     "- 이력서·자소서에 없는 내용 창작 금지\n"
+                    "- ★ 정량 수치(%, 배, 건, 명 등)는 이력서·자소서에 실제로 있는 값만 사용.\n"
+                    "  근거가 없으면 수치를 지어내지 말고 '[성과 수치 입력]' 플레이스홀더를 쓸 것.\n"
                     "- 구어체 자연스러운 말투 사용\n"
                     "- 반드시 아래 JSON 배열 형식으로만 응답. 마크다운 블록 금지.\n\n"
                     "[\n"
@@ -116,22 +119,25 @@ def generate_star_answers(
     answer_list = json.loads(clean_json(response.choices[0].message.content))
     answer_map  = {item["question_index"]: item for item in answer_list}
 
+    # groundedness 가드레일이 대조할 원본 자료 (사용자가 실제로 제공한 내용)
+    source_text = f"{resume_text or ''}\n{cover_letter_text or ''}\n{jd_text or ''}"
+
     result = []
     for i, q in enumerate(questions):
         ans = answer_map.get(i + 1, {})
         basis_raw = ans.get("basis_source", "")
         # LLM이 "resume, coverletter" 처럼 복수 값을 반환할 경우 "|" 구분자로 정규화
         basis_source = "|".join(v.strip() for v in basis_raw.split(",")) if "," in basis_raw else basis_raw
-        result.append({
-            **q,
-            "answer": {
-                "summary":      ans.get("summary", ""),
-                "situation":    ans.get("situation", ""),
-                "task":         ans.get("task", ""),
-                "action":       ans.get("action", ""),
-                "result":       ans.get("result", ""),
-                "basis_source": basis_source,
-            },
-        })
+        answer = {
+            "summary":      ans.get("summary", ""),
+            "situation":    ans.get("situation", ""),
+            "task":         ans.get("task", ""),
+            "action":       ans.get("action", ""),
+            "result":       ans.get("result", ""),
+            "basis_source": basis_source,
+        }
+        # ★ 가드레일: 답변의 정량 수치가 원본에 근거하는지 검증 → 메타 부착
+        answer["groundedness"] = check_answer(answer, source_text)
+        result.append({**q, "answer": answer})
 
     return result
