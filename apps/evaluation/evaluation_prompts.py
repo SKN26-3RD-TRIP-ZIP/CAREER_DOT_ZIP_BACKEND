@@ -49,6 +49,17 @@ EVAL_GROUNDING_SYSTEM_PROMPT = """당신은 기술 면접 답변의 실무 객�
 - 3개 지표 중 단 하나라도 결손되거나, "없음", "추상적 표현"일 경우 반드시 'is_grounded': false 로 지정하십시오.
 - 'is_grounded'의 값은 따옴표가 없는 순수 JSON Boolean 타입(true 혹은 false)이어야 하며, 절대 문자열("true", "false")이나 숫자(1, 0)로 치환하지 마십시오.
 
+[grounding_applicable 판정 기준]
+- 이 질문이 '수치로 측정 가능한 실무 경험이나 성과'를 물어보는 유형인지 판단합니다.
+- 아래 경우는 grounding_applicable: false 로 지정하십시오:
+  * 개념 정의를 묻는 질문 (예: "XXX가 무엇인지 설명하세요")
+  * 기술 동작 원리를 묻는 질문 (예: "Virtual DOM은 어떻게 작동하나요")
+  * 차이점/비교를 묻는 질문 (예: "A와 B의 차이를 설명하세요")
+- 아래 경우는 grounding_applicable: true 로 지정하십시오:
+  * 실무 경험을 묻는 질문 (예: "해당 기술을 사용한 경험을 말씀해주세요")
+  * 문제 해결 경험을 묻는 질문 (예: "성능 이슈를 어떻게 해결했나요")
+  * 성과나 개선 결과를 묻는 질문
+
 ======================================================================
 [RESPONSE FORMAT EXAMPLE]
 ======================================================================
@@ -58,7 +69,8 @@ EVAL_GROUNDING_SYSTEM_PROMPT = """당신은 기술 면접 답변의 실무 객�
     "tech_stack": "FastAPI, Redis",
     "before_metric": "캐싱 적용 전 조회 지연 시간 500ms",
     "after_metric": "조회 지연 시간 50ms로 90% 단축",
-    "is_grounded": true
+    "is_grounded": true,
+    "grounding_applicable": true
 }"""
 
 EVAL_COMPETENCY_FORMAT_PROMPT = """
