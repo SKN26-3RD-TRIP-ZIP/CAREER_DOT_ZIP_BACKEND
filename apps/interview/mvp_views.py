@@ -27,6 +27,8 @@ from .services.whisper_stt_service import transcribe_uploaded_audio
 from .services.tts_service import synthesize_interview_question
 from .services.ai_chain_openai_engine import AIChainOpenAIError
 
+EXPECTED_TECHNICAL_KEYWORDS_LABEL = 'expected_technical_keywords'
+
 
 def get_prompt_version_id(session):
     persona = (
@@ -106,20 +108,37 @@ class MVPSessionStatusView(APIView):
 
 def _save_question_source_tags(question, source_tags):
     source_tag_objects = []
+    seen_labels = set(
+        question.source_tags.values_list('source_label', flat=True)
+    )
 
     for tag in source_tags or []:
         if not isinstance(tag, dict):
             continue
 
+        source_label = tag.get('source_label') or ''
+        if source_label == EXPECTED_TECHNICAL_KEYWORDS_LABEL:
+            if question.question_category != 'technical':
+                continue
+            if source_label in seen_labels:
+                continue
+            source_text_excerpt = (tag.get('source_text_excerpt') or '').strip()
+            if not source_text_excerpt:
+                continue
+        else:
+            source_text_excerpt = tag.get('source_text_excerpt') or ''
+
         source_tag_objects.append(
             QuestionSourceTag(
                 question=question,
                 source_type=tag.get('source_type') or question.source_type or 'general',
-                source_label=tag.get('source_label') or '',
-                source_text_excerpt=tag.get('source_text_excerpt') or '',
+                source_label=source_label,
+                source_text_excerpt=source_text_excerpt,
                 source_reference=tag.get('source_reference') or question.source_reference or '',
             )
         )
+        if source_label:
+            seen_labels.add(source_label)
 
     if source_tag_objects:
         QuestionSourceTag.objects.bulk_create(source_tag_objects)

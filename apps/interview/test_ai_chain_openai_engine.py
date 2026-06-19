@@ -181,6 +181,42 @@ class AIChainOpenAIEngineTest(TestCase):
         with self.assertRaises(AIChainOpenAIError):
             engine.generate_questions(self._question_generation_payload())
 
+    def test_openai_question_generation_preserves_expected_technical_keywords(self):
+        raw_response = """{
+          "session_id": "11111111-1111-1111-1111-111111111111",
+          "questions": [
+            {
+              "client_question_key": "q_001",
+              "question_text": "Explain the Django API transaction design.",
+              "question_type": "main",
+              "question_category": "technical",
+              "expected_technical_keywords": [
+                "Django transaction.atomic",
+                "rollback",
+                "idempotency"
+              ],
+              "difficulty": "medium",
+              "order_index": 1,
+              "source_tags": [{"source_type": "jd"}]
+            }
+          ]
+        }"""
+        fake_client = FakeOpenAIClient(raw_response)
+        engine = AIChainOpenAIEngine(
+            api_key="test-api-key",
+            client_factory=lambda api_key: fake_client,
+            enable_real_call=True,
+        )
+
+        result = engine.generate_questions(self._question_generation_payload())
+        question = result["questions"][0]
+
+        self.assertEqual(question["question_category"], "technical")
+        self.assertEqual(
+            question["expected_technical_keywords"],
+            "Django transaction.atomic, rollback, idempotency",
+        )
+
     def test_openai_engine_keeps_answer_sufficiency_contract_with_fallback(self):
         result = self.engine.judge_answer_sufficiency(self._sufficiency_payload())
 

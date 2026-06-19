@@ -63,6 +63,8 @@ QUESTION_CATEGORY_ALIASES = {
     'follow_up': 'general',
 }
 
+EXPECTED_TECHNICAL_KEYWORDS_LABEL = 'expected_technical_keywords'
+
 
 def _normalize_question_source_type(source_type):
     normalized = str(source_type or 'general').strip().lower()
@@ -112,6 +114,97 @@ def _candidate_key(question_text):
 
 def _question_texts(questions):
     return [question.get('question_text', '') for question in questions]
+
+
+def _normalize_expected_technical_keywords(value):
+    if value is None:
+        return ''
+    if isinstance(value, (list, tuple, set)):
+        return ', '.join(
+            str(item).strip()
+            for item in value
+            if str(item).strip()
+        )
+    return str(value).strip()
+
+
+def _extract_expected_technical_keywords(question):
+    if not isinstance(question, dict):
+        return ''
+
+    for key in (
+        'expected_technical_keywords',
+        'technical_keywords',
+        'expected_keywords',
+    ):
+        keywords = _normalize_expected_technical_keywords(question.get(key))
+        if keywords:
+            return keywords
+
+    return ''
+
+
+def _extract_analysis_expected_technical_keywords(question):
+    answer = getattr(question, 'answer', None) or {}
+    if not isinstance(answer, dict):
+        return ''
+
+    for key in (
+        'expected_technical_keywords',
+        'technical_keywords',
+        'expected_keywords',
+        'keywords',
+    ):
+        keywords = _normalize_expected_technical_keywords(answer.get(key))
+        if keywords:
+            return keywords
+
+    return ''
+
+
+def _with_expected_technical_keyword_tag(question):
+    question_category = _normalize_question_category(question.get('question_category'))
+    keywords = _normalize_expected_technical_keywords(
+        question.get('expected_technical_keywords')
+    )
+    source_tags = list(question.get('source_tags') or [])
+
+    if question_category != 'technical' or not keywords:
+        return {
+            **question,
+            'source_tags': [
+                tag
+                for tag in source_tags
+                if not (
+                    isinstance(tag, dict)
+                    and tag.get('source_label') == EXPECTED_TECHNICAL_KEYWORDS_LABEL
+                )
+            ],
+        }
+
+    has_keyword_tag = any(
+        isinstance(tag, dict)
+        and tag.get('source_label') == EXPECTED_TECHNICAL_KEYWORDS_LABEL
+        for tag in source_tags
+    )
+    if has_keyword_tag:
+        return {
+            **question,
+            'source_tags': source_tags,
+        }
+
+    return {
+        **question,
+        'source_tags': [
+            *source_tags,
+            {
+                'source_type': question.get('source_type') or 'general',
+                'source_label': EXPECTED_TECHNICAL_KEYWORDS_LABEL,
+                'source_text_excerpt': keywords,
+                'source_reference': question.get('source_reference') or '',
+            },
+        ],
+    }
 
 
 def _normalize_source_tags(source_tags, fallback_source_type='general', fallback_reference=''):
@@ -175,6 +268,9 @@ def _append_unique_questions(target, candidates, *, limit, excluded_texts=None):
                 'question_text': question_text,
                 'question_category': _normalize_question_category(
                     question.get('question_category') or question.get('question_type')
+                ),
+                'expected_technical_keywords': _normalize_expected_technical_keywords(
+                    question.get('expected_technical_keywords')
                 ),
                 'source_type': source_type,
                 'source_reference': source_reference,
@@ -410,6 +506,7 @@ def _build_prepared_question_sources(session):
             'source': question.source,
             'source_ref': question.source_ref,
             'answer': question.answer,
+            'expected_technical_keywords': _extract_analysis_expected_technical_keywords(question),
             'order': question.order,
         }
         for question in prepared_questions
@@ -531,6 +628,7 @@ def _convert_ai_questions(ai_questions, excluded_texts=None):
                 'question_category': _normalize_question_category(
                     question.get('question_category') or question.get('question_type')
                 ),
+                'expected_technical_keywords': _extract_expected_technical_keywords(question),
                 'source_type': source_type,
                 'source_reference': source_reference,
                 'difficulty': question.get('difficulty') or 'medium',
@@ -579,6 +677,7 @@ def _prepared_questions(session, count, excluded_texts=None):
             {
                 'question_text': question.question_text,
                 'question_category': _normalize_question_category(question.question_type),
+                'expected_technical_keywords': _extract_analysis_expected_technical_keywords(question),
                 'source_type': source_type,
                 'source_reference': source_reference,
                 'difficulty': 'medium',
@@ -698,12 +797,12 @@ def generate_interview_questions(session):
     )
 
     return [
-        {
+        _with_expected_technical_keyword_tag({
             **question,
             'source_type': _normalize_question_source_type(question.get('source_type')),
             'order_index': index,
             'question_type': 'main',
             'question_category': _normalize_question_category(question.get('question_category')),
-        }
+        })
         for index, question in enumerate(categorized, start=1)
     ]

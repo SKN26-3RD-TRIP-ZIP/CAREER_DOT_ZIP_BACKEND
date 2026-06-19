@@ -199,6 +199,7 @@ class SeedInterviewPromptsCommandTests(APITestCase):
         question_prompt = get_runtime_prompt_version('coach', 'question_generation')
         self.assertIn('question_text', question_prompt.content)
         self.assertIn('question_category', question_prompt.content)
+        self.assertIn('expected_technical_keywords', question_prompt.content)
         self.assertIn('source_tags', question_prompt.content)
         self.assertIn('한국어 면접 질문', question_prompt.content)
 
