@@ -35,6 +35,8 @@ from .serializers import (
     get_persona_detail,
 )
 
+EXPECTED_TECHNICAL_KEYWORDS_LABEL = 'expected_technical_keywords'
+
 
 class InterviewSessionListCreateView(generics.ListCreateAPIView):
     permission_classes = [permissions.IsAuthenticated]
@@ -276,20 +278,37 @@ class InterviewSessionTurnsView(APIView):
 
 def _save_question_source_tags(question, source_tags):
     normalized_tags = []
+    seen_labels = set(
+        question.source_tags.values_list('source_label', flat=True)
+    )
 
     for tag in source_tags or []:
         if not isinstance(tag, dict):
             continue
 
+        source_label = tag.get('source_label') or ''
+        if source_label == EXPECTED_TECHNICAL_KEYWORDS_LABEL:
+            if question.question_category != 'technical':
+                continue
+            if source_label in seen_labels:
+                continue
+            source_text_excerpt = (tag.get('source_text_excerpt') or '').strip()
+            if not source_text_excerpt:
+                continue
+        else:
+            source_text_excerpt = tag.get('source_text_excerpt') or ''
+
         normalized_tags.append(
             QuestionSourceTag(
                 question=question,
                 source_type=tag.get('source_type') or question.source_type or 'general',
-                source_label=tag.get('source_label') or '',
-                source_text_excerpt=tag.get('source_text_excerpt') or '',
+                source_label=source_label,
+                source_text_excerpt=source_text_excerpt,
                 source_reference=tag.get('source_reference') or question.source_reference or '',
             )
         )
+        if source_label:
+            seen_labels.add(source_label)
 
     if normalized_tags:
         QuestionSourceTag.objects.bulk_create(normalized_tags)

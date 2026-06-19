@@ -372,6 +372,103 @@ class InterviewQuestionGenerateSourceTagsAPITest(APITestCase):
         self.assertEqual(response.data['questions'][0]['question_category'], 'technical')
         self.assertEqual(response.data['questions'][0]['source_tags'][0]['source_type'], 'jd')
 
+    def test_question_generate_saves_expected_technical_keywords_source_tag_once(self):
+        generated = [
+            {
+                'question_text': 'Explain how you designed the Django API transaction boundary.',
+                'question_type': 'main',
+                'question_category': 'technical',
+                'order_index': 1,
+                'difficulty': 'medium',
+                'source_type': 'jd',
+                'source_reference': 'ai_chain:q_001:jd',
+                'source_tags': [
+                    {
+                        'source_type': 'jd',
+                        'source_label': 'JD basis',
+                        'source_text_excerpt': 'Django API transaction experience',
+                        'source_reference': 'ai_chain:q_001:jd',
+                    },
+                    {
+                        'source_type': 'jd',
+                        'source_label': 'expected_technical_keywords',
+                        'source_text_excerpt': 'transaction.atomic, rollback, idempotency',
+                        'source_reference': 'ai_chain:q_001:jd',
+                    },
+                    {
+                        'source_type': 'jd',
+                        'source_label': 'expected_technical_keywords',
+                        'source_text_excerpt': 'duplicate should not be stored',
+                        'source_reference': 'ai_chain:q_001:jd',
+                    },
+                ],
+            }
+        ]
+
+        with patch('apps.interview.views.generate_interview_questions', return_value=generated):
+            response = self.client.post(
+                reverse(
+                    'interview-question-generate',
+                    kwargs={'session_id': self.session.id},
+                ),
+                {},
+                format='json',
+            )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        question = InterviewQuestion.objects.get(session=self.session)
+        keyword_tags = QuestionSourceTag.objects.filter(
+            question=question,
+            source_label='expected_technical_keywords',
+        )
+
+        self.assertEqual(keyword_tags.count(), 1)
+        self.assertEqual(
+            keyword_tags.get().source_text_excerpt,
+            'transaction.atomic, rollback, idempotency',
+        )
+
+    def test_question_generate_skips_expected_technical_keywords_for_non_technical_question(self):
+        self.session.interview_type = 'personality'
+        self.session.save(update_fields=['interview_type'])
+        generated = [
+            {
+                'question_text': 'Describe a team conflict and how you handled it.',
+                'question_type': 'main',
+                'question_category': 'personality',
+                'order_index': 1,
+                'difficulty': 'medium',
+                'source_type': 'general',
+                'source_reference': 'ai_chain:q_001:general',
+                'source_tags': [
+                    {
+                        'source_type': 'general',
+                        'source_label': 'expected_technical_keywords',
+                        'source_text_excerpt': 'should not be stored',
+                    },
+                ],
+            }
+        ]
+
+        with patch('apps.interview.views.generate_interview_questions', return_value=generated):
+            response = self.client.post(
+                reverse(
+                    'interview-question-generate',
+                    kwargs={'session_id': self.session.id},
+                ),
+                {},
+                format='json',
+            )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        question = InterviewQuestion.objects.get(session=self.session)
+        self.assertFalse(
+            QuestionSourceTag.objects.filter(
+                question=question,
+                source_label='expected_technical_keywords',
+            ).exists()
+        )
+
 
 class MVPAnalysisQuestionLinkAPITest(APITestCase):
     def setUp(self):
@@ -406,7 +503,10 @@ class MVPAnalysisQuestionLinkAPITest(APITestCase):
             source='combined',
             source_ref='JD(Django) + Resume(OpenAI)',
             order=1,
-            answer={'summary': 'Explain the linked analysis question.'},
+            answer={
+                'summary': 'Explain the linked analysis question.',
+                'expected_technical_keywords': 'Django API, OpenAI integration, source tag persistence',
+            },
         )
         self.analysis_session = AnalysisSession.objects.create(
             user=self.user,
@@ -465,6 +565,11 @@ class MVPAnalysisQuestionLinkAPITest(APITestCase):
         self.assertEqual(
             question.source_reference,
             f'analysis_generated_question:{self.generated_question.id}',
+        )
+        keyword_tag = question.source_tags.get(source_label='expected_technical_keywords')
+        self.assertEqual(
+            keyword_tag.source_text_excerpt,
+            'Django API, OpenAI integration, source tag persistence',
         )
 
         payload = service.generate_questions.call_args.args[0]

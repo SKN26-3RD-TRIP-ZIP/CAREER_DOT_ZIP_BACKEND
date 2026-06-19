@@ -47,6 +47,7 @@ questions 배열의 각 항목에는 다음 key를 포함해야 합니다:
 - question_text
 - question_type
 - question_category
+- expected_technical_keywords
 - difficulty
 - order_index
 - generation_reason
@@ -55,6 +56,9 @@ questions 배열의 각 항목에는 다음 key를 포함해야 합니다:
 규칙:
 - question_type은 반드시 "main"이어야 합니다.
 - question_category는 technical, personality, general 중 하나여야 합니다.
+- technical 질문에는 expected_technical_keywords에 기대하는 핵심 기술 개념/키워드를 쉼표로 구분해 넣으세요.
+- expected_technical_keywords는 문장형 모범답안이 아니라 핵심 키워드/개념 나열이어야 합니다.
+- personality 또는 general 질문에는 expected_technical_keywords를 빈 문자열로 두세요.
 - generation_options.question_category_plan이 제공되면 해당 순서와 비율을 우선 따르세요.
 - 채용공고, 이력서, 자기소개서, 프로젝트 경험, analysis에서 생성된 예상 질문, 사용자 프로필을 근거로 질문을 만드세요.
 - source_tags에는 source_type, source_label, source_text_excerpt를 가진 object를 넣으세요.

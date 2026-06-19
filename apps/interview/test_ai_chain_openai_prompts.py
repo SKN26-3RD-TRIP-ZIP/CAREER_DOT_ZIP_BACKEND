@@ -21,6 +21,7 @@ class AIChainOpenAIPromptsTest(SimpleTestCase):
         self.assertIn("session_id", prompt)
         self.assertIn("questions", prompt)
         self.assertIn("source_tags", prompt)
+        self.assertIn("expected_technical_keywords", prompt)
 
     def test_question_generation_user_prompt_serializes_payload(self):
         payload = {

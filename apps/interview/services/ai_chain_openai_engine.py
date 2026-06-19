@@ -534,6 +534,9 @@ class AIChainOpenAIEngine:
                     "question_category": self._normalize_question_category(
                         question.get("question_category") or question.get("question_type")
                     ),
+                    "expected_technical_keywords": self._normalize_expected_technical_keywords(
+                        question.get("expected_technical_keywords")
+                    ),
                     "difficulty": question.get("difficulty"),
                     "order_index": int(question.get("order_index") or index),
                     "generation_reason": question.get(
@@ -573,6 +576,18 @@ class AIChainOpenAIEngine:
             "other": "general",
         }
         return aliases.get(normalized, "general")
+
+    @staticmethod
+    def _normalize_expected_technical_keywords(value: Any) -> str:
+        if value is None:
+            return ""
+        if isinstance(value, (list, tuple, set)):
+            return ", ".join(
+                str(item).strip()
+                for item in value
+                if str(item).strip()
+            )
+        return str(value).strip()
 
     def _normalize_source_tags(self, source_tags: list[Any]) -> list[dict[str, Any]]:
         normalized = []
