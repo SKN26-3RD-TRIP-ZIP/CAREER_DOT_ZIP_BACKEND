@@ -16,6 +16,7 @@ EvaluationCreateView(POST /evaluations)에서만 생성되었고,
 
 import logging
 
+from django.conf import settings
 from django.db import transaction
 from apps.evaluation.services.sbert_service import (
     compute_sbert_similarities,
@@ -108,6 +109,8 @@ def _try_record_ab_results(user_id: int, answer_id, evaluation, ai_result: dict)
         logger.exception(
             "A/B 결과 기록 실패 (answer=%s) — 평가에는 영향 없음", answer_id
         )
+        if getattr(settings, "DEBUG", False):
+            raise  # 개발 환경에서는 즉시 확인할 수 있도록 예외를 전파한다
 
 
 def _persist_pipeline_tags(answer, pipeline_tags, selected_tag_name):
@@ -257,7 +260,7 @@ def evaluate_session_answers(session, reevaluate=False):
     """
     stats = {"evaluated": 0, "skipped": 0, "failed": 0}
 
-    for answer in session.answers.all():
+    for answer in session.answers.select_related("question", "session__jd").all():
         already_evaluated = Evaluation.objects.filter(answer=answer).exists()
         if already_evaluated and not reevaluate:
             stats["skipped"] += 1

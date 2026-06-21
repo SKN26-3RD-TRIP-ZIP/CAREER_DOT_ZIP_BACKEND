@@ -9,13 +9,19 @@ from django.db import transaction
 from apps.interview.models import InterviewSession
 from apps.evaluation.models import AnswerWeaknessTag
 from .models import FinalReport
-from .serializers import FinalReportSerializer, FinalReportListSerializer, FinalReportSessionSerializer
+from .serializers import (
+    FinalReportSerializer,
+    FinalReportListSerializer,
+    FinalReportSessionSerializer,
+    RoadmapResponseSerializer,
+)
 from .services.report_generator import generate_final_report
 from .services.recommendation_service import (
     get_recommended_questions_for_tags,
     get_session_weakness_recommended_questions,
 )
 from .services.pdf_generator import generate_report_pdf
+from .services.roadmap_service import get_or_create_roadmap
 
 logger = logging.getLogger("feedback_ai.report_views")
 
@@ -57,8 +63,6 @@ def _check_evaluation_failure(report):
 
 
 def _create_report(session):
-    # LLM 평가/리포트 요약 생성은 외부 API 호출을 포함할 수 있으므로 DB 락 밖에서 수행한다.
-    # 저장 직전에만 짧게 세션 row lock을 잡아 중복 FinalReport 생성을 방지한다.
     existing = FinalReport.objects.filter(session=session).first()
     if existing:
         return existing
@@ -122,7 +126,6 @@ class FinalReportGenerateView(APIView):
             return Response(serializer.data, status=status.HTTP_200_OK)
 
         try:
-            # LLM 호출/백필은 락 밖에서 수행하고, 저장 구간만 잠근다.
             summary = generate_final_report(session)
             if is_failed_report_summary(summary):
                 raise ReportGenerationFailed()
@@ -217,7 +220,6 @@ class SessionFinalReportView(APIView):
         return _build_session_report_response(session)
 
 
-# E7.9 -- 약점 태그 기반 추천 질문
 class WeaknessRecommendedQuestionsView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
@@ -270,7 +272,6 @@ class TagRecommendedQuestionsView(APIView):
         )
 
 
-# E7.9+ -- 면접관 피드백 (페르소나 피드백 + 동적 태그 + 추천 질문 통합)
 class SessionFeedbackView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
@@ -303,28 +304,24 @@ class SessionFeedbackView(APIView):
 
         p_meta = self._PERSONA_META.get(persona_type, {"short_name": persona_type, "avatar_emoji": "💼"})
 
-        # pros: strength_tags description (최대 3개)
         pros = [
             t.get("description") or t.get("tag_name", "")
             for t in triggered.get("strength_tags", [])[:3]
             if t.get("description") or t.get("tag_name")
         ] or ["분석된 강점 데이터가 없습니다."]
 
-        # cons: weakness_tags description (최대 3개)
         cons = [
             t.get("description") or t.get("tag_name", "")
             for t in triggered.get("weakness_tags", [])[:3]
             if t.get("description") or t.get("tag_name")
         ] or ["분석된 보완점 데이터가 없습니다."]
 
-        # 약점 태그 빈도 기반 추천 질문
         rec_result = get_session_weakness_recommended_questions(session, total_limit=5)
         expected_questions = [
             {"order": i + 1, "text": q["question_text"]}
             for i, q in enumerate(rec_result["recommended_questions"])
         ]
 
-        # 페르소나별 추천 답변 구조
         answer_structure_map = {
             "practical": ["핵심 결론", "수치 근거", "트레이드오프", "결과"],
             "coach":     ["상황", "행동", "배움", "성장"],
@@ -345,14 +342,15 @@ class SessionFeedbackView(APIView):
                 ])) or "페르소나 피드백을 생성 중입니다.",
                 "pros": pros,
                 "cons": cons,
-                "recommended_answer_structure": answer_structure_map.get(persona_type, ["상황", "과제", "행동", "결과"]),
+                "recommended_answer_structure": answer_structure_map.get(
+                    persona_type, ["상황", "과제", "행동", "결과"]
+                ),
                 "expected_questions": expected_questions,
             },
             status=status.HTTP_200_OK,
         )
 
 
-# E7.12 -- PDF 다운로드
 class ReportPDFDownloadView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
@@ -395,3 +393,50 @@ class ReportPDFDownloadView(APIView):
         resp["Content-Disposition"] = f'attachment; filename="{filename}"'
         resp["Content-Length"] = len(pdf_bytes)
         return resp
+
+
+
+
+class SessionRoadmapView(APIView):
+    """GET /api/v1/sessions/{session_id}/roadmap
+
+    weakness_tags LLM roadmap. Returns cached DB result if available.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_session(self, session_id):
+        try:
+            return InterviewSession.objects.get(id=session_id, user=self.request.user)
+        except InterviewSession.DoesNotExist:
+            return None
+
+    def get(self, request, session_id):
+        session = self.get_session(session_id)
+        if not session:
+            return Response({"detail": "Session not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        try:
+            roadmap = get_or_create_roadmap(session)
+        except Exception as exc:
+            logger.exception("roadmap generation error (session=%s): %s", session_id, exc)
+            return Response(
+                {"detail": "roadmap generation failed.", "code": "ROADMAP_GENERATION_FAILED"},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+
+        session_count = InterviewSession.objects.filter(user=request.user).count()
+        if session_count <= 2:
+            target_delta_label = "+2~4"
+        elif session_count <= 5:
+            target_delta_label = "+3~6"
+        else:
+            target_delta_label = "+5~10"
+
+        data = {
+            "week_priority_text": roadmap["week_priority_text"],
+            "target_delta_label": target_delta_label,
+            "practice_question": roadmap["practice_question"],
+            "items": roadmap["items"],
+        }
+        serializer = RoadmapResponseSerializer(data)
+        return Response(serializer.data, status=status.HTTP_200_OK)
