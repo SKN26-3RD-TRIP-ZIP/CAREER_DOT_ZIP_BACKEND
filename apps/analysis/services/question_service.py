@@ -6,8 +6,8 @@ Pipeline 3 - 예상 질문 & STAR 답변 생성 / 오케스트레이터
   views.py는 이 파일의 generate_all_questions()만 호출하면 된다.
 
 현재 구현 상태:
-  - ② RAG:    question_rag_service  (Pinecone 미연동, MySQL 폴백 사용 중)
-  - ③ 생성:   question_gen_service  (구현 완료)
+  - ② RAG:    question_rag_service  (Pinecone 미연동 시 MySQL 폴백 / RAG 후보를 ③에 주입)
+  - ③ 생성:   question_gen_service  (RAG 후보를 프롬프트 참고 자료로 주입해 질문 생성)
   - ④ 통합:   question_merge_service (구현 완료 — 임베딩 유사도 기반 중복 제거)
   - ⑤ STAR:   star_service          (구현 완료)
   - ⑥ 출력:   question_output_service (구현 완료)
@@ -50,7 +50,7 @@ def generate_all_questions(
     실행 순서:
       ②  RAG 검색       (question_rag_service — MySQL 폴백)
       ③  LLM 질문 생성   (question_gen_service)
-      ③' GitHub 검증 질문 (question_gen_service — repo+이력서+자소서 결합)
+      ③ GitHub 검증 질문 (question_gen_service — repo+이력서+자소서 결합)
       ④  통합/중복 제거   (question_merge_service)
       ⑤  STAR 답변 생성   (star_service)
       ⑥  출력 포맷 변환   (question_output_service)
@@ -82,15 +82,18 @@ def generate_all_questions(
 
     projects = projects or []
 
-    # ②③③' RAG 검색 + LLM 질문 생성 + GitHub 검증 질문 — 병렬 실행
-    with ThreadPoolExecutor(max_workers=3) as executor:
-        f_rag = executor.submit(search_similar_questions, jd_keywords_dict, 20)
+    # ② RAG 검색 — LLM 프롬프트 주입을 위해 먼저 실행
+    rag_questions = search_similar_questions(jd_keywords_dict, 20)
+
+    # ③③' LLM 질문 생성(RAG 후보 주입) + GitHub 검증 질문 — 병렬 실행
+    with ThreadPoolExecutor(max_workers=2) as executor:
         f_llm = executor.submit(
             generate_questions,
             job_role=job_role,
             company_name=company_name,
             jd_keywords=jd_keywords_dict,
             resume_analysis=resume_analysis,
+            rag_candidates=rag_questions,
         )
         # projects가 GitHub 검증(merge_with_github)을 거친 경우에만 코드 기반 질문 생성.
         # 검증된 repo가 없으면 generate_github_questions_for_projects가 [] 반환.
@@ -100,7 +103,6 @@ def generate_all_questions(
             resume_analysis,
             cover_letter_text,
         )
-        rag_questions    = f_rag.result()
         llm_questions    = f_llm.result()
         github_questions = f_github.result()
 
