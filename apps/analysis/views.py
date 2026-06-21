@@ -316,7 +316,7 @@ class AnalysisStartView(APIView):
         threading.Thread(
             target=_run_analysis,
             args=(session.id,),
-            daemon=True,
+            daemon=False,
         ).start()
 
         return Response({"session_id": session.id, "status": "analyzing"}, status=201)
@@ -379,7 +379,10 @@ class AnalysisMatchView(APIView):
                 status=400,
             )
 
-        jd_analysis = JdAnalysis.objects.get(id=session.jd_analysis_id)
+        try:
+            jd_analysis = JdAnalysis.objects.get(id=session.jd_analysis_id)
+        except JdAnalysis.DoesNotExist:
+            return Response({"error": "분석 결과를 찾을 수 없습니다."}, status=status.HTTP_404_NOT_FOUND)
 
         resume_meta = jd_analysis.resume_analysis
         return Response({
@@ -547,7 +550,10 @@ class QuestionFeedbackView(APIView):
         if not session.jd_analysis_id:
             return Response({"error": "분석이 아직 완료되지 않았습니다."}, status=400)
 
-        jd_analysis = JdAnalysis.objects.get(id=session.jd_analysis_id)
+        try:
+            jd_analysis = JdAnalysis.objects.get(id=session.jd_analysis_id)
+        except JdAnalysis.DoesNotExist:
+            return Response({"error": "분석 결과를 찾을 수 없습니다."}, status=status.HTTP_404_NOT_FOUND)
         QuestionFeedback.objects.create(
             jd_analysis=jd_analysis,
             rating=rating,

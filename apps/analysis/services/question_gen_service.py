@@ -22,10 +22,12 @@ def generate_questions(
     company_name: str,
     jd_keywords: dict,
     resume_analysis: dict,
+    rag_candidates: list[dict] | None = None,
     model: str = "gpt-4o-mini",
 ) -> list[dict]:
     """
     JD와 이력서 분석 결과를 바탕으로 LLM이 면접 질문을 생성한다.
+    rag_candidates가 있으면 질문 은행 후보를 참고 자료로 프롬프트에 주입한다.
     각 질문에 source(출처)와 basis(근거 원문 스니펫)를 함께 반환한다.
 
     반환 형식:
@@ -58,6 +60,22 @@ def generate_questions(
         for p in projects
     )
     trait_str = "\n".join(f"- {t}" for t in trait_evidence)
+
+    rag_str = ""
+    if rag_candidates:
+        lines = []
+        for c in rag_candidates[:10]:
+            q_type = c.get("question_type", c.get("type", "technical"))
+            text   = c.get("question_text", c.get("text", ""))
+            if text:
+                lines.append(f"- [{q_type}] {text}")
+        if lines:
+            rag_str = "\n".join(lines)
+
+    rag_section = (
+        f"\n[질문 은행 참고 후보 — 이 질문들의 패턴·유형을 참고해 더 맞춤화된 질문을 생성하세요]\n{rag_str}\n"
+        if rag_str else ""
+    )
 
     response = client.chat.completions.create(
         model=model,
@@ -114,7 +132,8 @@ def generate_questions(
                     f"[JD 인재상·역량] {', '.join(trait_keywords)}\n\n"
                     f"[지원자 핵심 경험]\n{exp_str}\n\n"
                     f"[지원자 역량 증거 문장]\n{trait_str}\n\n"
-                    f"[지원자 프로젝트]\n{proj_str}\n\n"
+                    f"[지원자 프로젝트]\n{proj_str}\n"
+                    f"{rag_section}\n"
                     "위 정보를 최대한 반영해 인성 3개, 기술 4개, 경험 기반 3개 질문을 생성해주세요."
                 ),
             },
