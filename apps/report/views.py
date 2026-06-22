@@ -8,6 +8,7 @@ from django.db import transaction
 
 from apps.interview.models import InterviewSession
 from apps.evaluation.models import AnswerWeaknessTag
+from apps.evaluation.evaluation_chains import EvaluationFormatError
 from .models import FinalReport
 from .serializers import (
     FinalReportSerializer,
@@ -49,6 +50,22 @@ def report_generation_failed_response():
     )
 
 
+def report_evaluation_format_error_response():
+    """LLM 응답 포맷이 재시도까지 소진하고도 깨진 경우의 전용 에러 응답.
+
+    프론트(StateView)가 이 code로 전용 에러 창을 띄울 수 있도록 구분한다.
+    """
+    return Response(
+        {
+            "detail": "AI 평가 응답 형식 오류로 채점을 완료하지 못했습니다. 잠시 후 다시 시도해 주세요.",
+            "code": "AI_EVALUATION_FORMAT_ERROR",
+            "error_code": "AI_EVALUATION_FORMAT_ERROR",
+            "retryable": True,
+        },
+        status=status.HTTP_503_SERVICE_UNAVAILABLE,
+    )
+
+
 def _get_existing_report(session):
     try:
         return session.final_report
@@ -67,15 +84,17 @@ def _create_report(session):
     if existing:
         return existing
 
-    summary = generate_final_report(session)
-    if is_failed_report_summary(summary):
-        raise ReportGenerationFailed()
-
+    # 무거운 generate_final_report(LLM 호출 다수)를 락 안에서 수행한다.
+    # 락을 먼저 잡고 재확인해, 동시 요청이 같은 세션 리포트를 중복 생성(=중복 LLM 비용)하는
+    # 것을 막는다.
     with transaction.atomic():
         InterviewSession.objects.select_for_update().get(pk=session.pk)
         report = FinalReport.objects.filter(session=session).first()
         if report:
             return report
+        summary = generate_final_report(session)
+        if is_failed_report_summary(summary):
+            raise ReportGenerationFailed()
         return FinalReport.objects.create(session=session, summary=summary)
 
 
@@ -88,9 +107,13 @@ def _build_session_report_response(session):
     if not report:
         try:
             report = _create_report(session)
+        except EvaluationFormatError:
+            logger.exception("리포트 평가 포맷 오류 (session=%s)", getattr(session, "id", "?"))
+            return report_evaluation_format_error_response()
         except ReportGenerationFailed:
             return report_generation_failed_response()
         except Exception:
+            logger.exception("리포트 생성 실패 (session=%s)", getattr(session, "id", "?"))
             return report_generation_failed_response()
 
     serializer = FinalReportSessionSerializer(report)
@@ -126,22 +149,35 @@ class FinalReportGenerateView(APIView):
             return Response(serializer.data, status=status.HTTP_200_OK)
 
         try:
-            summary = generate_final_report(session)
-            if is_failed_report_summary(summary):
-                raise ReportGenerationFailed()
-
+            # 락을 먼저 잡고 재확인 후 생성한다. generate_final_report(무거운 LLM 호출)를
+            # 락 안에서 1회만 수행해 동시 요청의 중복 생성/중복 LLM 비용을 방지.
             with transaction.atomic():
                 InterviewSession.objects.select_for_update().get(pk=session.pk)
                 report = FinalReport.objects.filter(session=session).first()
-                is_new = report is None
-                if report:
-                    report.summary = summary
-                    report.save(update_fields=["summary"])
+                if report and is_failed_report_summary(report.summary):
+                    report.delete()
+                    report = None
+
+                if report and not force:
+                    is_new = False
                 else:
-                    report = FinalReport.objects.create(session=session, summary=summary)
+                    summary = generate_final_report(session)
+                    if is_failed_report_summary(summary):
+                        raise ReportGenerationFailed()
+                    if report:
+                        report.summary = summary
+                        report.save(update_fields=["summary"])
+                        is_new = False
+                    else:
+                        report = FinalReport.objects.create(session=session, summary=summary)
+                        is_new = True
+        except EvaluationFormatError:
+            logger.exception("리포트 평가 포맷 오류 (session=%s)", session_id)
+            return report_evaluation_format_error_response()
         except ReportGenerationFailed:
             return report_generation_failed_response()
         except Exception:
+            logger.exception("리포트 생성 실패 (session=%s)", session_id)
             return report_generation_failed_response()
 
         serializer = FinalReportSerializer(report)
@@ -373,6 +409,9 @@ class ReportPDFDownloadView(APIView):
         if not report:
             try:
                 report = _create_report(session)
+            except EvaluationFormatError:
+                logger.exception("PDF용 리포트 평가 포맷 오류 (session=%s)", session_id)
+                return report_evaluation_format_error_response()
             except ReportGenerationFailed:
                 return report_generation_failed_response()
             except Exception as exc:

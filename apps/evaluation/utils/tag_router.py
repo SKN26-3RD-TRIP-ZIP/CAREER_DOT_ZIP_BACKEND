@@ -1,6 +1,12 @@
 # apps/evaluation/utils/tag_router.py
 import re
 
+from django.conf import settings
+
+# 과다 필러 임계값은 SPEECH_CONFIG 단일 출처에서 읽는다(매직넘버 중복 제거).
+# 임계값을 초과(>)하면 excessive로 판정. settings 누락 시 기본 6.
+_EXCESSIVE_FILLER_LIMIT = getattr(settings, "SPEECH_CONFIG", {}).get("EXCESSIVE_FILLER_LIMIT", 6)
+
 
 def _to_korean(text: str, fallback: str) -> str:
     """텍스트에 영어 비중이 높으면 fallback 한국어 문자열을 반환한다.
@@ -33,7 +39,7 @@ def route_deterministic_tags(
     triggered_weaknesses = []
 
     # 0. 파일 내부 실제 정량 지표 데이터 가공 및 방어 코드 구축
-    is_excessive_fillers = total_filler > 6 
+    is_excessive_fillers = total_filler > _EXCESSIVE_FILLER_LIMIT
 
     # 점수 키 유실에 대비한 데이터 무결성 방어 조치 (기본값 0)
     bei_situation_score = bei_star.get("situation", {}).get("score", 0) if bei_star else 0
@@ -45,6 +51,8 @@ def route_deterministic_tags(
     cbi_competency_root = cbi_res.get("cbi_competency", {}) if cbi_res else {}
     cbi_level = cbi_competency_root.get("assigned_level", cbi_res.get("cbi_competency_level", {}).get("level", 1) if cbi_res else 1)
     is_grounded = grounding_res.get("is_grounded", False) if grounding_res else False
+    # 개념/원리/비교 질문은 수치 근거가 없는 게 정상이므로 grounding 약점 판정에서 제외.
+    grounding_applicable = grounding_res.get("grounding_applicable", True) if grounding_res else True
 
     # P0-4 기획 구현을 위한 아키텍처 트레이드오프 마스터 사전
     TRADEOFF_DICTIONARY = ["장점", "단점", "비용", "대안", "트레이드오프", "반면에", "리스크", "비교", "tradeoff"]
@@ -104,7 +112,9 @@ def route_deterministic_tags(
         })
 
     # P0-6. weak_evidence
-    if not is_grounded:
+    # grounding이 적용되는(수치로 답해야 하는) 질문에서만 약점으로 판정한다.
+    # 개념/원리/비교 질문(grounding_applicable=False)은 수치 부재가 정상이므로 제외.
+    if not is_grounded and grounding_applicable:
         triggered_weaknesses.append({
             "tag_name": "weak_evidence",
             "category": "answer_quality",

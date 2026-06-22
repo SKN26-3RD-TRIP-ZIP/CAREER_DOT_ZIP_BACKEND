@@ -4,6 +4,7 @@ from collections import Counter
 
 from django.utils import timezone
 
+from apps.evaluation.evaluation_chains import EvaluationFormatError
 from apps.evaluation.services.session_evaluation import evaluate_session_answers
 from apps.evaluation.services.question_category import resolve_question_category
 from apps.evaluation.services.sufficiency_bridge import get_answer_text_for_evaluation
@@ -516,6 +517,10 @@ def generate_final_report(session):
     # 1. 미평가 답변 백필
     try:
         evaluate_session_answers(session)
+    except EvaluationFormatError:
+        # LLM 포맷 오류(재시도 소진)는 삼키지 않고 위로 전파 → 뷰가 에러 응답을 내려
+        # 프론트가 에러 창을 띄우게 한다. (에러 로그는 하위 레이어에서 이미 기록됨)
+        raise
     except Exception:
         logger.exception(
             "evaluate_session_answers backfill failed for session %s",
@@ -523,7 +528,7 @@ def generate_final_report(session):
         )
 
     # 2. 데이터 로드
-    answers = session.answers.all().select_related("evaluation", "question").prefetch_related(
+    answers = session.answers.all().select_related("evaluation", "question", "session").prefetch_related(
         "strength_mappings__strength_tag",
         "weakness_mappings__weakness_tag",
     )
