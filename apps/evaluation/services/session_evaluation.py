@@ -31,6 +31,7 @@ from apps.evaluation.models import (
     AnswerStrengthTag,
     AnswerWeaknessTag,
 )
+from apps.evaluation.evaluation_chains import EvaluationFormatError
 from apps.evaluation.services.evaluation_services import EvaluationService
 from apps.evaluation.services.question_category import resolve_question_category
 from apps.evaluation.services.sufficiency_bridge import (
@@ -260,8 +261,14 @@ def evaluate_session_answers(session, reevaluate=False):
     """
     stats = {"evaluated": 0, "skipped": 0, "failed": 0}
 
-    for answer in session.answers.select_related("question", "session__jd").all():
-        already_evaluated = Evaluation.objects.filter(answer=answer).exists()
+    answers_qs = session.answers.select_related("question", "session__jd").all()
+    # 답변별 Evaluation.exists() N+1을 제거: 평가 완료된 answer_id를 한 번에 조회해 set 비교.
+    evaluated_answer_ids = set(
+        Evaluation.objects.filter(answer__in=answers_qs).values_list("answer_id", flat=True)
+    )
+
+    for answer in answers_qs:
+        already_evaluated = answer.id in evaluated_answer_ids
         if already_evaluated and not reevaluate:
             stats["skipped"] += 1
             continue
@@ -275,6 +282,15 @@ def evaluate_session_answers(session, reevaluate=False):
 
             create_evaluation_for_answer(answer)
             stats["evaluated"] += 1
+        except EvaluationFormatError:
+            # LLM 응답 포맷이 재시도까지 소진하고도 깨진 경우: 격리하지 않고 위로 전파해
+            # 리포트 레이어가 사용자에게 에러 창을 띄우고 에러 로그를 남기도록 한다.
+            logger.exception(
+                "Session evaluation format error for answer %s (session %s) — surfacing",
+                getattr(answer, "id", "?"),
+                getattr(session, "id", "?"),
+            )
+            raise
         except Exception:  # noqa: BLE001 - 답변 단위 격리, 리포트는 계속 생성
             logger.exception(
                 "Session evaluation backfill failed for answer %s (session %s)",

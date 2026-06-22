@@ -1,4 +1,3 @@
-import re
 import logging
 import time
 from collections import Counter
@@ -42,7 +41,9 @@ def _cfg(key):
 logger = logging.getLogger("feedback_ai.evaluation_service")
 
 kiwi = Kiwi()
-FILLER_WORDS = ["어", "음", "그니까", "그러니까", "사실", "이제", "저기"]
+# 추임새(필러)로 셀 단어. "사실"·"이제"는 정상 어휘로 쓰이는 빈도가 높아(추임새로서의
+# precision이 낮아) 오탐을 막기 위해 제외한다.
+FILLER_WORDS = ["어", "음", "그니까", "그러니까", "저기"]
 
 
 class EvaluationService:
@@ -61,14 +62,10 @@ class EvaluationService:
         filler_counts = {}
         total_filler = 0
         for word in FILLER_WORDS:
-            if len(word) == 1:
-                # 단음절 필러("어","음")는 형태소 토큰 정확 일치로만 카운트
-                count = token_counter.get(word, 0)
-            else:
-                # 다음절 필러는 부분문자열 + 말줄임("그러니까...") 패턴 중 큰 값
-                plain_count = stt_text.count(word)
-                ellipsis_count = len(re.findall(rf'{re.escape(word)}\.+', stt_text))
-                count = max(plain_count, ellipsis_count)
+            # 단/다음절 필러 모두 형태소 토큰 정확 일치로만 카운트한다.
+            # (부분문자열 카운트는 "사실상"·"이제부터"처럼 정상 어휘 안에 포함된
+            #  필러까지 오탐하므로 토큰 경계 기준으로 통일)
+            count = token_counter.get(word, 0)
             if count > 0:
                 filler_counts[word] = count
                 total_filler += count
