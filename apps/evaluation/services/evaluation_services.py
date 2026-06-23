@@ -45,6 +45,34 @@ kiwi = Kiwi()
 # precision이 낮아) 오탐을 막기 위해 제외한다.
 FILLER_WORDS = ["어", "음", "그니까", "그러니까", "저기"]
 
+# 근접 반복 탐지 윈도우(토큰 수). 동일 content 토큰이 이 범위 안에서 재등장하면 1회 반복으로
+# 카운트한다. 말 더듬/즉시 반복 같은 비유창성을 잡되 멀리 떨어진 주제어 반복은 제외하도록 작게 둔다.
+REPETITION_WINDOW = 3
+
+# LLM이 반환하는 정성 점수의 유효 범위. 모델이 범위를 벗어난 값을 주더라도 하위 집계
+# (report_generator의 bei_avg 4요소 합산 등)와 사용자 노출 지표가 정의역을 넘지 않도록
+# 수집 지점(_extract_qualitative_scores)에서 클램핑한다. (E 리뷰 #1)
+BEI_COMPONENT_SCORE_MAX = 25   # STAR 각 요소(situation/task/action/result): 0~25
+CBI_SCORE_MAX = 100            # CBI 환산 점수: 0~100
+
+
+def _clamp_score(value, lo, hi):
+    """LLM 점수를 [lo, hi]로 제한한다.
+
+    Returns:
+        (clamped, was_adjusted). 숫자 변환 실패는 lo로 폴백하며 was_adjusted=True.
+        범위 내 값은 정수면 정수로 유지(저장 JSON 일관성), 아니면 소수 1자리 반올림.
+    """
+    try:
+        num = float(value)
+    except (TypeError, ValueError):
+        return lo, True
+    if num < lo:
+        return lo, True
+    if num > hi:
+        return hi, True
+    return (int(num) if num.is_integer() else round(num, 1)), False
+
 
 class EvaluationService:
 
@@ -70,10 +98,16 @@ class EvaluationService:
                 filler_counts[word] = count
                 total_filler += count
 
+        # 근접 반복 탐지: 길이 2자 이상 content 토큰이 바로 뒤 REPETITION_WINDOW 범위 안에
+        # 다시 등장하면 1회 반복으로 기록. (기존엔 i, i+1 인접 중복만 잡아 '음... 그 그 그런'처럼
+        # 한두 토큰 떨어진 더듬/반복을 놓쳤다.)
         repetition_scans = []
-        for i in range(len(tokens) - 1):
-            if tokens[i] == tokens[i+1] and len(tokens[i]) > 1:
-                repetition_scans.append(tokens[i])
+        for i, tok in enumerate(tokens):
+            if len(tok) < 2:
+                continue
+            if tok in tokens[i + 1 : i + 1 + REPETITION_WINDOW]:
+                repetition_scans.append(tok)
+        repetition_count = len(repetition_scans)
 
         # ── E7.6 — 휴지 패턴 고도화 ──────────────────────────────────
         # word_count 기반 추정 발화 시간: 한국어 평균 발화속도 ≈ 3단어/초
@@ -104,9 +138,10 @@ class EvaluationService:
         else:
             pause_severity = "critical"
 
-        # 필러워드 + 휴지 복합 지수 (높을수록 발화 흐름 불안정)
+        # 필러워드 + 휴지 + 근접 반복 복합 지수 (높을수록 발화 흐름 불안정)
+        # 반복은 필러(0.5)와 휴지(1.5) 사이의 중간 가중치(1.0)로 반영한다.
         dysfluency_composite_index = round(
-            (total_filler * 0.5 + long_pause_count * 1.5) / max(word_count / 10, 1),
+            (total_filler * 0.5 + long_pause_count * 1.5 + repetition_count * 1.0) / max(word_count / 10, 1),
             3,
         )
 
@@ -132,6 +167,7 @@ class EvaluationService:
             "total_filler_count": total_filler,
             "long_pause_count": long_pause_count,
             "repetitions": repetition_scans,
+            "repetition_count": repetition_count,
             "is_sentence_incomplete": False,
             "pause_analysis": pause_analysis,   # E7.6
         }
@@ -177,6 +213,20 @@ class EvaluationService:
         action    = bei_star.get("action", {})
         result    = bei_star.get("result", {})
 
+        # 수집 지점 클램핑(E 리뷰 #1): LLM이 정의 범위(0~25)를 벗어난 STAR 점수를 줘도 제한한다.
+        # dict in-place로 되써, 저장되는 bei_score와 같은 객체를 읽는 tag_router(_route_tags)가
+        # 모두 클램핑된 값을 보게 한다.
+        for _label, _comp in (("situation", situation), ("task", task),
+                              ("action", action), ("result", result)):
+            if isinstance(_comp, dict):
+                _clamped, _adjusted = _clamp_score(_comp.get("score", 0), 0, BEI_COMPONENT_SCORE_MAX)
+                if _adjusted:
+                    logger.warning(
+                        "[클램핑] BEI %s score=%r → %s (유효범위 0~%d)",
+                        _label, _comp.get("score", 0), _clamped, BEI_COMPONENT_SCORE_MAX,
+                    )
+                _comp["score"] = _clamped
+
         bei_total = (
             situation.get("score", 0)
             + task.get("score", 0)
@@ -184,7 +234,16 @@ class EvaluationService:
             + result.get("score", 0)
         )
         cbi_level       = cbi_competency.get("assigned_level", 1)
-        cbi_mapped_score = cbi_competency.get("score", float(cbi_level * 20))
+        _raw_cbi_score   = cbi_competency.get("score", float(cbi_level * 20))
+        cbi_mapped_score, _cbi_adjusted = _clamp_score(_raw_cbi_score, 0, CBI_SCORE_MAX)
+        if _cbi_adjusted:
+            logger.warning(
+                "[클램핑] CBI score=%r → %s (유효범위 0~%d)",
+                _raw_cbi_score, cbi_mapped_score, CBI_SCORE_MAX,
+            )
+        # tag_router가 cbi_competency["score"]를 직접 읽을 수 있으므로 되써준다.
+        if isinstance(cbi_competency, dict):
+            cbi_competency["score"] = cbi_mapped_score
 
         logger.info(
             "[정성 지표 정산] BEI 총합: %s점, CBI 레벨: %s (환산: %s점)",
@@ -383,6 +442,7 @@ class EvaluationService:
                 "counts": dysfluency_res.get("filler_word_counts", {}),
                 "total": total_fillers,
                 "repetitions": dysfluency_res.get("repetitions", []),
+                "repetition_count": dysfluency_res.get("repetition_count", 0),
             },
             "final_tech_score": int(overall_score),
             "score_detail": {
