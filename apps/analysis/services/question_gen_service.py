@@ -14,7 +14,7 @@ Pipeline 3 - ③ LLM 예상 질문 생성
 
 import json
 from .utils import get_client, clean_json, log_llm_usage
-from .github_service import fetch_code_snippets
+from .github_service import fetch_code_snippets, is_readme_file
 
 
 def generate_questions(
@@ -204,6 +204,8 @@ def _build_github_context(
     exp_str     = "\n".join(f"- {e}" for e in experiences) or "(없음)"
     trait_str   = "\n".join(f"- {t}" for t in trait_evidence) or "(없음)"
     cl_snippet  = (cover_letter_text or "").strip()[:600] or "(자소서 없음)"
+
+    readme_str = snippets.pop("__readme__", "").strip() or "(README 없음)"
     snippet_str = "\n\n".join(
         f"--- {path} ---\n{code}" for path, code in snippets.items()
     ) or "(코드 스니펫 없음)"
@@ -216,6 +218,7 @@ def _build_github_context(
         f"[repo에서 근거 못 찾은 기술] {', '.join(unverified) or '없음'}\n"
         f"[repo 실제 프레임워크] {', '.join(frameworks) or '없음'}\n"
         f"[repo 언어 비중] {lang_str}\n\n"
+        f"[프로젝트 README]\n{readme_str}\n\n"
         f"[이력서 핵심 경험]\n{exp_str}\n\n"
         f"[자소서 역량 증거 문장]\n{trait_str}\n\n"
         f"[자소서 원문 일부]\n{cl_snippet}\n\n"
@@ -260,22 +263,26 @@ def generate_github_questions(
                 "role": "system",
                 "content": (
                     "당신은 지원자의 GitHub repo를 직접 읽고 이력서·자소서와 대조하는 기술 면접관입니다.\n"
-                    "세 자료의 차이를 근거로 날카로운 심화 질문 3개를 생성하세요.\n\n"
+                    "네 자료(README·코드·이력서·자소서)의 차이를 근거로 날카로운 심화 질문 3개를 생성하세요.\n\n"
                     "[질문 구성 — 우선순위 순]\n"
                     "1. (technical, source=project) repo에서 근거 못 찾은 기술의 실제 사용 여부 확인\n"
                     "   예: 'Redis를 사용했다고 하셨는데 repo에서 흔적을 찾지 못했습니다. 어디에 적용하셨나요?'\n"
                     "2. (technical 또는 experience, source=combined) 자소서 역량 주장 ↔ 실제 코드 교차 검증\n"
                     "   예: '자소서에 성능 최적화를 주도했다고 쓰셨는데, repo의 어느 부분이 그 작업인가요?'\n"
                     "3. (technical, source=project) 실제 소스 코드의 설계 의도 (스니펫 있을 때만)\n\n"
+                    "[README 활용 지침]\n"
+                    "- README가 있으면 프로젝트의 도메인·목적·핵심 기능을 파악해 질문의 맥락으로 삼으세요.\n"
+                    "- README에 언급된 기능·아키텍처 중 이력서/코드와 불일치하거나 궁금한 부분을 질문으로 만들 수 있습니다.\n"
+                    "  예: 'README에는 실시간 알림 기능이 있다고 명시됐는데, 코드에서 WebSocket 관련 구현을 찾지 못했습니다. 어떻게 구현하셨나요?'\n\n"
                     "[규칙]\n"
                     "- 근거 못 찾은 기술이 없으면 1번 대신 코드 심화/자소서 교차 질문을 늘리세요.\n"
                     "- 추측으로 단정하지 말고 '확인'하는 어조로 (해명할 여지를 줄 것).\n"
-                    "- 자소서 내용을 실제로 인용해 만든 질문만 source=combined, 그 외는 source=project.\n"
+                    "- 자소서 내용을 실제로 인용해 만든 질문만 source=combined, 그 외는 source=gitrepo.\n"
                     "- 모든 질문은 한 문장, 물음표로 끝나게. 각 질문에 basis로 근거 명시.\n"
                     "- 반드시 아래 JSON으로만 응답. 마크다운 금지.\n\n"
                     "{\n"
                     '  "questions": [\n'
-                    '    {"type": "technical", "source": "project", "text": "질문", "basis": "근거 (예: 미검증 Redis / models.py)"}\n'
+                    '    {"type": "technical", "source": "gitrepo", "text": "질문", "basis": "근거 (예: 미검증 Redis / models.py)"}\n'
                     "  ]\n"
                     "}"
                 ),
@@ -292,9 +299,9 @@ def generate_github_questions(
         q_type = q.get("type", "technical")
         if q_type not in ("technical", "experience"):
             q_type = "technical"
-        source = q.get("source", "project")
-        if source not in ("project", "combined"):
-            source = "project"
+        source = q.get("source", "gitrepo")
+        if source not in ("gitrepo", "combined"):
+            source = "gitrepo"
         questions.append({
             "type":   q_type,
             "text":   q["text"],
