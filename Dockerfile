@@ -20,4 +20,5 @@ COPY . .
 
 EXPOSE 8000
 
-CMD ["python", "manage.py", "runserver", "0.0.0.0:8000"]
+# docker-compose.prod.yml에서 command로 오버라이드하거나, 개발 시 그대로 사용
+CMD ["gunicorn", "config.wsgi:application", "--bind", "0.0.0.0:8000", "--workers", "3"]
