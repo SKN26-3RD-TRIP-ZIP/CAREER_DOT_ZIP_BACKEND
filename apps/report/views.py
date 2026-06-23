@@ -1,5 +1,6 @@
 import logging
 
+from django.conf import settings
 from django.http import HttpResponse
 from rest_framework import permissions, status
 from rest_framework.response import Response
@@ -8,8 +9,7 @@ from django.db import transaction
 
 from apps.interview.models import InterviewSession
 from apps.evaluation.models import AnswerWeaknessTag
-from apps.evaluation.evaluation_chains import EvaluationFormatError
-from .models import FinalReport
+from .models import FinalReport, ReportShareToken
 from .serializers import (
     FinalReportSerializer,
     FinalReportListSerializer,
@@ -44,22 +44,6 @@ def report_generation_failed_response():
             "detail": "리포트 생성에 실패했습니다. 잠시 후 다시 시도해 주세요.",
             "code": "AI_REPORT_GENERATION_FAILED",
             "error_code": "AI_REPORT_GENERATION_FAILED",
-            "retryable": True,
-        },
-        status=status.HTTP_503_SERVICE_UNAVAILABLE,
-    )
-
-
-def report_evaluation_format_error_response():
-    """LLM 응답 포맷이 재시도까지 소진하고도 깨진 경우의 전용 에러 응답.
-
-    프론트(StateView)가 이 code로 전용 에러 창을 띄울 수 있도록 구분한다.
-    """
-    return Response(
-        {
-            "detail": "AI 평가 응답 형식 오류로 채점을 완료하지 못했습니다. 잠시 후 다시 시도해 주세요.",
-            "code": "AI_EVALUATION_FORMAT_ERROR",
-            "error_code": "AI_EVALUATION_FORMAT_ERROR",
             "retryable": True,
         },
         status=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -107,9 +91,6 @@ def _build_session_report_response(session):
     if not report:
         try:
             report = _create_report(session)
-        except EvaluationFormatError:
-            logger.exception("리포트 평가 포맷 오류 (session=%s)", getattr(session, "id", "?"))
-            return report_evaluation_format_error_response()
         except ReportGenerationFailed:
             return report_generation_failed_response()
         except Exception:
@@ -171,9 +152,6 @@ class FinalReportGenerateView(APIView):
                     else:
                         report = FinalReport.objects.create(session=session, summary=summary)
                         is_new = True
-        except EvaluationFormatError:
-            logger.exception("리포트 평가 포맷 오류 (session=%s)", session_id)
-            return report_evaluation_format_error_response()
         except ReportGenerationFailed:
             return report_generation_failed_response()
         except Exception:
@@ -409,9 +387,6 @@ class ReportPDFDownloadView(APIView):
         if not report:
             try:
                 report = _create_report(session)
-            except EvaluationFormatError:
-                logger.exception("PDF용 리포트 평가 포맷 오류 (session=%s)", session_id)
-                return report_evaluation_format_error_response()
             except ReportGenerationFailed:
                 return report_generation_failed_response()
             except Exception as exc:
@@ -479,3 +454,70 @@ class SessionRoadmapView(APIView):
         }
         serializer = RoadmapResponseSerializer(data)
         return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+class ShareLinkCreateView(APIView):
+    """POST /api/v1/reports/sessions/{session_id}/share-link
+
+    유효한 공유 토큰이 있으면 재사용, 없으면 신규 발급.
+    응답: { share_url, expires_at, created }
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, session_id):
+        try:
+            session = InterviewSession.objects.get(id=session_id, user=request.user)
+        except InterviewSession.DoesNotExist:
+            return Response({"detail": "Session not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        report = _get_existing_report(session)
+        if not report:
+            return Response(
+                {"detail": "리포트가 아직 생성되지 않았습니다.", "code": "REPORT_NOT_FOUND"},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        token_obj, created = ReportShareToken.get_or_create_for_report(report, request.user)
+        frontend_base = getattr(settings, "FRONTEND_BASE_URL", "http://localhost:5173").rstrip("/")
+        share_url = f"{frontend_base}/shared/{token_obj.token}"
+
+        return Response(
+            {
+                "share_url": share_url,
+                "expires_at": token_obj.expires_at.isoformat(),
+                "created": created,
+            },
+            status=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
+        )
+
+
+class SharedReportView(APIView):
+    """GET /api/v1/reports/share/{token}/
+
+    인증 불필요. 토큰 유효성(존재 + 미만료) 검증 후 FinalReport summary 반환.
+    """
+    permission_classes = [permissions.AllowAny]
+
+    def get(self, request, token):
+        try:
+            token_obj = ReportShareToken.objects.select_related("report").get(token=token)
+        except (ReportShareToken.DoesNotExist, ValueError):
+            return Response({"detail": "유효하지 않은 공유 링크입니다."}, status=status.HTTP_404_NOT_FOUND)
+
+        if not token_obj.is_valid:
+            return Response(
+                {"detail": "공유 링크가 만료되었습니다.", "code": "SHARE_LINK_EXPIRED"},
+                status=status.HTTP_410_GONE,
+            )
+
+        report = token_obj.report
+        return Response(
+            {
+                "report_id": str(report.id),
+                "session_id": str(report.session_id),
+                "generated_at": report.generated_at.isoformat(),
+                "summary": report.summary,
+                "expires_at": token_obj.expires_at.isoformat(),
+            },
+            status=status.HTTP_200_OK,
+        )

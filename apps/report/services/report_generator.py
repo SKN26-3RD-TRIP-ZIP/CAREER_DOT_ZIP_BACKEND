@@ -4,7 +4,6 @@ from collections import Counter
 
 from django.utils import timezone
 
-from apps.evaluation.evaluation_chains import EvaluationFormatError
 from apps.evaluation.services.session_evaluation import evaluate_session_answers
 from apps.evaluation.services.question_category import resolve_question_category
 from apps.evaluation.services.sufficiency_bridge import get_answer_text_for_evaluation
@@ -283,6 +282,7 @@ def _aggregate_scores(evaluated_answers: list) -> dict:
 def _aggregate_speech_diagnostics(evaluated_answers: list) -> dict:
     """세션 전체 필러워드·휴지(E7.6) 진단 데이터를 집계한다."""
     total_filler_count = 0
+    total_repetition_count = 0
     global_filler_words_counter: Counter = Counter()
     total_long_pause_count = 0
     pause_pattern_counter: Counter = Counter()
@@ -292,6 +292,7 @@ def _aggregate_speech_diagnostics(evaluated_answers: list) -> dict:
         filler_data = getattr(ans.evaluation, "filler_words", {}) or {}
         if isinstance(filler_data, dict):
             total_filler_count += filler_data.get("total", 0)
+            total_repetition_count += filler_data.get("repetition_count", 0)
             counts = filler_data.get("counts", {})
             if isinstance(counts, dict):
                 for word, cnt in counts.items():
@@ -309,6 +310,8 @@ def _aggregate_speech_diagnostics(evaluated_answers: list) -> dict:
     return {
         "total_filler_count": total_filler_count,
         "avg_fillers_per_answer": round(total_filler_count / n, 2) if n else 0,
+        "total_repetition_count": total_repetition_count,
+        "avg_repetitions_per_answer": round(total_repetition_count / n, 2) if n else 0,
         "filler_word_distribution": dict(global_filler_words_counter),
         "filler_words_counter": global_filler_words_counter,  # 요약 문구 생성용 Counter 객체
         "pause_summary": {
@@ -515,12 +518,11 @@ def generate_final_report(session):
     구조: evaluation_metadata / score_summary / score_detail / dynamically_triggered_tags
     """
     # 1. 미평가 답변 백필
+    # 부분 리포트 정책(#5): 답변 단위 LLM 포맷 오류(EvaluationFormatError)는 백필 내부에서
+    # 격리되어 failed/format_failed로 집계된다. 전체 리포트를 막지 않는다.
+    backfill_stats = {}
     try:
-        evaluate_session_answers(session)
-    except EvaluationFormatError:
-        # LLM 포맷 오류(재시도 소진)는 삼키지 않고 위로 전파 → 뷰가 에러 응답을 내려
-        # 프론트가 에러 창을 띄우게 한다. (에러 로그는 하위 레이어에서 이미 기록됨)
-        raise
+        backfill_stats = evaluate_session_answers(session) or {}
     except Exception:
         logger.exception(
             "evaluate_session_answers backfill failed for session %s",
@@ -632,6 +634,11 @@ def generate_final_report(session):
             "question_count": len(questions),
             "answer_count": len(answers_list),
             "evaluated_answer_count": n,
+            # 부분 리포트(#5): 채점되지 않은 답변 수. answer_count - evaluated_answer_count로
+            # 항상 정확히 산출(캐시/재생성 시점과 무관). 프론트 경고 배너의 기준값.
+            "unscored_answer_count": max(len(answers_list) - n, 0),
+            # 이번 백필에서 LLM 응답 포맷 오류로 실패한 답변 수(진단용 보조 지표).
+            "format_failed_answer_count": int(backfill_stats.get("format_failed", 0) or 0),
             "calculated_at": timezone.now().isoformat(),
             "summary_text": (
                 " ".join(summary_text_parts)
@@ -661,6 +668,8 @@ def generate_final_report(session):
             "speech_diagnostics": {
                 "total_filler_count": speech_diag["total_filler_count"],
                 "avg_fillers_per_answer": speech_diag["avg_fillers_per_answer"],
+                "total_repetition_count": speech_diag["total_repetition_count"],
+                "avg_repetitions_per_answer": speech_diag["avg_repetitions_per_answer"],
                 "filler_word_distribution": speech_diag["filler_word_distribution"],
                 "pause_summary": speech_diag["pause_summary"],
             },

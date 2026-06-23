@@ -2,10 +2,40 @@
 import re
 
 from django.conf import settings
+from kiwipiepy import Kiwi
 
 # 과다 필러 임계값은 SPEECH_CONFIG 단일 출처에서 읽는다(매직넘버 중복 제거).
 # 임계값을 초과(>)하면 excessive로 판정. settings 누락 시 기본 6.
 _EXCESSIVE_FILLER_LIMIT = getattr(settings, "SPEECH_CONFIG", {}).get("EXCESSIVE_FILLER_LIMIT", 6)
+
+
+# Kiwi는 lazy 초기화한다(모듈 import 비용/CI 보호). 최초 호출 시 1회 생성.
+_kiwi = None
+
+
+def _get_kiwi() -> Kiwi:
+    global _kiwi
+    if _kiwi is None:
+        _kiwi = Kiwi()
+    return _kiwi
+
+
+def _has_first_person_nominative(text: str) -> bool:
+    """1인칭 주격('내가'/'제가')을 형태소 토큰으로 정확히 탐지한다.
+
+    substring 매칭('제가' in '경제가')은 다른 명사+주격조사를 오탐하므로,
+    1인칭 대명사(나/저, NP) 바로 뒤에 주격조사 '가'(JKS)가 오는 패턴만 인정한다.
+    예) '제가'(저/NP+가/JKS)·'내가'(나/NP+가/JKS) → True,
+        '경제가'(경제/NNG+가/JKS)·'저는'(저/NP+는/JX) → False.
+    """
+    if not text:
+        return False
+    tokens = _get_kiwi().tokenize(text)
+    for i in range(len(tokens) - 1):
+        cur, nxt = tokens[i], tokens[i + 1]
+        if cur.form in ("나", "저") and cur.tag == "NP" and nxt.form == "가" and nxt.tag == "JKS":
+            return True
+    return False
 
 
 def _to_korean(text: str, fallback: str) -> str:
@@ -222,8 +252,14 @@ def route_deterministic_tags(
         })
 
     # P0-4. clear_ownership_leadership
-    ownership_keywords = ["내가", "제가", "주도하여", "직접", "기획하여", "책임지고", "제안해"]
-    if any(kw in stt_text for kw in ownership_keywords) and bei_action_score >= 20:
+    # 1인칭 주격(내가/제가)은 형태소 토큰 정확 일치로 검출('경제가' 등 substring 오탐 방지).
+    # 나머지 동사구/부사는 부분 일치가 안전하므로 substring 매칭 유지.
+    ownership_phrase_keywords = ["주도하여", "직접", "기획하여", "책임지고", "제안해"]
+    has_ownership_signal = (
+        _has_first_person_nominative(stt_text)
+        or any(kw in stt_text for kw in ownership_phrase_keywords)
+    )
+    if has_ownership_signal and bei_action_score >= 20:
         triggered_strengths.append({
             "tag_name": "clear_ownership_leadership",
             "category": "attitude",

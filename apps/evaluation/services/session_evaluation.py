@@ -257,9 +257,10 @@ def evaluate_session_answers(session, reevaluate=False):
         reevaluate: True 이면 이미 평가된 답변도 재평가한다.
 
     Returns:
-        {"evaluated": int, "skipped": int, "failed": int}
+        {"evaluated": int, "skipped": int, "failed": int, "format_failed": int}
+        ("format_failed"는 "failed"의 부분집합으로, LLM 응답 포맷 오류로 실패한 답변 수.)
     """
-    stats = {"evaluated": 0, "skipped": 0, "failed": 0}
+    stats = {"evaluated": 0, "skipped": 0, "failed": 0, "format_failed": 0}
 
     answers_qs = session.answers.select_related("question", "session__jd").all()
     # 답변별 Evaluation.exists() N+1을 제거: 평가 완료된 answer_id를 한 번에 조회해 set 비교.
@@ -283,14 +284,16 @@ def evaluate_session_answers(session, reevaluate=False):
             create_evaluation_for_answer(answer)
             stats["evaluated"] += 1
         except EvaluationFormatError:
-            # LLM 응답 포맷이 재시도까지 소진하고도 깨진 경우: 격리하지 않고 위로 전파해
-            # 리포트 레이어가 사용자에게 에러 창을 띄우고 에러 로그를 남기도록 한다.
+            # LLM 응답 포맷이 재시도까지 소진하고도 깨진 경우: 부분 리포트 정책(#5)에 따라
+            # 전체를 막지 않고 답변 단위로 격리한다. 일반 예외와 동일하게 failed로 카운트하되,
+            # 포맷 오류는 format_failed로도 따로 집계해 리포트 메타데이터/프론트 배너에 노출한다.
             logger.exception(
-                "Session evaluation format error for answer %s (session %s) — surfacing",
+                "Session evaluation format error for answer %s (session %s) — isolating (partial report)",
                 getattr(answer, "id", "?"),
                 getattr(session, "id", "?"),
             )
-            raise
+            stats["failed"] += 1
+            stats["format_failed"] += 1
         except Exception:  # noqa: BLE001 - 답변 단위 격리, 리포트는 계속 생성
             logger.exception(
                 "Session evaluation backfill failed for answer %s (session %s)",

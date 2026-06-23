@@ -41,7 +41,10 @@ def _use_mock() -> bool:
 
 
 # 포맷 오류 시 LLM 재호출 횟수 (settings로 조정 가능). 최초 1회 + 재시도 N회.
-_MAX_LLM_FORMAT_RETRIES = getattr(settings, "EVAL_LLM_MAX_RETRIES", 2)
+# 기본 1: 부분 리포트 정책(#5)에서는 실패한 답변이 전체 리포트를 막지 않으므로
+# "오래 재시도"보다 "빨리 격리"가 유리하다. 일시적 포맷 오류의 회복 효과는 대부분
+# 첫 재시도에 몰려 있고, 결정적으로 깨지는 답변은 추가 재시도마다 timeout(15s)만 낭비된다.
+_MAX_LLM_FORMAT_RETRIES = getattr(settings, "EVAL_LLM_MAX_RETRIES", 1)
 
 
 def _chat_json(system_content: str, user_content: str, *, label: str, required_keys=None) -> dict:
