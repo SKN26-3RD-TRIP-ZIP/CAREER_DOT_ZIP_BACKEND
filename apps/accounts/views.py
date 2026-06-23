@@ -767,6 +767,8 @@ class LoginView(APIView):
             return Response({'error': 'Account is suspended.'}, status=status.HTTP_403_FORBIDDEN)
         if 'Account is banned' in errors:
             return Response({'error': 'Account is banned.'}, status=status.HTTP_403_FORBIDDEN)
+        if 'Account is withdrawn' in errors:
+            return Response({'error': 'Account is withdrawn.'}, status=status.HTTP_403_FORBIDDEN)
         return Response({'error': 'Invalid email or password.'}, status=status.HTTP_401_UNAUTHORIZED)
 
 

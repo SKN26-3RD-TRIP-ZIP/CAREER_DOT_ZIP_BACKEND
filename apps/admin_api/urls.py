@@ -1,7 +1,14 @@
 from django.urls import path
 
-from .views import AuditLogListView, DashboardStatsView, MemberInviteView, MemberListView, MemberStatsView, MemberStatusView
-from .views_member_detail import MemberDetailView
+from .views import (
+    AuditLogListView,
+    DashboardStatsView,
+    MemberDetailView,
+    MemberInviteView,
+    MemberListView,
+    MemberStatsView,
+    MemberStatusView,
+)
 
 
 urlpatterns = [

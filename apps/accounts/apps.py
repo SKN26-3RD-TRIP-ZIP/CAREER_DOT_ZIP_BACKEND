@@ -36,7 +36,7 @@ def _start_scheduler():
     from apscheduler.triggers.cron import CronTrigger
     from django_apscheduler.jobstores import DjangoJobStore
 
-    from .tasks import check_dormant_accounts
+    from .tasks import check_dormant_accounts, cleanup_withdrawn_accounts
 
     scheduler = BackgroundScheduler(timezone="Asia/Seoul")
     scheduler.add_jobstore(DjangoJobStore(), "default")
@@ -45,6 +45,15 @@ def _start_scheduler():
         trigger=CronTrigger(hour=0, minute=0),
         id="check_dormant_accounts",
         name="Dormant account check and transition (daily 00:00)",
+        jobstore="default",
+        replace_existing=True,
+        misfire_grace_time=3600,
+    )
+    scheduler.add_job(
+        cleanup_withdrawn_accounts,
+        trigger=CronTrigger(hour=0, minute=30),
+        id="cleanup_withdrawn_accounts",
+        name="Withdrawn account PII anonymization (daily 00:30)",
         jobstore="default",
         replace_existing=True,
         misfire_grace_time=3600,
