@@ -6,7 +6,7 @@ from django.utils import timezone
 
 from apps.interview.models import InterviewSession
 from apps.report.models import FinalReport
-from ..models import AuditLog, LlmUsageLog
+from ..models import ApiErrorLog, LlmUsageLog
 
 User = get_user_model()
 
@@ -114,11 +114,9 @@ def build_dashboard_stats():
         for i in range(7)
     ]
 
-    # 최근 24시간 감사 로그 기반 에러 비율 (시스템 에러 프록시)
+    # 최근 24시간 시스템 에러 수 (API 5xx/미처리 예외, ApiErrorLog 기반 실제 수치)
     since_24h = timezone.now() - timedelta(hours=24)
-    audit_24h_total = AuditLog.objects.filter(created_at__gte=since_24h).count()
-    error_24h = AuditLog.objects.filter(created_at__gte=since_24h, action_type__icontains='error').count()
-    error_rate = round((error_24h / audit_24h_total * 100), 1) if audit_24h_total > 0 else 0.0
+    error_count = ApiErrorLog.objects.filter(created_at__gte=since_24h).count()
 
     # LLM 호출량 (LlmUsageLog 기반 실제 수치)
     ai_calls = LlmUsageLog.objects.count()
@@ -135,15 +133,10 @@ def build_dashboard_stats():
         'total_sessions': InterviewSession.objects.count(),
         'active_users': InterviewSession.objects.values('user_id').distinct().count(),
         'total_reports': FinalReport.objects.count(),
-        'error_count': error_24h,
+        'error_count': error_count,
         'ai_calls': ai_calls,
         # 이번 달 LLM 비용 추정치 (USD). 표에 있는 모델만 합산.
         'monthly_cost': monthly_cost,
         'cost_currency': 'USD',
         'weekly_sessions': weekly_sessions,
-        'system_health': {
-            'stt_status': 'normal',
-            'error_rate_24h': error_rate,
-            'audit_count_24h': audit_24h_total,
-        },
     }
