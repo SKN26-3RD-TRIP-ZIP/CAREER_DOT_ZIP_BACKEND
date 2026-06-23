@@ -1,7 +1,7 @@
 from datetime import timedelta
 
 from django.contrib.auth import get_user_model
-from django.db.models import Count
+from django.db.models import Count, Sum
 from django.utils import timezone
 
 from apps.interview.models import InterviewSession
@@ -9,6 +9,37 @@ from apps.report.models import FinalReport
 from ..models import AuditLog, LlmUsageLog
 
 User = get_user_model()
+
+# 모델별 단가 (USD / 1M tokens, input/output). 2026-06 기준, 변동 가능.
+# 출처: apps/evaluation/benchmarks/llm_eval_benchmark.py 의 PRICING.
+# 표에 없는 모델은 비용 계산에서 제외(과소 추정될 수 있음).
+LLM_PRICING = {
+    "gpt-4o-mini":  (0.15, 0.60),
+    "gpt-4.1-nano": (0.10, 0.40),
+    "gpt-4.1-mini": (0.40, 1.60),
+    "gpt-4.1":      (2.00, 8.00),
+    "gpt-4o":       (2.50, 10.00),
+    "gpt-5.5":      (5.00, 30.00),
+}
+
+
+def _monthly_llm_cost_usd(month_start):
+    """이번 달 LlmUsageLog를 모델별로 묶어 토큰×단가로 비용(USD)을 추정한다."""
+    usage = (
+        LlmUsageLog.objects
+        .filter(created_at__date__gte=month_start)
+        .values('model')
+        .annotate(prompt=Sum('prompt_tokens'), completion=Sum('completion_tokens'))
+    )
+    cost = 0.0
+    for row in usage:
+        price = LLM_PRICING.get(row['model'])
+        if not price:
+            continue
+        in_price, out_price = price
+        cost += (row['prompt'] or 0) / 1_000_000 * in_price
+        cost += (row['completion'] or 0) / 1_000_000 * out_price
+    return round(cost, 4)
 
 
 def _growth_rate(current, previous):
@@ -76,6 +107,10 @@ def build_dashboard_stats():
     # LLM 호출량 (LlmUsageLog 기반 실제 수치)
     ai_calls = LlmUsageLog.objects.count()
 
+    # 이번 달 LLM 비용 추정 (USD)
+    month_start = today.replace(day=1)
+    monthly_cost = _monthly_llm_cost_usd(month_start)
+
     return {
         'total_members': User.objects.count(),
         'active_members': User.objects.filter(status='active').count(),
@@ -86,8 +121,9 @@ def build_dashboard_stats():
         'total_reports': FinalReport.objects.count(),
         'error_count': error_24h,
         'ai_calls': ai_calls,
-        # 단가 정보가 없어 비용 산정은 보류 (토큰 합계만 노출)
-        'monthly_cost': 0,
+        # 이번 달 LLM 비용 추정치 (USD). 표에 있는 모델만 합산.
+        'monthly_cost': monthly_cost,
+        'cost_currency': 'USD',
         'weekly_sessions': weekly_sessions,
         'system_health': {
             'stt_status': 'normal',
