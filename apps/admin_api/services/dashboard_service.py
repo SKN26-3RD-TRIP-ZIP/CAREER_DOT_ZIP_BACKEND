@@ -23,6 +23,22 @@ LLM_PRICING = {
 }
 
 
+def _price_for(model):
+    """모델명에 맞는 단가를 찾는다.
+
+    OpenAI 응답의 model은 'gpt-4o-mini-2024-07-18'처럼 날짜 스냅샷이 붙어
+    단가표 키와 정확히 일치하지 않는다. 가장 긴 접두사 키로 매칭해
+    'gpt-4o-mini-...'가 'gpt-4o'가 아니라 'gpt-4o-mini'에 매칭되도록 한다.
+    """
+    if model in LLM_PRICING:
+        return LLM_PRICING[model]
+    best = None
+    for key in LLM_PRICING:
+        if model.startswith(key) and (best is None or len(key) > len(best)):
+            best = key
+    return LLM_PRICING[best] if best else None
+
+
 def _monthly_llm_cost_usd(month_start):
     """이번 달 LlmUsageLog를 모델별로 묶어 토큰×단가로 비용(USD)을 추정한다."""
     usage = (
@@ -33,7 +49,7 @@ def _monthly_llm_cost_usd(month_start):
     )
     cost = 0.0
     for row in usage:
-        price = LLM_PRICING.get(row['model'])
+        price = _price_for(row['model'])
         if not price:
             continue
         in_price, out_price = price
