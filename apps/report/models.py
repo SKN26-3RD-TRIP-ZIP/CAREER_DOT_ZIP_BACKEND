@@ -44,6 +44,20 @@ class RoadmapCache(models.Model):
 
 
 class FinalReport(models.Model):
+    # 비동기 생성 상태. 프론트는 done/failed 가 될 때까지 폴링한다.
+    STATUS_PENDING = 'pending'
+    STATUS_PROCESSING = 'processing'
+    STATUS_DONE = 'done'
+    STATUS_FAILED = 'failed'
+    STATUS_CHOICES = [
+        (STATUS_PENDING, 'pending'),
+        (STATUS_PROCESSING, 'processing'),
+        (STATUS_DONE, 'done'),
+        (STATUS_FAILED, 'failed'),
+    ]
+    # 워커가 처리 중 죽었을 때 'processing' 행을 재시작 가능한 것으로 간주하는 임계 시간(분).
+    PROCESSING_TIMEOUT_MINUTES = 10
+
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     session = models.OneToOneField(
         'interview.InterviewSession',
@@ -51,7 +65,11 @@ class FinalReport(models.Model):
         related_name='final_report',
     )
     summary = models.JSONField(default=dict)
+    # 기본값 done: 기존 행(이미 summary 보유)과의 하위호환을 위해.
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default=STATUS_DONE)
+    error_code = models.CharField(max_length=50, blank=True, null=True)
     generated_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         db_table = 'feedback_reports'
@@ -59,6 +77,14 @@ class FinalReport(models.Model):
 
     def __str__(self):
         return f"FinalReport for session {self.session.id}"
+
+    @property
+    def is_stale_processing(self):
+        """'processing' 상태로 멈춘 지 PROCESSING_TIMEOUT_MINUTES 초과 → 워커 사망으로 간주."""
+        if self.status != self.STATUS_PROCESSING:
+            return False
+        threshold = timezone.now() - timezone.timedelta(minutes=self.PROCESSING_TIMEOUT_MINUTES)
+        return self.updated_at < threshold
 
     @property
     def overall_score(self):

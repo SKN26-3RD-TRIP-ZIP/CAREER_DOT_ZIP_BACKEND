@@ -30,8 +30,31 @@ def _deterministic_variant(user_id: str, experiment_name: str, treatment_ratio: 
     return "treatment" if bucket < treatment_ratio else "control"
 
 
+def get_or_create_assignment_for(experiment, user_id) -> tuple["ABTestAssignment", bool]:
+    """실험 '객체' 기준으로 assignment를 조회/생성한다.
+
+    name으로 실험을 재조회하지 않으므로, 호출부가 실험 객체를 이미 들고 있을 때
+    중복 쿼리를 제거할 수 있다. assignment 객체를 그대로 반환해 record 단계의
+    재조회도 피하게 한다.
+
+    Returns:
+        (assignment: ABTestAssignment, is_new: bool)
+    """
+    return ABTestAssignment.objects.get_or_create(
+        experiment=experiment,
+        user_id=user_id,
+        defaults={
+            "variant": _deterministic_variant(
+                str(user_id), experiment.name, experiment.treatment_ratio
+            )
+        },
+    )
+
+
 def get_or_create_assignment(user_id, experiment_name: str) -> tuple[str, bool]:
     """사용자의 실험 variant를 반환한다 (없으면 새로 배정).
+
+    name 기반 공개 API (하위호환 유지). 내부적으로 get_or_create_assignment_for에 위임.
 
     Args:
         user_id: 사용자 UUID.
@@ -46,15 +69,7 @@ def get_or_create_assignment(user_id, experiment_name: str) -> tuple[str, bool]:
         logger.debug("실험 '%s' 미존재 또는 비활성 — control 반환", experiment_name)
         return "control", False
 
-    assignment, created = ABTestAssignment.objects.get_or_create(
-        experiment=experiment,
-        user_id=user_id,
-        defaults={
-            "variant": _deterministic_variant(
-                str(user_id), experiment_name, experiment.treatment_ratio
-            )
-        },
-    )
+    assignment, created = get_or_create_assignment_for(experiment, user_id)
     return assignment.variant, created
 
 
@@ -64,6 +79,9 @@ def record_ab_result(
     user_id,
     answer_id,
     score_dict: dict,
+    *,
+    experiment=None,
+    assignment=None,
 ) -> bool:
     """평가 결과를 A/B 관측값으로 기록한다.
 
@@ -73,13 +91,17 @@ def record_ab_result(
         answer_id: 평가 대상 answer UUID.
         score_dict: {final_score, bei_total, cbi_score, grounding_score,
                      speech_score, sbert_score, emotion_confidence, ...} dict.
+        experiment: (선택) 이미 조회한 ABTestExperiment 객체. 주면 name 재조회 생략.
+        assignment: (선택) 이미 조회/생성한 ABTestAssignment 객체. 주면 재조회 생략.
 
     Returns:
-        True if recorded, False if experiment not found.
+        True if recorded, False if experiment/assignment not found.
     """
     try:
-        experiment = ABTestExperiment.objects.get(name=experiment_name, status="active")
-        assignment = ABTestAssignment.objects.get(experiment=experiment, user_id=user_id)
+        if experiment is None:
+            experiment = ABTestExperiment.objects.get(name=experiment_name, status="active")
+        if assignment is None:
+            assignment = ABTestAssignment.objects.get(experiment=experiment, user_id=user_id)
     except (ABTestExperiment.DoesNotExist, ABTestAssignment.DoesNotExist):
         return False
 
