@@ -1,6 +1,7 @@
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
+from django.test import override_settings
 from django.urls import reverse
 from rest_framework import status
 from rest_framework.test import APITestCase
@@ -37,6 +38,8 @@ def success_summary(session):
   }
 
 
+# 폴링 비동기 생성을 테스트에서는 인라인(EAGER)으로 실행해 결정성을 확보한다.
+@override_settings(REPORT_GENERATION_EAGER=True)
 class SessionFinalReportAPITests(APITestCase):
   def setUp(self):
     user_model = get_user_model()
@@ -161,8 +164,8 @@ class SessionFinalReportAPITests(APITestCase):
 
     self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
 
-  @patch('apps.report.views.generate_final_report')
-  def test_failed_report_summary_is_not_saved_and_returns_retryable_503(self, mock_generate):
+  @patch('apps.report.services.report_jobs.generate_final_report')
+  def test_failed_report_marks_failed_status_and_returns_retryable_503(self, mock_generate):
     session = self.create_answered_session()
     mock_generate.return_value = failed_summary(session)
 
@@ -171,9 +174,11 @@ class SessionFinalReportAPITests(APITestCase):
     self.assertEqual(response.status_code, status.HTTP_503_SERVICE_UNAVAILABLE)
     self.assertEqual(response.data['code'], 'AI_REPORT_GENERATION_FAILED')
     self.assertTrue(response.data['retryable'])
-    self.assertFalse(FinalReport.objects.filter(session=session).exists())
+    # 폴링 모델: 실패해도 행은 남고 status='failed' 로 표시되어 재시도 대상이 된다.
+    report = FinalReport.objects.get(session=session)
+    self.assertEqual(report.status, FinalReport.STATUS_FAILED)
 
-  @patch('apps.report.views.generate_final_report')
+  @patch('apps.report.services.report_jobs.generate_final_report')
   def test_failed_report_can_be_retried_without_reusing_zero_score_row(self, mock_generate):
     session = self.create_answered_session()
     mock_generate.side_effect = [failed_summary(session), success_summary(session)]
@@ -185,5 +190,6 @@ class SessionFinalReportAPITests(APITestCase):
     self.assertEqual(second.status_code, status.HTTP_200_OK)
     self.assertEqual(FinalReport.objects.filter(session=session).count(), 1)
     report = FinalReport.objects.get(session=session)
+    self.assertEqual(report.status, FinalReport.STATUS_DONE)
     self.assertEqual(report.summary['score_summary']['overall_score'], 82)
     self.assertEqual(report.summary['evaluation_metadata']['evaluated_answer_count'], 1)

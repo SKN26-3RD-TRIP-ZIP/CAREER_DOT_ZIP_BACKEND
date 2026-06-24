@@ -15,8 +15,9 @@ from .serializers import (
     FinalReportListSerializer,
     FinalReportSessionSerializer,
     RoadmapResponseSerializer,
+    build_shared_summary,
 )
-from .services.report_generator import generate_final_report
+from .services.report_jobs import ensure_report_generation
 from .services.recommendation_service import (
     get_recommended_questions_for_tags,
     get_session_weakness_recommended_questions,
@@ -63,42 +64,28 @@ def _check_evaluation_failure(report):
     return metadata.get("answer_count", 0) > 0 and metadata.get("evaluated_answer_count", 0) == 0
 
 
-def _create_report(session):
-    existing = FinalReport.objects.filter(session=session).first()
-    if existing:
-        return existing
-
-    # 무거운 generate_final_report(LLM 호출 다수)를 락 안에서 수행한다.
-    # 락을 먼저 잡고 재확인해, 동시 요청이 같은 세션 리포트를 중복 생성(=중복 LLM 비용)하는
-    # 것을 막는다.
-    with transaction.atomic():
-        InterviewSession.objects.select_for_update().get(pk=session.pk)
-        report = FinalReport.objects.filter(session=session).first()
-        if report:
-            return report
-        summary = generate_final_report(session)
-        if is_failed_report_summary(summary):
-            raise ReportGenerationFailed()
-        return FinalReport.objects.create(session=session, summary=summary)
-
-
 def _build_session_report_response(session):
+    """폴링 계약: done → 200, processing → 202, failed → 503(retryable).
+
+    무거운 생성은 ensure_report_generation 이 백그라운드 스레드에서 수행한다
+    (DB 락/커넥션 장기 점유 없음). 프론트는 done/failed 가 될 때까지 폴링한다.
+    """
     report = _get_existing_report(session)
-    if report and _check_evaluation_failure(report):
-        report.delete()
-        report = None
+    if report and report.status == FinalReport.STATUS_DONE:
+        return Response(FinalReportSessionSerializer(report).data, status=status.HTTP_200_OK)
 
-    if not report:
-        try:
-            report = _create_report(session)
-        except ReportGenerationFailed:
-            return report_generation_failed_response()
-        except Exception:
-            logger.exception("리포트 생성 실패 (session=%s)", getattr(session, "id", "?"))
-            return report_generation_failed_response()
+    try:
+        report, _started = ensure_report_generation(session)
+    except Exception:
+        logger.exception("리포트 생성 트리거 실패 (session=%s)", getattr(session, "id", "?"))
+        return report_generation_failed_response()
 
-    serializer = FinalReportSessionSerializer(report)
-    return Response(serializer.data, status=status.HTTP_200_OK)
+    if report.status == FinalReport.STATUS_DONE:
+        return Response(FinalReportSessionSerializer(report).data, status=status.HTTP_200_OK)
+    if report.status == FinalReport.STATUS_FAILED:
+        return report_generation_failed_response()
+    # processing/pending → 폴링 안내 (202 Accepted)
+    return Response(FinalReportSessionSerializer(report).data, status=status.HTTP_202_ACCEPTED)
 
 
 class FinalReportGenerateView(APIView):
@@ -115,54 +102,28 @@ class FinalReportGenerateView(APIView):
         if not session:
             return Response({"detail": "Session not found."}, status=status.HTTP_404_NOT_FOUND)
 
-        force = request.data.get("force_regenerate", False)
-        try:
-            report = session.final_report
-        except FinalReport.DoesNotExist:
-            report = None
+        force = bool(request.data.get("force_regenerate", False))
 
-        if report and is_failed_report_summary(report.summary):
-            report.delete()
-            report = None
-
-        if report and not force:
-            serializer = FinalReportSerializer(report)
-            return Response(serializer.data, status=status.HTTP_200_OK)
+        report = _get_existing_report(session)
+        if report and report.status == FinalReport.STATUS_DONE and not force:
+            return Response(FinalReportSerializer(report).data, status=status.HTTP_200_OK)
 
         try:
-            # 락을 먼저 잡고 재확인 후 생성한다. generate_final_report(무거운 LLM 호출)를
-            # 락 안에서 1회만 수행해 동시 요청의 중복 생성/중복 LLM 비용을 방지.
-            with transaction.atomic():
-                InterviewSession.objects.select_for_update().get(pk=session.pk)
-                report = FinalReport.objects.filter(session=session).first()
-                if report and is_failed_report_summary(report.summary):
-                    report.delete()
-                    report = None
-
-                if report and not force:
-                    is_new = False
-                else:
-                    summary = generate_final_report(session)
-                    if is_failed_report_summary(summary):
-                        raise ReportGenerationFailed()
-                    if report:
-                        report.summary = summary
-                        report.save(update_fields=["summary"])
-                        is_new = False
-                    else:
-                        report = FinalReport.objects.create(session=session, summary=summary)
-                        is_new = True
-        except ReportGenerationFailed:
-            return report_generation_failed_response()
+            # 상태 선점만 락 안에서 짧게 수행하고, 무거운 LLM 생성은 백그라운드로 위임한다.
+            report, started = ensure_report_generation(session, force=force)
         except Exception:
-            logger.exception("리포트 생성 실패 (session=%s)", session_id)
+            logger.exception("리포트 생성 트리거 실패 (session=%s)", session_id)
             return report_generation_failed_response()
 
-        serializer = FinalReportSerializer(report)
-        return Response(
-            serializer.data,
-            status=status.HTTP_201_CREATED if is_new else status.HTTP_200_OK,
-        )
+        if report.status == FinalReport.STATUS_DONE:
+            return Response(
+                FinalReportSerializer(report).data,
+                status=status.HTTP_201_CREATED if started else status.HTTP_200_OK,
+            )
+        if report.status == FinalReport.STATUS_FAILED:
+            return report_generation_failed_response()
+        # processing/pending → 클라이언트는 GET 으로 폴링 (202 Accepted)
+        return Response(FinalReportSerializer(report).data, status=status.HTTP_202_ACCEPTED)
 
 
 class FinalReportDetailView(APIView):
@@ -379,19 +340,27 @@ class ReportPDFDownloadView(APIView):
         if not session:
             return Response({"detail": "Session not found."}, status=status.HTTP_404_NOT_FOUND)
 
+        # PDF는 완성된(done) 리포트만 렌더링한다. 미완성이면 생성을 트리거하고
+        # 폴링을 안내한다(202) — 다운로드 요청에서 수십 초 동기 LLM 생성을 막기 위함.
         report = _get_existing_report(session)
-        if report and _check_evaluation_failure(report):
-            report.delete()
-            report = None
-
-        if not report:
+        if not report or report.status != FinalReport.STATUS_DONE:
             try:
-                report = _create_report(session)
-            except ReportGenerationFailed:
-                return report_generation_failed_response()
+                report, _started = ensure_report_generation(session)
             except Exception as exc:
-                logger.exception("PDF용 리포트 생성 중 오류: %s", exc)
+                logger.exception("PDF용 리포트 생성 트리거 오류: %s", exc)
                 return report_generation_failed_response()
+
+            if report.status == FinalReport.STATUS_FAILED:
+                return report_generation_failed_response()
+            if report.status != FinalReport.STATUS_DONE:
+                return Response(
+                    {
+                        "detail": "리포트 생성 중입니다. 완료 후 다시 시도해 주세요.",
+                        "code": "REPORT_PROCESSING",
+                        "retryable": True,
+                    },
+                    status=status.HTTP_202_ACCEPTED,
+                )
 
         try:
             pdf_bytes = generate_report_pdf(report)
@@ -516,7 +485,8 @@ class SharedReportView(APIView):
                 "report_id": str(report.id),
                 "session_id": str(report.session_id),
                 "generated_at": report.generated_at.isoformat(),
-                "summary": report.summary,
+                # 공유 링크는 안전 필드만 노출한다(#4).
+                "summary": build_shared_summary(report.summary),
                 "expires_at": token_obj.expires_at.isoformat(),
             },
             status=status.HTTP_200_OK,

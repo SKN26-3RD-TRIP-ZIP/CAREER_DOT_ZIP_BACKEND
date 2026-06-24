@@ -12,7 +12,7 @@ from apps.report.models import FinalReport
 from apps.report.services.report_generator import generate_final_report
 
 
-@override_settings(OPENAI_USE_MOCK=True)
+@override_settings(OPENAI_USE_MOCK=True, REPORT_GENERATION_EAGER=True)
 class FinalReportIntegrationTests(APITestCase):
   def setUp(self):
     User = get_user_model()

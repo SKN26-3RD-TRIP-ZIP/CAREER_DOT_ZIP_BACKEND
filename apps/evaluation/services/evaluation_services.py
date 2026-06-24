@@ -12,16 +12,16 @@ from apps.evaluation.evaluation_chains import (
 )
 from apps.evaluation.utils.tag_router import route_deterministic_tags
 
-# 💡 settings.py에 선언한 SPEECH_CONFIG를 안전하게 맵핑 (없을 경우를 대비한 Fallback 방어코드 포함)
-SPEECH_CONFIG = getattr(settings, "SPEECH_CONFIG", {
-    "BASE_SCORE": 80.0,   # settings.SPEECH_CONFIG와 일치 (완벽한 전달력도 80 상한)
+# 💡 SPEECH 기본값 단일 소스(SSOT). speech 점수 + E7.6 휴지 파라미터를 한 dict에 모은다.
+# 과거에는 모듈 폴백 dict(BASE_SCORE=80)와 _calculate_speech_score의 인라인
+# .get(..., 100.0) 기본값이 따로 놀아, settings.SPEECH_CONFIG가 일부 키만 정의하면
+# 의도(80 상한)와 다른 100이 적용되는 불일치가 있었다. 이제 모든 기본값을 여기서만 관리한다.
+_SPEECH_DEFAULTS = {
+    "BASE_SCORE": 80.0,   # 완벽한 전달력도 80 상한
     "FILLER_PENALTY_PER_COUNT": 5.0,
     "FLOOR_SCORE": 20.0,
     "EXCESSIVE_FILLER_LIMIT": 6,
-})
-
-# 💡 E7.6 휴지 파라미터 — settings.SPEECH_CONFIG에 키가 없을 때의 방어 기본값
-_PAUSE_DEFAULTS = {
+    # E7.6 휴지 파라미터
     "SPEECH_RATE_WORDS_PER_SEC": 3.0,
     "PAUSE_DURATION_SEC": 3.0,
     "PAUSE_RATIO_THRESHOLD": 0.30,
@@ -32,10 +32,13 @@ _PAUSE_DEFAULTS = {
     "PAUSE_SEVERITY_THRESHOLDS": {"minimal": 1, "moderate": 3, "high": 6},
 }
 
+# settings.SPEECH_CONFIG가 없으면 통째로 기본값 사용.
+SPEECH_CONFIG = getattr(settings, "SPEECH_CONFIG", _SPEECH_DEFAULTS)
+
 
 def _cfg(key):
-    """SPEECH_CONFIG에서 값을 읽되, 누락 시 E7.6 기본값으로 폴백."""
-    return SPEECH_CONFIG[key] if key in SPEECH_CONFIG else _PAUSE_DEFAULTS[key]
+    """SPEECH_CONFIG에서 값을 읽되, 키 누락 시 _SPEECH_DEFAULTS로 폴백(단일 소스)."""
+    return SPEECH_CONFIG[key] if key in SPEECH_CONFIG else _SPEECH_DEFAULTS[key]
 
 # 로거 정의
 logger = logging.getLogger("feedback_ai.evaluation_service")
@@ -54,6 +57,37 @@ REPETITION_WINDOW = 3
 # 수집 지점(_extract_qualitative_scores)에서 클램핑한다. (E 리뷰 #1)
 BEI_COMPONENT_SCORE_MAX = 25   # STAR 각 요소(situation/task/action/result): 0~25
 CBI_SCORE_MAX = 100            # CBI 환산 점수: 0~100
+
+# 이 글자 수(공백 제외) 미만의 답변은 LLM 평가가 의미 없으므로 호출을 생략하고 0점 처리한다.
+# (빈 답변/오타 한두 글자 등으로 OpenAI 비용·지연을 낭비하지 않기 위함. settings로 조정 가능)
+MIN_ANSWER_CHARS_FOR_LLM = getattr(settings, "MIN_ANSWER_CHARS_FOR_LLM", 5)
+
+
+def _empty_llm_results() -> tuple[dict, dict, dict]:
+    """빈/초단문 답변용 LLM 결과 스텁 (grounding / competency / emotion_intent)."""
+    grounding = {
+        "tech_stack": None,
+        "before_metric": None,
+        "after_metric": None,
+        "is_grounded": False,
+        "grounding_applicable": False,
+    }
+    competency = {
+        "bei_star": {
+            k: {"desc": "", "score": 0}
+            for k in ("situation", "task", "action", "result")
+        },
+        "cbi_competency": {"assigned_level": 1, "score": 0, "evidence_sentence": ""},
+        "llm_weakness_tags": [],
+    }
+    emotion = {
+        "emotion_labels": {},
+        "competency_intent_labels": {},
+        "dominant_emotion": None,
+        "dominant_competency": None,
+        "confidence_score": 0.0,
+    }
+    return grounding, competency, emotion
 
 
 def _clamp_score(value, lo, hi):
@@ -182,6 +216,14 @@ class EvaluationService:
             (grounding_res, cbi_res, emotion_intent_res)
             기술 질문이 아닐 경우 grounding_res는 빈 fallback dict를 반환한다.
         """
+        # 빈/초단문 답변: LLM 호출은 비용만 들고 결과가 무의미 → 조기 단락(0점 스텁 반환).
+        if len(answer_text.strip()) < MIN_ANSWER_CHARS_FOR_LLM:
+            logger.info(
+                "답변이 너무 짧아 LLM 평가 생략 (chars=%d < %d)",
+                len(answer_text.strip()), MIN_ANSWER_CHARS_FOR_LLM,
+            )
+            return _empty_llm_results()
+
         logger.info("📡 LLM 병렬 호출 시작 (question_type=%s)", question_type)
         if question_type == "technical":
             grounding_res, cbi_res, emotion_intent_res = eval_llm_chains_parallel_with_emotion(answer_text)
@@ -258,9 +300,9 @@ class EvaluationService:
         Returns:
             (final_speech_score, pause_penalty, pause_analysis_data)
         """
-        base_speech_score = SPEECH_CONFIG.get("BASE_SCORE", 100.0)
-        penalty_per_count = SPEECH_CONFIG.get("FILLER_PENALTY_PER_COUNT", 5.0)
-        floor_score       = SPEECH_CONFIG.get("FLOOR_SCORE", 20.0)
+        base_speech_score = _cfg("BASE_SCORE")
+        penalty_per_count = _cfg("FILLER_PENALTY_PER_COUNT")
+        floor_score       = _cfg("FLOOR_SCORE")
 
         total_fillers          = dysfluency_res.get("total_filler_count", 0)
         calculated_speech_score = base_speech_score - (total_fillers * penalty_per_count)
@@ -423,7 +465,7 @@ class EvaluationService:
         )
 
         total_fillers     = dysfluency_res.get("total_filler_count", 0)
-        penalty_per_count = SPEECH_CONFIG.get("FILLER_PENALTY_PER_COUNT", 5.0)
+        penalty_per_count = _cfg("FILLER_PENALTY_PER_COUNT")
         cbi_competency    = cbi_res.get("cbi_competency", {})
 
         return {

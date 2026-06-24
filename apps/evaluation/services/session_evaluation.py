@@ -17,7 +17,7 @@ EvaluationCreateView(POST /evaluations)에서만 생성되었고,
 import logging
 
 from django.conf import settings
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from apps.evaluation.services.sbert_service import (
     compute_sbert_similarities,
     compute_tech_depth_score,
@@ -57,14 +57,14 @@ def _try_record_ab_results(user_id: int, answer_id, evaluation, ai_result: dict)
     try:
         from apps.evaluation.ab_test_models import ABTestExperiment
         from apps.evaluation.services.ab_test_service import (
-            get_or_create_assignment,
+            get_or_create_assignment_for,
             record_ab_result,
         )
 
-        active_exp_names = list(
-            ABTestExperiment.objects.filter(status="active").values_list("name", flat=True)
-        )
-        if not active_exp_names:
+        # 활성 실험을 객체로 한 번만 조회한다. 이후 assignment/result 기록에서
+        # name으로 재조회하지 않도록 experiment 객체를 그대로 넘긴다(중복 쿼리 제거).
+        active_experiments = list(ABTestExperiment.objects.filter(status="active"))
+        if not active_experiments:
             return
 
         # bei_total: situation+task+action+result score 합산
@@ -99,12 +99,18 @@ def _try_record_ab_results(user_id: int, answer_id, evaluation, ai_result: dict)
             ),
         }
 
-        for exp_name in active_exp_names:
-            get_or_create_assignment(user_id, exp_name)
-            record_ab_result(exp_name, user_id, answer_id, score_dict)
+        for exp in active_experiments:
+            # 실험 객체로 assignment 보장(중복 실험 조회 없음) → 그 assignment를 그대로
+            # record_ab_result에 넘겨 record 내부의 실험/assignment 재조회까지 제거.
+            assignment, _created = get_or_create_assignment_for(exp, user_id)
+            record_ab_result(
+                exp.name, user_id, answer_id, score_dict,
+                experiment=exp, assignment=assignment,
+            )
 
         logger.debug(
-            "A/B 결과 기록 완료 (answer=%s, experiments=%s)", answer_id, active_exp_names
+            "A/B 결과 기록 완료 (answer=%s, experiments=%s)",
+            answer_id, [e.name for e in active_experiments],
         )
     except Exception:
         logger.exception(
@@ -147,11 +153,15 @@ def _persist_pipeline_tags(answer, pipeline_tags, selected_tag_name):
         )
 
 
-@transaction.atomic
 def create_evaluation_for_answer(answer, request_sufficiency=None):
     """단일 InterviewAnswer 에 대한 평가를 생성한다.
 
     멱등: 이미 Evaluation 이 존재하면 그대로 반환하고 재실행하지 않는다.
+
+    트랜잭션 경계:
+        LLM(OpenAI) · SBERT 등 외부 I/O는 트랜잭션 **밖**에서 수행한다.
+        DB 커넥션/락을 수 초~수십 초의 네트워크 I/O 동안 점유하지 않도록,
+        실제 DB 쓰기(Evaluation 생성 + 태그 매핑)만 atomic 블록으로 감싼다.
 
     Args:
         answer: 평가 대상 InterviewAnswer 인스턴스.
@@ -220,20 +230,33 @@ def create_evaluation_for_answer(answer, request_sufficiency=None):
             logger.exception("SBERT 평가 실패 — final_tech_score 기존 값 유지")
 
 
-    evaluation = Evaluation.objects.create(
-        answer=answer,
-        bei_score=ai_result["bei_score"],
-        cbi_score=ai_result["cbi_score"],
-        filler_words=ai_result["filler_words"],
-        final_tech_score=ai_result["final_tech_score"],
-        score_detail=ai_result["score_detail"],
-        emotion_intent_score=emotion_intent_score,      # E7.4
-        pause_analysis=pause_analysis,                  # E7.6
-        sbert_db_similarity=sbert_db_similarity,        # E7.5
-        sbert_readme_similarity=sbert_readme_similarity, # E7.5
-    )
-
-    _persist_pipeline_tags(answer, pipeline_tags, selected_tag_name)
+    # ── DB 쓰기만 트랜잭션으로 감싼다 (외부 I/O는 위에서 이미 완료) ──
+    try:
+        with transaction.atomic():
+            evaluation = Evaluation.objects.create(
+                answer=answer,
+                bei_score=ai_result["bei_score"],
+                cbi_score=ai_result["cbi_score"],
+                filler_words=ai_result["filler_words"],
+                final_tech_score=ai_result["final_tech_score"],
+                score_detail=ai_result["score_detail"],
+                emotion_intent_score=emotion_intent_score,      # E7.4
+                pause_analysis=pause_analysis,                  # E7.6
+                sbert_db_similarity=sbert_db_similarity,        # E7.5
+                sbert_readme_similarity=sbert_readme_similarity, # E7.5
+            )
+            _persist_pipeline_tags(answer, pipeline_tags, selected_tag_name)
+    except IntegrityError:
+        # 동시 요청 레이스(더블 클릭/재시도): 다른 트랜잭션이 먼저 OneToOne을 채움.
+        # 이미 생성된 행을 반환해 멱등성을 유지한다(태그는 선점 트랜잭션이 기록).
+        logger.warning(
+            "create_evaluation_for_answer 동시 생성 레이스 감지 (answer=%s) — 기존 평가 반환",
+            getattr(answer, "id", "?"),
+        )
+        existing = Evaluation.objects.filter(answer=answer).first()
+        if existing is not None:
+            return existing
+        raise
 
     # E7.7 — A/B 프레임워크 연결
     _try_record_ab_results(
@@ -262,7 +285,15 @@ def evaluate_session_answers(session, reevaluate=False):
     """
     stats = {"evaluated": 0, "skipped": 0, "failed": 0, "format_failed": 0}
 
-    answers_qs = session.answers.select_related("question", "session__jd").all()
+    # question__source_tags 까지 prefetch: 기술 질문의 SBERT 레퍼런스 추출
+    # (get_reference_texts_for_answer → question.source_tags.all())이 답변마다
+    # 추가 쿼리를 내던 N+1을 제거한다.
+    answers_qs = (
+        session.answers
+        .select_related("question", "session__jd")
+        .prefetch_related("question__source_tags")
+        .all()
+    )
     # 답변별 Evaluation.exists() N+1을 제거: 평가 완료된 answer_id를 한 번에 조회해 set 비교.
     evaluated_answer_ids = set(
         Evaluation.objects.filter(answer__in=answers_qs).values_list("answer_id", flat=True)

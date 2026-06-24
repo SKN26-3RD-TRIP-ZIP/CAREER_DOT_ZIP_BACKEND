@@ -6,9 +6,28 @@ QuestionBankItem에서 연습 질문을 추천한다.
 
 import logging
 
+from django.core.cache import cache
+
 from apps.question_bank.models import QuestionBankItem
 
 logger = logging.getLogger("feedback_ai.recommendation_service")
+
+# 세션 추천 결과 캐시(#5). 완료된 세션의 약점 태그는 안정적이라 매 조회마다
+# 재집계(답변 prefetch + 전체 question_bank 스캔/스코어링)할 필요가 없다.
+# total_limit 별로 다른 키를 쓰고, 버전 키로 일괄 무효화한다.
+_RECO_CACHE_TTL = 60 * 30  # 30분
+
+
+def _reco_version(session_id) -> int:
+    return cache.get(f"weakness_recos_ver:{session_id}", 0)
+
+
+def invalidate_weakness_reco_cache(session_id) -> None:
+    """리포트 재생성 등 약점 태그가 바뀔 수 있을 때 캐시를 무효화한다."""
+    try:
+        cache.incr(f"weakness_recos_ver:{session_id}")
+    except ValueError:  # 키 없음 → 첫 무효화
+        cache.set(f"weakness_recos_ver:{session_id}", 1)
 
 # 약점 태그명 → (question_type 후보, 키워드, difficulty 선호)
 _TAG_STRATEGY: dict[str, dict] = {
@@ -179,6 +198,11 @@ def get_session_weakness_recommended_questions(session, total_limit: int = 10) -
     """
     from collections import Counter
 
+    cache_key = f"weakness_recos:{session.id}:{total_limit}:v{_reco_version(session.id)}"
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return cached
+
     # 약점 태그 빈도 집계
     tag_counter: Counter = Counter()
     for answer in session.answers.prefetch_related("weakness_mappings__weakness_tag").all():
@@ -193,10 +217,12 @@ def get_session_weakness_recommended_questions(session, total_limit: int = 10) -
         total_limit=total_limit,
     )
 
-    return {
+    result = {
         "weakness_tags": [
             {"tag_name": name, "count": cnt}
             for name, cnt in tag_counter.most_common(5)
         ],
         "recommended_questions": recommended,
     }
+    cache.set(cache_key, result, _RECO_CACHE_TTL)
+    return result
