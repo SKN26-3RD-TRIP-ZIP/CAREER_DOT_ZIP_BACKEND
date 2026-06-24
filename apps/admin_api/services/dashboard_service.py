@@ -91,6 +91,7 @@ def build_member_stats():
         'active': User.objects.filter(status='active').count(),
         'dormant': User.objects.filter(status='dormant').count(),
         'banned': User.objects.filter(status='banned').count(),
+        'withdrawn': User.objects.filter(status='withdrawn').count(),
         'today': User.objects.filter(created_at__date=today).count(),
         'total_growth_rate': _growth_rate(this_month_new, last_month_new),
         'active_growth_rate': _growth_rate(this_month_active_new, last_month_active_new),
