@@ -1,6 +1,8 @@
-from django.test import SimpleTestCase, override_settings
+from django.contrib.auth import get_user_model
+from django.test import SimpleTestCase, TestCase, override_settings
 
 from apps.interview.ai_chain_contracts import NextAction
+from apps.interview.models import InterviewAnswer, InterviewQuestion, InterviewSession
 from apps.interview.services.ai_chain_service import InterviewAIChainService
 
 
@@ -155,3 +157,124 @@ class InterviewAIChainServiceTest(SimpleTestCase):
             result["questions"][0]["source_tags"][0]["source_type"],
             "question_bank",
         )
+
+
+class RecordingSufficiencyEngine:
+    def __init__(self, result):
+        self.result = result
+        self.payload = None
+
+    def judge_answer_sufficiency(self, payload):
+        self.payload = payload
+        return self.result
+
+
+class EvaluateAnswerSufficiencyPublicInterfaceTest(TestCase):
+    def setUp(self):
+        user = get_user_model().objects.create_user(
+            email="sufficiency-interface@example.com",
+            password="password123",
+            name="Sufficiency Interface",
+        )
+        self.session = InterviewSession.objects.create(
+            user=user,
+            interview_type="technical",
+            persona="practical",
+            interview_mode="text",
+        )
+        self.question = InterviewQuestion.objects.create(
+            session=self.session,
+            order_index=1,
+            question_type="main",
+            question_category="technical",
+            question_text="Explain your API transaction design.",
+            source_type="resume",
+            source_reference="Django API project",
+        )
+        self.answer = InterviewAnswer.objects.create(
+            session=self.session,
+            question=self.question,
+            answer_text="Text answer",
+            stt_text="Voice STT answer",
+        )
+
+    def test_evaluate_answer_sufficiency_builds_payload_and_normalizes_result(self):
+        engine = RecordingSufficiencyEngine(
+            {
+                "answer_weakness_tags": [
+                    {
+                        "tag_name": "TECH_DEPTH_LOW",
+                        "reason": "More technical detail is needed.",
+                    }
+                ],
+                "selected_weakness_tag": {
+                    "tag_name": "TECH_DEPTH_LOW",
+                    "reason": "More technical detail is needed.",
+                },
+                "next_action": "GENERATE_FOLLOWUP",
+            }
+        )
+        service = InterviewAIChainService(engine=engine)
+
+        result = service.evaluate_answer_sufficiency(self.answer)
+
+        self.assertEqual(
+            result,
+            {
+                "answer_weakness_tags": [
+                    {
+                        "tag_name": "TECH_DEPTH_LOW",
+                        "reason": "More technical detail is needed.",
+                    }
+                ],
+                "selected_weakness_tag": {
+                    "tag_name": "TECH_DEPTH_LOW",
+                    "reason": "More technical detail is needed.",
+                },
+            },
+        )
+        self.assertEqual(engine.payload["answer"]["answer_id"], str(self.answer.id))
+        self.assertEqual(engine.payload["answer"]["answer_text"], "Text answer")
+        self.assertEqual(engine.payload["question"]["question_id"], str(self.question.id))
+
+    def test_evaluate_answer_sufficiency_guarantees_empty_contract(self):
+        service = InterviewAIChainService(
+            engine=RecordingSufficiencyEngine(
+                {
+                    "answer_weakness_tags": None,
+                    "selected_weakness_tag": [],
+                }
+            )
+        )
+
+        result = service.evaluate_answer_sufficiency(self.answer)
+
+        self.assertEqual(
+            result,
+            {
+                "answer_weakness_tags": [],
+                "selected_weakness_tag": None,
+            },
+        )
+
+    def test_evaluate_answer_sufficiency_uses_stt_text_in_voice_mode(self):
+        self.session.interview_mode = "voice"
+        self.session.save(update_fields=("interview_mode", "updated_at"))
+        engine = RecordingSufficiencyEngine({})
+        service = InterviewAIChainService(engine=engine)
+
+        service.evaluate_answer_sufficiency(self.answer)
+
+        self.assertEqual(engine.payload["answer"]["answer_text"], "Voice STT answer")
+
+    def test_evaluate_answer_sufficiency_uses_answer_text_without_stt_text(self):
+        self.session.interview_mode = "voice"
+        self.session.save(update_fields=("interview_mode", "updated_at"))
+        self.answer.stt_text = ""
+        self.answer.save(update_fields=("stt_text", "updated_at"))
+        engine = RecordingSufficiencyEngine({})
+        service = InterviewAIChainService(engine=engine)
+
+        service.evaluate_answer_sufficiency(self.answer)
+
+        self.assertEqual(engine.payload["answer"]["answer_text"], "Text answer")
