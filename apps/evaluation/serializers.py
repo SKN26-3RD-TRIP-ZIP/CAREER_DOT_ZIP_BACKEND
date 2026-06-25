@@ -41,7 +41,7 @@ class EvaluationSerializer(serializers.ModelSerializer):
         'sbert_db_similarity',
         'sbert_readme_similarity',
         'llm_concept_score',
-        'final_tech_score',
+        'answer_score',
         'score_detail',
         'evaluated_at',
     )

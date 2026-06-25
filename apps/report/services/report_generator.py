@@ -451,7 +451,7 @@ def _build_question_breakdown(evaluated_answers: list) -> tuple[list[dict], list
     for ans in evaluated_answers:
         q        = ans.question
         eval_obj = ans.evaluation
-        q_score  = getattr(eval_obj, "final_tech_score", None)
+        q_score  = getattr(eval_obj, "answer_score", None)
         wmaps    = list(ans.weakness_mappings.all())
 
         # 폴백용 템플릿 문구 — 최우선순위 약점 태그의 reason/description
@@ -544,9 +544,9 @@ def generate_final_report(session):
 
     # 단순 평균 overall_score (페르소나 가중치 미적용 fallback)
     final_scores  = [
-        ans.evaluation.final_tech_score
+        ans.evaluation.answer_score
         for ans in evaluated_answers
-        if getattr(ans.evaluation, "final_tech_score", None) is not None
+        if getattr(ans.evaluation, "answer_score", None) is not None
     ]
     overall_score = round(sum(final_scores) / len(final_scores)) if final_scores else 0
 
