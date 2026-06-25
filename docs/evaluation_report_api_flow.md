@@ -144,7 +144,7 @@ GET /evaluations/{answer_id}
   "sbert_db_similarity": 0.78,
   "sbert_readme_similarity": 0.65,
   "llm_concept_score": 8,
-  "final_tech_score": 74,
+  "answer_score": 74,
   "score_detail": {
     "bei_weight": 0.4,
     "cbi_weight": 0.3,
@@ -165,7 +165,7 @@ GET /evaluations/{answer_id}
 | `sbert_db_similarity` | DB 직무 레퍼런스와의 의미 유사도 (0~1) |
 | `sbert_readme_similarity` | README 레퍼런스와의 의미 유사도 (0~1) |
 | `llm_concept_score` | LLM이 평가한 개념 이해도 점수 (0~10) |
-| `final_tech_score` | 위 항목을 종합한 최종 기술 점수 (0~100) |
+| `answer_score` | 위 항목을 종합한 최종 기술 점수 (0~100) |
 
 ---
 
@@ -315,7 +315,7 @@ POST /evaluations
   "evaluation_id": "uuid",
   "answer_id": "uuid",
   "evaluated_at": "2025-01-01T00:00:00Z",
-  "final_tech_score": 74
+  "answer_score": 74
 }
 ```
 

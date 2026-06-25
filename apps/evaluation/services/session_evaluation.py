@@ -32,7 +32,7 @@ from apps.evaluation.models import (
     AnswerWeaknessTag,
 )
 from apps.evaluation.evaluation_chains import EvaluationFormatError
-from apps.evaluation.services.evaluation_services import EvaluationService
+from apps.evaluation.services.evaluation_services import EvaluationService, grounding_to_score
 from apps.evaluation.services.question_category import resolve_question_category
 from apps.evaluation.services.sufficiency_bridge import (
     get_answer_text_for_evaluation,
@@ -73,14 +73,15 @@ def _try_record_ab_results(user_id: int, answer_id, evaluation, ai_result: dict)
             v.get("score", 0) if isinstance(v, dict) else 0
             for v in bei.values()
         )
-        # grounding은 LLM이 숫자 점수를 주지 않으므로 is_grounded로 0/100 환산 (None 방지)
-        _grounding = ai_result.get("score_detail", {}).get("grounding", {})
-        _grounding_score = _grounding.get("grounding_score")
-        if _grounding_score is None:
-            _grounding_score = 100.0 if _grounding.get("is_grounded") else 0.0
+        # grounding은 LLM이 숫자 점수를 주지 않으므로 is_grounded → 0/100 환산.
+        # 환산 정의는 grounding_to_score(SSOT)에 위임한다. 리포트 레벨
+        # grounding_score(%)는 이 값을 답변들에 대해 평균낸 것과 같다.
+        _grounding_score = grounding_to_score(
+            ai_result.get("score_detail", {}).get("grounding", {})
+        )
 
         score_dict = {
-            "final_score": evaluation.final_tech_score,
+            "final_score": evaluation.answer_score,
             "bei_total": bei_total,
             "cbi_score": ai_result.get("cbi_score", {}).get("score"),
             "grounding_score": _grounding_score,
@@ -216,18 +217,18 @@ def create_evaluation_for_answer(answer, request_sufficiency=None):
             sbert_readme_similarity = sbert_res["sbert_readme_similarity"]
 
             if sbert_res["model_available"] and sbert_res["sbert_combined_score"] > 0:
-                llm_concept = ai_result.get("final_tech_score") or 0
+                llm_concept = ai_result.get("answer_score") or 0
                 hybrid_score = compute_tech_depth_score(
                     sbert_combined_score=sbert_res["sbert_combined_score"],
                     llm_concept_score=llm_concept,
                 )
-                ai_result["final_tech_score"] = int(hybrid_score)
+                ai_result["answer_score"] = int(hybrid_score)
                 logger.info(
                     "SBERT 하이브리드 스코어 적용: sbert=%.1f, llm=%d → final=%d",
                     sbert_res["sbert_combined_score"], llm_concept, int(hybrid_score),
                 )
         except Exception:
-            logger.exception("SBERT 평가 실패 — final_tech_score 기존 값 유지")
+            logger.exception("SBERT 평가 실패 — answer_score 기존 값 유지")
 
 
     # ── DB 쓰기만 트랜잭션으로 감싼다 (외부 I/O는 위에서 이미 완료) ──
@@ -238,7 +239,7 @@ def create_evaluation_for_answer(answer, request_sufficiency=None):
                 bei_score=ai_result["bei_score"],
                 cbi_score=ai_result["cbi_score"],
                 filler_words=ai_result["filler_words"],
-                final_tech_score=ai_result["final_tech_score"],
+                answer_score=ai_result["answer_score"],
                 score_detail=ai_result["score_detail"],
                 emotion_intent_score=emotion_intent_score,      # E7.4
                 pause_analysis=pause_analysis,                  # E7.6

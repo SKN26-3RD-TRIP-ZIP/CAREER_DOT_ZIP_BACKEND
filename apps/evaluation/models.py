@@ -12,7 +12,9 @@ class Evaluation(models.Model):
     sbert_db_similarity = models.FloatField(blank=True, null=True)
     sbert_readme_similarity = models.FloatField(blank=True, null=True)
     llm_concept_score = models.PositiveIntegerField(blank=True, null=True)
-    final_tech_score = models.PositiveIntegerField(blank=True, null=True)
+    # 답변 1개에 대한 종합 점수(기술/인성 공통). 과거명 final_tech_score는
+    # 비기술 답변 점수까지 담으면서 의미가 어긋나 answer_score로 변경(2026-06).
+    answer_score = models.PositiveIntegerField(blank=True, null=True)
     score_detail = models.JSONField(default=dict, blank=True)
     # E7.4 — 감정/의도 분류 결과 (확률값 + 신뢰도 보정)
     emotion_intent_score = models.JSONField(default=dict, blank=True)
@@ -27,6 +29,17 @@ class Evaluation(models.Model):
 
     def __str__(self):
         return f"Evaluation for answer {self.answer.id}"
+
+    @property
+    def final_tech_score(self):
+        """[DEPRECATED] answer_score로 이름 변경됨(2026-06).
+
+        interview 팀 turns serializer가 이 키를 answer_score로 마이그레이션할
+        때까지만 유지하는 '읽기 전용' 호환 shim이다. (DRF ModelSerializer가
+        Meta.fields의 final_tech_score를 ReadOnlyField로 빌드해 깨지지 않게 함.)
+        쓰기(ORM final_tech_score=...)에는 동작하지 않으므로 양쪽 정리 후 제거할 것.
+        """
+        return self.answer_score
 
 
 class WeaknessTag(models.Model):

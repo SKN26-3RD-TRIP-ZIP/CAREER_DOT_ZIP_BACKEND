@@ -63,12 +63,12 @@
 
 | 필드 | 설명 |
 |---|---|
-| `overall_score` | 모든 평가 답변의 `final_tech_score` 평균 |
+| `overall_score` | 모든 평가 답변의 `answer_score` 평균 |
 | `metrics.bei_logic_score` | 답변별 BEI total 평균 |
 | `metrics.cbi_competency_score` | 답변별 CBI score 평균 |
 | `metrics.grounding_score` | 답변별 grounding 반영 점수 평균 |
 | `metrics.speech_delivery_score` | 답변별 speech_score 평균 |
-| `metrics.technical_score` | 답변별 final_tech_score 평균 (overall_score와 동일 계열) |
+| `metrics.technical_score` | 답변별 answer_score 평균 (overall_score와 동일 계열) |
 
 ---
 
@@ -136,7 +136,7 @@
       "total": 3,
       "comment": "..."
     },
-    "final_tech_score": 76,
+    "answer_score": 76,
     "score_detail": { ... }
   }
 ]
@@ -220,7 +220,7 @@ FeedbackReport.summary
 │   │   ├── bei_score (situation, task, action, result, total)
 │   │   ├── cbi_score (assigned_level, score, evidence_sentence)
 │   │   ├── filler_words (counts, total, comment)
-│   │   ├── final_tech_score
+│   │   ├── answer_score
 │   │   └── score_detail (→ evaluation_score_guide.md)
 │   ├── statistics
 │   │   ├── bei_metrics (averages, element_total_avg)
