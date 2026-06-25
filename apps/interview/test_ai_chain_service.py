@@ -302,6 +302,26 @@ class EvaluateAnswerSufficiencyPublicInterfaceTest(TestCase):
             "alternative_and_tradeoff_comparison",
         )
 
+    def test_comprehensive_session_preserves_each_question_category(self):
+        self.session.interview_type = "comprehensive"
+        self.session.save(update_fields=("interview_type", "updated_at"))
+
+        technical_payload = build_sufficiency_payload_from_answer(self.answer)
+        self.question.question_category = "personality"
+        self.question.save(update_fields=("question_category", "updated_at"))
+        personality_payload = build_sufficiency_payload_from_answer(self.answer)
+
+        self.assertEqual(technical_payload["interview_type"], "comprehensive")
+        self.assertEqual(
+            technical_payload["question"]["question_category"],
+            "technical",
+        )
+        self.assertEqual(personality_payload["interview_type"], "comprehensive")
+        self.assertEqual(
+            personality_payload["question"]["question_category"],
+            "personality",
+        )
+
     def test_evaluate_answer_sufficiency_guarantees_empty_contract(self):
         service = InterviewAIChainService(
             engine=RecordingSufficiencyEngine(

@@ -15,6 +15,7 @@ from apps.interview.services.ai_chain_service import InterviewAIChainService
 from apps.interview.services.sufficiency_payload import (
     build_question_context,
     build_sufficiency_payload_from_answer,
+    get_question_category,
     get_sufficiency_answer_text,
 )
 
@@ -493,6 +494,7 @@ class FollowupGenerator:
                 source_answer=answer,
                 question_text=followup_data["question_text"],
                 question_type="follow_up",
+                question_category=get_question_category(answer.question),
                 source_type="general",
                 source_reference=cls._build_source_reference(
                     selected_weakness_tag,
@@ -525,7 +527,7 @@ class FollowupGenerator:
                     or CONFIRMATION_FOLLOWUP_MESSAGE
                 ),
                 question_type="follow_up",
-                question_category="general",
+                question_category=get_question_category(answer.question),
                 source_type="general",
                 source_reference="guardrail:document_confirmation",
                 difficulty="medium",
