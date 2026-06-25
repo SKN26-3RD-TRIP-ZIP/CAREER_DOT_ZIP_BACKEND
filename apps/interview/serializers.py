@@ -1,3 +1,9 @@
+"""Serializers for the active nested REST interview API.
+
+This contract intentionally exposes richer data than the MVP contract,
+including source tags, turns, evaluation data, and progress context.
+"""
+
 from rest_framework import serializers
 
 from apps.analysis.models import AnalysisSession, JdAnalysis

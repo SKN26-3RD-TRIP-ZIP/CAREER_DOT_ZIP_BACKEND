@@ -1,3 +1,10 @@
+"""Serializers for the active flat MVP interview API.
+
+This contract intentionally uses compact frontend payloads and status/persona
+aliases. It remains separate from serializers.py until a canonical API is
+selected.
+"""
+
 from rest_framework import serializers
 
 from apps.analysis.models import AnalysisSession, JdAnalysis
@@ -40,6 +47,7 @@ class MVPSessionCreateSerializer(serializers.Serializer):
     # persona_type: 프론트 필드명. persona도 별칭으로 허용
     persona_type = serializers.ChoiceField(choices=PERSONA_INPUT_MAP, required=False)
     persona = serializers.ChoiceField(choices=PERSONA_INPUT_MAP, required=False)
+    # interview_mode controls text/voice I/O, not question content.
     interview_mode = serializers.ChoiceField(choices=('text', 'voice'), required=False, default='voice')
     # interview_type: 프론트에서 전송하는 기존 필드(무시하지 않고 저장)
     interview_type = serializers.ChoiceField(
@@ -217,6 +225,8 @@ class MVPQuestionGenerateSerializer(serializers.Serializer):
 
 
 class MVPQuestionSerializer(serializers.ModelSerializer):
+    # question_type is the flow role (main/follow_up); question_category is
+    # the content class (technical/personality/general).
     question_id = serializers.UUIDField(source='id', read_only=True)
     question_category = serializers.CharField(read_only=True)
     difficulty = serializers.SerializerMethodField()

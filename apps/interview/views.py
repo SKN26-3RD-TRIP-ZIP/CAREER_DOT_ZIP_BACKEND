@@ -1,3 +1,11 @@
+"""Active nested REST interview API.
+
+Mounted under /api/v1/interviews/. This surface provides rich session-oriented
+responses such as turns, source tags, evaluation data, and progress. The flat
+MVP API in mvp_views.py is also active; neither surface should be removed or
+merged until consumers agree on a canonical contract.
+"""
+
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from rest_framework import generics, permissions, status
@@ -453,6 +461,8 @@ class InterviewQuestionListView(generics.ListAPIView):
 
 
 class InterviewAnswerSaveView(APIView):
+    """Save or replace an answer under the nested REST contract."""
+
     permission_classes = [permissions.IsAuthenticated]
 
     def get_session(self, session_id):
