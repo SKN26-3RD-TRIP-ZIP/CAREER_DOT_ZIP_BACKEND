@@ -10,10 +10,13 @@ RUN apt-get update && apt-get install -y \
     build-essential \
     libpq-dev \
     ffmpeg \
+    pkg-config \
+    default-libmysqlclient-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # 패키지 설치 (캐시 레이어 분리)
 COPY requirements.txt .
+RUN pip install torch==2.12.0+cpu --index-url https://download.pytorch.org/whl/cpu
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
