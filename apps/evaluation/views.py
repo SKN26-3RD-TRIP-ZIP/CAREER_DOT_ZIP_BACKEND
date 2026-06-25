@@ -57,7 +57,7 @@ class EvaluationCreateView(EvaluationAnswerMixin, APIView):
             'evaluation_id': str(evaluation.id),
             'answer_id': str(evaluation.answer.id),
             'evaluated_at': evaluation.evaluated_at,
-            'final_tech_score': evaluation.final_tech_score,
+            'answer_score': evaluation.answer_score,
         },
         status=status.HTTP_201_CREATED,
     )

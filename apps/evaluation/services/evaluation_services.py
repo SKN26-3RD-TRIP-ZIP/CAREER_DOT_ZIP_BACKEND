@@ -90,6 +90,27 @@ def _empty_llm_results() -> tuple[dict, dict, dict]:
     return grounding, competency, emotion
 
 
+def grounding_to_score(grounding: dict | None) -> float:
+    """근거 충족 여부를 0~100 점수로 환산하는 단일 정의(SSOT).
+
+    grounding은 LLM이 boolean(is_grounded)만 주고 숫자 점수를 주지 않으므로
+    충족=100.0 / 미충족=0.0으로 환산한다. (이미 숫자 grounding_score가 있으면 그대로 사용)
+
+    이 함수가 grounding_score의 유일한 정의다. 리포트 레벨 metrics.grounding_score(%)는
+    applicable한 답변들에 대해 이 함수 결과를 평균낸 값과 같다(=근거 충족률 %).
+    A/B 기록(_try_record_ab_results)도 반드시 이 함수를 통해 환산해 의미를 일치시킨다.
+    """
+    if not isinstance(grounding, dict):
+        return 0.0
+    raw = grounding.get("grounding_score")
+    if raw is not None:
+        try:
+            return float(raw)
+        except (TypeError, ValueError):
+            return 0.0
+    return 100.0 if grounding.get("is_grounded") else 0.0
+
+
 def _clamp_score(value, lo, hi):
     """LLM 점수를 [lo, hi]로 제한한다.
 
@@ -486,7 +507,7 @@ class EvaluationService:
                 "repetitions": dysfluency_res.get("repetitions", []),
                 "repetition_count": dysfluency_res.get("repetition_count", 0),
             },
-            "final_tech_score": int(overall_score),
+            "answer_score": int(overall_score),
             "score_detail": {
                 "grounding": grounding_res,
                 "speech_delivery": {

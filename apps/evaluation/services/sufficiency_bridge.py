@@ -5,7 +5,6 @@ import logging
 from django.conf import settings
 
 from apps.interview.services.ai_chain_service import InterviewAIChainService
-from apps.interview.services.follow_up_generator import FollowupGenerator
 
 logger = logging.getLogger("feedback_ai.sufficiency_bridge")
 
@@ -31,15 +30,15 @@ def resolve_answer_sufficiency(answer, request_sufficiency=None):
   if getattr(settings, 'OPENAI_USE_MOCK', False):
     return [], None
 
-  # NOTE: FollowupGenerator._build_sufficiency_payload 는 interview 팀의 private 메서드라
-  # 시그니처/존재가 바뀌면 깨질 수 있다. weakness tags 는 선택 입력(파이프라인이 cbi_res
-  # 태그로 폴백)이므로, 여기서 예외를 격리해 평가 전체가 죽지 않게 graceful degrade 한다.
-  # TODO(interview팀): judge_answer_sufficiency 용 공개 payload 빌더 인터페이스 요청.
+  # weakness tags 는 선택 입력(파이프라인이 cbi_res 태그로 폴백)이므로, 여기서 예외를
+  # 격리해 평가 전체가 죽지 않게 graceful degrade 한다.
+  #
+  # interview 팀 공개 인터페이스만 호출한다. payload 빌드와 answer text(STT/타이핑)
+  # 선택은 interview 내부(evaluate_answer_sufficiency)가 소유하므로 evaluation 은
+  # answer 인스턴스만 넘긴다.
   try:
     service = InterviewAIChainService()
-    payload = FollowupGenerator._build_sufficiency_payload(answer)
-    payload['answer']['answer_text'] = get_answer_text_for_evaluation(answer)
-    result = service.judge_answer_sufficiency(payload)
+    result = service.evaluate_answer_sufficiency(answer)
     return result.get('answer_weakness_tags', []), result.get('selected_weakness_tag')
   except Exception:
     logger.warning(

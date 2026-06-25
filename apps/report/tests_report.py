@@ -48,7 +48,7 @@ class FinalReportIntegrationTests(APITestCase):
     )
     Evaluation.objects.create(
         answer=answer,
-        final_tech_score=85,
+        answer_score=85,
         bei_score={
             'situation': {'score': 22},
             'task': {'score': 20},
@@ -175,7 +175,7 @@ class FinalReportIntegrationTests(APITestCase):
     )
     Evaluation.objects.create(
         answer=answer,
-        final_tech_score=70,
+        answer_score=70,
         bei_score={'situation': {'score': 18}, 'task': {'score': 17}, 'action': {'score': 16}, 'result': {'score': 15}},
         cbi_score={'assigned_level': 3, 'score': 70},
         filler_words={'total': 0, 'counts': {}},
@@ -229,7 +229,7 @@ class FinalReportIntegrationTests(APITestCase):
     for answer in (technical_answer, personality_answer):
       Evaluation.objects.create(
           answer=answer,
-          final_tech_score=50,
+          answer_score=50,
           bei_score={
               'situation': {'score': 20},
               'task': {'score': 20},
