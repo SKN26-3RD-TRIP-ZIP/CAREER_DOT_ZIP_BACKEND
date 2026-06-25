@@ -1,22 +1,59 @@
 from apps.interview.ai_chain_contracts import DEFAULT_WEAKNESS_TAG_CANDIDATES
 
 
+EXPECTED_TECHNICAL_KEYWORDS_LABEL = "expected_technical_keywords"
+
+
 def get_sufficiency_answer_text(answer):
     if answer.session.interview_mode == "voice" and answer.stt_text:
         return answer.stt_text
     return answer.answer_text
 
 
+def get_question_category(question):
+    category = str(getattr(question, "question_category", "") or "").strip().lower()
+    if category in {"technical", "personality", "general"}:
+        return category
+    return "general"
+
+
+def get_expected_technical_keywords(question):
+    if get_question_category(question) != "technical":
+        return ""
+
+    keyword_tag = (
+        question.source_tags.filter(
+            source_label=EXPECTED_TECHNICAL_KEYWORDS_LABEL,
+        )
+        .order_by("id")
+        .first()
+    )
+    if keyword_tag is None:
+        return ""
+    return str(keyword_tag.source_text_excerpt or "").strip()
+
+
+def build_question_context(question, session):
+    return {
+        "question_category": get_question_category(question),
+        "interview_type": session.interview_type,
+        "expected_technical_keywords": get_expected_technical_keywords(question),
+    }
+
+
 def build_sufficiency_payload_from_answer(answer):
     question = answer.question
     session = answer.session
+    question_context = build_question_context(question, session)
 
     return {
         "session_id": str(session.id),
+        "interview_type": session.interview_type,
         "question": {
             "question_id": str(question.id),
             "question_text": question.question_text,
             "question_type": _map_question_type(question.question_type),
+            **question_context,
             "parent_question_id": (
                 str(question.parent_question_id)
                 if question.parent_question_id
