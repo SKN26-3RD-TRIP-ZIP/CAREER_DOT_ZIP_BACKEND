@@ -108,6 +108,10 @@ class FollowupGenerator:
 
     @classmethod
     def _build_sufficiency_payload(cls, answer):
+        # Deprecated candidate kept as a compatibility wrapper. New
+        # integrations should use
+        # InterviewAIChainService.evaluate_answer_sufficiency(answer). Keep
+        # this method until all private-method consumers are migrated.
         return build_sufficiency_payload_from_answer(answer)
 
     @classmethod

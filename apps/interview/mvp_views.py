@@ -1,3 +1,11 @@
+"""Active flat MVP interview API.
+
+Mounted directly under /api/v1/. This surface provides compact frontend
+responses, alias conversion, STT/TTS, and MVP follow-up actions. The nested
+REST API in views.py is also active; neither surface should be removed or
+merged until consumers agree on a canonical contract.
+"""
+
 from django.shortcuts import get_object_or_404
 from django.conf import settings
 from django.http import HttpResponse
@@ -219,6 +227,8 @@ class MVPQuestionListView(APIView):
 
 
 class MVPAnswerCreateView(APIView):
+    """Create one answer; the MVP contract rejects duplicate answers."""
+
     permission_classes = [permissions.IsAuthenticated]
 
     def post(self, request):

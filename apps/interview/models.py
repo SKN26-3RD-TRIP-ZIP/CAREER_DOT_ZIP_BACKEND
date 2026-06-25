@@ -11,6 +11,10 @@ from apps.common.choices import (
     QUESTION_TYPE_CHOICES,
 )
 
+# interview_type controls the question content mix (technical, personality,
+# comprehensive). interview_mode controls the interaction channel (text,
+# voice). These fields serve different purposes and must remain separate.
+
 
 class InterviewSession(models.Model):
     INTERVIEW_TYPE_CHOICES = INTERVIEW_TYPE_CHOICES
@@ -65,7 +69,9 @@ class InterviewQuestion(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     session = models.ForeignKey(InterviewSession, on_delete=models.CASCADE, related_name='questions')
     order_index = models.PositiveIntegerField()
+    # Structural role used by turn and follow-up flow: main or follow_up.
     question_type = models.CharField(max_length=20, choices=QUESTION_TYPE_CHOICES, default='main')
+    # Content classification: technical, personality, or general.
     question_category = models.CharField(max_length=20, choices=QUESTION_CATEGORY_CHOICES, default='general')
     question_text = models.TextField()
     difficulty = models.CharField(max_length=20, blank=True, null=True)
