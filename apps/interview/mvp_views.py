@@ -254,6 +254,7 @@ class MVPSTTResultUpdateView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def patch(self, request, answer_id):
+        # answer_id만으로 수정하지 않고 session__user 조건을 함께 걸어 답변 소유권을 검증한다.
         answer = get_object_or_404(
             InterviewAnswer.objects.select_related('session', 'question'),
             id=answer_id,
@@ -265,6 +266,7 @@ class MVPSTTResultUpdateView(APIView):
             partial=True,
         )
         serializer.is_valid(raise_exception=True)
+        # 음성 답변도 기존 평가/리포트 흐름을 그대로 타도록 answer_text에 STT 텍스트를 동기화한다.
         serializer.save(
             answer_text=serializer.validated_data['stt_text'],
             answer_source='stt',
@@ -284,6 +286,7 @@ class MVPWhisperTranscribeView(APIView):
     parser_classes = [parsers.MultiPartParser, parsers.FormParser]
 
     def post(self, request):
+        # 프론트 MediaRecorder가 보낸 multipart webm 파일을 Whisper STT 서비스로 전달한다.
         audio_file = request.FILES.get('audio')
         language = request.data.get('language') or 'ko'
         result = transcribe_uploaded_audio(audio_file, language=language)
@@ -295,6 +298,7 @@ class MVPWhisperDevTranscribeView(APIView):
     parser_classes = [parsers.MultiPartParser, parsers.FormParser]
 
     def post(self, request):
+        # 인증 없이 테스트할 수 있는 dev endpoint지만, 운영에서는 DEBUG가 아니면 차단한다.
         if not settings.DEBUG:
             return Response(
                 {'detail': 'Development STT endpoint is disabled.'},
@@ -312,11 +316,13 @@ class MVPTTSSpeechView(APIView):
 
     def post(self, request):
         session_id = request.data.get('session_id')
+        # 세션 소유권을 먼저 확인하고, 세션 persona로 면접관 목소리를 선택한다.
         session = get_object_or_404(InterviewSession, id=session_id, user=request.user)
         result = synthesize_interview_question(
             request.data.get('text'),
             persona=session.persona,
         )
+        # mp3 bytes는 응답 본문으로, 생성에 사용한 모델/voice/persona는 헤더로 내려준다.
         response = HttpResponse(result['audio_bytes'], content_type=result['content_type'])
         response['X-TTS-Model'] = result['model']
         response['X-TTS-Voice'] = result['voice']
@@ -328,6 +334,7 @@ class MVPFollowupQuestionCreateView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def post(self, request, answer_id):
+        # 답변 저장 후 충분성 판단 결과에 따라 현재 질문 뒤에 붙일 꼬리질문을 생성한다.
         answer = AnswerService.get_owned_answer(answer_id=answer_id, user=request.user)
 
         try:
