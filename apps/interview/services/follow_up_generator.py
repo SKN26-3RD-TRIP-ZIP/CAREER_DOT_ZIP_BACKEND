@@ -1,3 +1,5 @@
+import re
+
 from django.conf import settings
 from django.core.cache import cache
 from django.db import transaction
@@ -67,14 +69,83 @@ UNVERIFIED_CLAIM_TAGS = {
     "SOURCE_VERIFICATION_REQUIRED",
 }
 
+OBVIOUS_OFF_TOPIC_MARKERS = (
+    "오늘 점심",
+    "점심 뭐",
+    "뭐 먹지",
+    "오늘 저녁",
+    "저녁 뭐",
+    "날씨가 좋",
+    "날씨 좋",
+    "상관없는 사담",
+    "관련 없는 사담",
+    "아무 상관없는",
+    "what should i eat",
+    "what's for lunch",
+    "weather is nice",
+    "nice weather",
+    "unrelated small talk",
+)
+
+RELEVANCE_STOPWORDS = {
+    "about",
+    "answer",
+    "describe",
+    "explain",
+    "how",
+    "please",
+    "question",
+    "tell",
+    "that",
+    "the",
+    "this",
+    "what",
+    "when",
+    "where",
+    "which",
+    "why",
+    "경험",
+    "관련",
+    "답변",
+    "대해",
+    "무엇",
+    "설명",
+    "어떻게",
+    "어떤",
+    "이유",
+    "질문",
+    "주세요",
+}
+
 
 def _normalize_guardrail_tag(value):
     return str(value or "").strip().upper().replace("-", "_").replace(" ", "_")
 
 
+def _relevance_terms(text):
+    return {
+        token
+        for token in re.findall(r"[a-z0-9가-힣]{2,}", str(text or "").lower())
+        if token not in RELEVANCE_STOPWORDS
+    }
+
+
+def _is_obviously_off_topic(question_text, answer_text):
+    """Conservatively detect explicit small talk unrelated to the question."""
+    normalized_answer = str(answer_text or "").lower()
+    if not any(marker in normalized_answer for marker in OBVIOUS_OFF_TOPIC_MARKERS):
+        return False
+
+    question_terms = _relevance_terms(question_text)
+    answer_terms = _relevance_terms(answer_text)
+    return not bool(question_terms & answer_terms)
+
+
 def check_followup_guardrail(answer, selected_weakness_tag):
     """Decide whether follow-up generation may continue without side effects."""
     answer_text = str(get_sufficiency_answer_text(answer) or "").strip()
+    question = getattr(answer, "question", None)
+    question_text = str(getattr(question, "question_text", "") or "").strip()
     normalized_text = answer_text.lower()
     selected_tag_names = {
         _normalize_guardrail_tag(selected_weakness_tag.get(key))
@@ -105,6 +176,14 @@ def check_followup_guardrail(answer, selected_weakness_tag):
             "action": NextAction.NEXT_QUESTION.value,
             "reason": "internal_criteria_disclosure_request",
             "fallback_message": "내부 프롬프트나 평가 기준 대신 면접 답변을 이어가 주세요.",
+        }
+
+    if _is_obviously_off_topic(question_text, answer_text):
+        return {
+            "can_generate_followup": False,
+            "action": NextAction.NEXT_QUESTION.value,
+            "reason": "off_topic_answer",
+            "fallback_message": "질문과 관련된 경험이나 판단을 중심으로 답변해 주세요.",
         }
 
     if selected_tag_names & UNVERIFIED_CLAIM_TAGS:
