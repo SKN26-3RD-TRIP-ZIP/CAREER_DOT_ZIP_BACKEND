@@ -30,17 +30,6 @@ class Evaluation(models.Model):
     def __str__(self):
         return f"Evaluation for answer {self.answer.id}"
 
-    @property
-    def final_tech_score(self):
-        """[DEPRECATED] answer_score로 이름 변경됨(2026-06).
-
-        interview 팀 turns serializer가 이 키를 answer_score로 마이그레이션할
-        때까지만 유지하는 '읽기 전용' 호환 shim이다. (DRF ModelSerializer가
-        Meta.fields의 final_tech_score를 ReadOnlyField로 빌드해 깨지지 않게 함.)
-        쓰기(ORM final_tech_score=...)에는 동작하지 않으므로 양쪽 정리 후 제거할 것.
-        """
-        return self.answer_score
-
 
 class WeaknessTag(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
