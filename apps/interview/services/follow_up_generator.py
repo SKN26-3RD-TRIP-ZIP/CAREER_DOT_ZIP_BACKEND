@@ -5,11 +5,13 @@ from django.db.models import Max, Q
 
 from apps.evaluation.models import AnswerWeaknessTag, WeaknessTag
 from apps.interview.ai_chain_contracts import (
-    DEFAULT_WEAKNESS_TAG_CANDIDATES,
     NextAction,
 )
 from apps.interview.models import InterviewQuestion
 from apps.interview.services.ai_chain_service import InterviewAIChainService
+from apps.interview.services.sufficiency_payload import (
+    build_sufficiency_payload_from_answer,
+)
 
 
 class FollowupGenerator:
@@ -106,41 +108,7 @@ class FollowupGenerator:
 
     @classmethod
     def _build_sufficiency_payload(cls, answer):
-        question = answer.question
-        session = answer.session
-
-        return {
-            "session_id": str(session.id),
-            "question": {
-                "question_id": str(question.id),
-                "question_text": question.question_text,
-                "question_type": cls._map_question_type(question.question_type),
-                "parent_question_id": (
-                    str(question.parent_question_id)
-                    if question.parent_question_id
-                    else None
-                ),
-                "source_tags": [
-                    {
-                        "source_type": question.source_type or "general",
-                        "source_label": question.source_type or "general",
-                        "source_text_excerpt": question.source_reference or "",
-                    }
-                ],
-            },
-            "answer": {
-                "answer_id": str(answer.id),
-                "answer_text": answer.answer_text,
-            },
-            "persona": {
-                "persona_id": None,
-                "persona_type": cls._map_persona_type(session.persona),
-                "name": session.persona,
-                "description": "",
-            },
-            "prompt_version_id": None,
-            "weakness_tag_candidates": DEFAULT_WEAKNESS_TAG_CANDIDATES,
-        }
+        return build_sufficiency_payload_from_answer(answer)
 
     @classmethod
     def _build_followup_payload(cls, answer, selected_weakness_tag):

@@ -15,6 +15,9 @@ from __future__ import annotations
 from typing import Any
 
 from apps.interview.services.ai_chain_engine_factory import get_ai_chain_engine
+from apps.interview.services.sufficiency_payload import (
+    build_sufficiency_payload_from_answer,
+)
 
 
 class InterviewAIChainService:
@@ -34,6 +37,25 @@ class InterviewAIChainService:
 
     def judge_answer_sufficiency(self, payload: dict[str, Any]) -> dict[str, Any]:
         return self.engine.judge_answer_sufficiency(payload)
+
+    def evaluate_answer_sufficiency(self, answer) -> dict[str, Any]:
+        payload = build_sufficiency_payload_from_answer(answer)
+        result = self.judge_answer_sufficiency(payload)
+
+        answer_weakness_tags = result.get("answer_weakness_tags")
+        selected_weakness_tag = result.get("selected_weakness_tag")
+        return {
+            "answer_weakness_tags": (
+                answer_weakness_tags
+                if isinstance(answer_weakness_tags, list)
+                else []
+            ),
+            "selected_weakness_tag": (
+                selected_weakness_tag
+                if isinstance(selected_weakness_tag, dict)
+                else None
+            ),
+        }
 
     def generate_followup_question(self, payload: dict[str, Any]) -> dict[str, Any]:
         return self.engine.generate_followup_question(payload)
