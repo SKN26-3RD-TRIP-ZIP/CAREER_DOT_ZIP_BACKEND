@@ -168,6 +168,26 @@ class MVPSessionStatusSerializer(serializers.Serializer):
     status = serializers.ChoiceField(choices=STATUS_INPUT_MAP)
 
 
+class PracticeSessionCreateSerializer(serializers.Serializer):
+    question_count = serializers.IntegerField(
+        required=False,
+        default=5,
+        min_value=1,
+        max_value=10,
+    )
+    persona_type = serializers.ChoiceField(
+        choices=PERSONA_INPUT_MAP,
+        required=False,
+    )
+    interview_mode = serializers.ChoiceField(
+        choices=('text', 'voice'),
+        required=False,
+    )
+
+    def validate_persona_type(self, value):
+        return PERSONA_INPUT_MAP[value]
+
+
 class MVPQuestionGenerateSerializer(serializers.Serializer):
     jd_id = serializers.UUIDField(required=False)
     resume_id = serializers.UUIDField(required=False)

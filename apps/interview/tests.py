@@ -571,6 +571,241 @@ class MVPTextInterviewFlowTests(APITestCase):
         self.assertEqual(generate.status_code, status.HTTP_404_NOT_FOUND)
 
 
+class MVPPracticeSessionCreateAPITests(APITestCase):
+    def setUp(self):
+        user_model = get_user_model()
+        self.user = user_model.objects.create_user(
+            email='practice-owner@example.com',
+            password='password123',
+            name='Practice Owner',
+        )
+        self.other_user = user_model.objects.create_user(
+            email='practice-other@example.com',
+            password='password123',
+            name='Practice Other',
+        )
+        self.jd = JobDescription.objects.create(
+            user=self.user,
+            company_name='Career Zip',
+            position='Backend Developer',
+            original_text='Python Django backend developer',
+        )
+        self.resume = ResumeMaster.objects.create(
+            user=self.user,
+            name='Practice Owner',
+            email='practice-owner@example.com',
+            original_text='Python and Django project experience',
+        )
+        self.source_session = InterviewSession.objects.create(
+            user=self.user,
+            jd=self.jd,
+            resume=self.resume,
+            interview_type='technical',
+            persona='verifier',
+            interview_mode='voice',
+            total_question_count=1,
+        )
+        self.source_question = InterviewQuestion.objects.create(
+            session=self.source_session,
+            order_index=1,
+            question_type='main',
+            question_category='technical',
+            question_text='Explain your API design experience.',
+            source_type='general',
+        )
+        self.source_answer = InterviewAnswer.objects.create(
+            session=self.source_session,
+            question=self.source_question,
+            answer_text='I designed a Django REST API.',
+        )
+        weakness = WeaknessTag.objects.create(tag_name='weak_specificity')
+        AnswerWeaknessTag.objects.create(
+            answer=self.source_answer,
+            weakness_tag=weakness,
+            reason='Needs a more concrete example.',
+        )
+        self.client.force_authenticate(self.user)
+
+    def url(self, session=None):
+        return reverse(
+            'mvp-practice-session-create',
+            kwargs={'source_session_id': (session or self.source_session).id},
+        )
+
+    @staticmethod
+    def recommendations(count):
+        return {
+            'weakness_tags': [{'tag_name': 'weak_specificity', 'count': 1}],
+            'recommended_questions': [
+                {
+                    'question_bank_id': str(uuid.uuid4()),
+                    'question_text': f'Practice question {index}',
+                    'answer_example': '',
+                    'question_type': 'technical',
+                    'difficulty': 'medium',
+                    'keywords': ['API'],
+                    'weakness_tag': 'weak_specificity',
+                    'match_score': 1,
+                }
+                for index in range(1, count + 1)
+            ],
+        }
+
+    @patch(
+        'apps.interview.services.practice_session_service.'
+        'get_session_weakness_recommended_questions'
+    )
+    def test_creates_practice_session_from_weakness_recommendations(
+        self,
+        mock_recommendations,
+    ):
+        mock_recommendations.return_value = self.recommendations(3)
+
+        response = self.client.post(
+            self.url(),
+            {
+                'question_count': 3,
+                'persona_type': 'coach',
+                'interview_mode': 'text',
+            },
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data['source_session_id'], str(self.source_session.id))
+        self.assertEqual(response.data['generated_count'], 3)
+        self.assertEqual(response.data['persona_type'], 'coach')
+        self.assertEqual(response.data['interview_mode'], 'text')
+
+        practice_session = InterviewSession.objects.get(id=response.data['session_id'])
+        self.assertNotEqual(practice_session.id, self.source_session.id)
+        self.assertEqual(practice_session.user, self.user)
+        self.assertEqual(practice_session.jd, self.source_session.jd)
+        self.assertEqual(practice_session.resume, self.source_session.resume)
+        self.assertEqual(practice_session.total_question_count, 3)
+
+        questions = list(practice_session.questions.order_by('order_index'))
+        self.assertEqual(len(questions), 3)
+        self.assertEqual([question.order_index for question in questions], [1, 2, 3])
+        self.assertTrue(
+            all(question.source_type == 'question_bank' for question in questions)
+        )
+        self.assertTrue(
+            all(
+                question.source_reference.startswith('question_bank:')
+                for question in questions
+            )
+        )
+        self.assertTrue(
+            all(
+                question.source_tags.filter(
+                    source_label='weakness_recommendation'
+                ).exists()
+                for question in questions
+            )
+        )
+
+    @patch(
+        'apps.interview.services.practice_session_service.'
+        'get_session_weakness_recommended_questions'
+    )
+    def test_no_recommendations_fails_without_creating_session(
+        self,
+        mock_recommendations,
+    ):
+        mock_recommendations.return_value = {
+            'weakness_tags': [],
+            'recommended_questions': [],
+        }
+        session_count = InterviewSession.objects.count()
+
+        response = self.client.post(
+            self.url(),
+            {'question_count': 3},
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(
+            response.data['code'],
+            'PRACTICE_RECOMMENDATIONS_NOT_FOUND',
+        )
+        self.assertEqual(InterviewSession.objects.count(), session_count)
+
+    @patch(
+        'apps.interview.services.practice_session_service.'
+        'get_session_weakness_recommended_questions'
+    )
+    def test_insufficient_recommendations_fail_without_partial_session(
+        self,
+        mock_recommendations,
+    ):
+        mock_recommendations.return_value = self.recommendations(2)
+        session_count = InterviewSession.objects.count()
+
+        response = self.client.post(
+            self.url(),
+            {'question_count': 3},
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(
+            response.data['code'],
+            'INSUFFICIENT_PRACTICE_RECOMMENDATIONS',
+        )
+        self.assertEqual(InterviewSession.objects.count(), session_count)
+
+    @patch(
+        'apps.interview.services.practice_session_service.'
+        'get_session_weakness_recommended_questions'
+    )
+    def test_source_session_questions_and_answers_are_unchanged(
+        self,
+        mock_recommendations,
+    ):
+        mock_recommendations.return_value = self.recommendations(2)
+        original_question_ids = list(
+            self.source_session.questions.values_list('id', flat=True)
+        )
+        original_answer_ids = list(
+            self.source_session.answers.values_list('id', flat=True)
+        )
+
+        response = self.client.post(
+            self.url(),
+            {'question_count': 2},
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data['persona_type'], 'verify')
+        self.assertEqual(response.data['interview_mode'], 'voice')
+        self.assertEqual(
+            list(self.source_session.questions.values_list('id', flat=True)),
+            original_question_ids,
+        )
+        self.assertEqual(
+            list(self.source_session.answers.values_list('id', flat=True)),
+            original_answer_ids,
+        )
+
+    def test_other_users_source_session_returns_not_found(self):
+        other_session = InterviewSession.objects.create(
+            user=self.other_user,
+            interview_type='technical',
+            persona='practical',
+        )
+
+        response = self.client.post(
+            self.url(other_session),
+            {'question_count': 2},
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+
 @override_settings(
     INTERVIEW_AI_CHAIN_ENGINE='mock',
     INTERVIEW_AI_OPENAI_ENABLE_REAL_CALL=False,
