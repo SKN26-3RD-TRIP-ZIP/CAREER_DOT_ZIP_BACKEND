@@ -23,6 +23,7 @@ from .mvp_serializers import (
     MVPAnswerCreateSerializer,
     MVPSTTResultUpdateSerializer,
     MVPFollowupQuestionSerializer,
+    PracticeSessionCreateSerializer,
     MVPSessionCreateSerializer,
     MVPSessionStatusSerializer,
     STATUS_INPUT_MAP,
@@ -34,6 +35,10 @@ from .services.follow_up_generator import FollowupGenerator
 from .services.whisper_stt_service import transcribe_uploaded_audio
 from .services.tts_service import synthesize_interview_question
 from .services.ai_chain_openai_engine import AIChainOpenAIError
+from .services.practice_session_service import (
+    PracticeSessionCreationError,
+    create_practice_session,
+)
 
 EXPECTED_TECHNICAL_KEYWORDS_LABEL = 'expected_technical_keywords'
 
@@ -88,6 +93,52 @@ class MVPSessionDetailView(APIView):
     def get(self, request, session_id):
         session = get_object_or_404(InterviewSession, id=session_id, user=request.user)
         return Response(serialize_mvp_session(session), status=status.HTTP_200_OK)
+
+
+class MVPPracticeSessionCreateView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, source_session_id):
+        source_session = get_object_or_404(
+            InterviewSession,
+            id=source_session_id,
+            user=request.user,
+        )
+        serializer = PracticeSessionCreateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        try:
+            result = create_practice_session(
+                source_session=source_session,
+                question_count=serializer.validated_data["question_count"],
+                persona=serializer.validated_data.get("persona_type"),
+                interview_mode=serializer.validated_data.get("interview_mode"),
+            )
+        except PracticeSessionCreationError as exc:
+            return Response(
+                {
+                    "detail": exc.detail,
+                    "code": exc.code,
+                    "error_code": exc.code,
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        practice_session = result["session"]
+        questions = result["questions"]
+        return Response(
+            {
+                "source_session_id": str(source_session.id),
+                "session_id": str(practice_session.id),
+                "status": "ready",
+                "persona_type": serialize_mvp_session(practice_session)["persona_type"],
+                "interview_mode": practice_session.interview_mode,
+                "weakness_tags": result["weakness_tags"],
+                "generated_count": len(questions),
+                "questions": MVPQuestionSerializer(questions, many=True).data,
+            },
+            status=status.HTTP_201_CREATED,
+        )
 
 
 class MVPSessionStatusView(APIView):

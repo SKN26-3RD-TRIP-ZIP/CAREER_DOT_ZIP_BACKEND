@@ -3,6 +3,7 @@ from django.urls import path
 from .mvp_views import (
     MVPQuestionGenerateView,
     MVPQuestionListView,
+    MVPPracticeSessionCreateView,
     MVPAnswerCreateView,
     MVPFollowupQuestionCreateView,
     MVPSTTResultUpdateView,
@@ -21,6 +22,11 @@ urlpatterns = [
     path('sessions', MVPSessionCreateView.as_view(), name='mvp-session-create'),
     path('sessions/<uuid:session_id>', MVPSessionDetailView.as_view(), name='mvp-session-detail'),
     path('sessions/<uuid:session_id>/status', MVPSessionStatusView.as_view(), name='mvp-session-status'),
+    path(
+        'sessions/<uuid:source_session_id>/practice',
+        MVPPracticeSessionCreateView.as_view(),
+        name='mvp-practice-session-create',
+    ),
 
     # 세션에 연결된 JD/이력서/프로젝트 기반 질문 생성 및 질문 목록 조회.
     path(
