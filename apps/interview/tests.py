@@ -1134,6 +1134,8 @@ class MVPAnswerFollowupRealModeAPITests(APITestCase):
         )
 
     def test_question_related_answer_still_generates_followup(self):
+        self.question.question_category = 'technical'
+        self.question.save(update_fields=['question_category', 'updated_at'])
         self.answer.answer_text = (
             'I implemented the project backend API and handled its deployment.'
         )
@@ -1149,15 +1151,33 @@ class MVPAnswerFollowupRealModeAPITests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         self.assertEqual(response.data['next_action'], 'GENERATE_FOLLOWUP')
         self.assertEqual(service.followup_call_count, 1)
-        self.assertTrue(
-            InterviewQuestion.objects.filter(
-                session=self.session,
-                question_type='follow_up',
-            ).exists()
+        followup = InterviewQuestion.objects.get(
+            session=self.session,
+            question_type='follow_up',
         )
+        self.assertEqual(followup.question_category, 'technical')
         self.assertTrue(
             AnswerWeaknessTag.objects.filter(answer=self.answer).exists()
         )
+
+    def test_personality_followup_inherits_parent_question_category(self):
+        self.session.interview_type = 'personality'
+        self.session.save(update_fields=['interview_type', 'updated_at'])
+        self.question.question_category = 'personality'
+        self.question.save(update_fields=['question_category', 'updated_at'])
+        service = FakeFollowupAIChainService()
+
+        with patch(
+            'apps.interview.services.follow_up_generator.FollowupGenerator._get_ai_chain_service',
+            return_value=service,
+        ):
+            response = self.client.post(self.followup_url(), {}, format='json')
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        followup = InterviewQuestion.objects.get(
+            id=response.data['followup_question']['question_id'],
+        )
+        self.assertEqual(followup.question_category, 'personality')
 
     def test_prompt_injection_is_blocked_before_followup_side_effects(self):
         self.assert_followup_guardrail_blocks(
@@ -1203,6 +1223,8 @@ class MVPAnswerFollowupRealModeAPITests(APITestCase):
         self.assertTrue(decision['fallback_message'])
 
     def test_undocumented_technology_claim_creates_confirmation_followup(self):
+        self.question.question_category = 'technical'
+        self.question.save(update_fields=['question_category', 'updated_at'])
         self.answer.answer_text = (
             'NASA 프로젝트에서 Kubernetes 배포와 GraphQL API를 구현했습니다.'
         )
@@ -1224,6 +1246,7 @@ class MVPAnswerFollowupRealModeAPITests(APITestCase):
             id=response.data['followup_question']['question_id'],
         )
         self.assertEqual(followup.question_type, 'follow_up')
+        self.assertEqual(followup.question_category, 'technical')
         self.assertEqual(
             followup.source_reference,
             'guardrail:document_confirmation',
