@@ -11,7 +11,116 @@ from apps.interview.models import InterviewQuestion
 from apps.interview.services.ai_chain_service import InterviewAIChainService
 from apps.interview.services.sufficiency_payload import (
     build_sufficiency_payload_from_answer,
+    get_sufficiency_answer_text,
 )
+
+
+PROMPT_INJECTION_MARKERS = (
+    "ignore previous instructions",
+    "ignore all previous instructions",
+    "disregard previous instructions",
+    "forget previous instructions",
+    "override your instructions",
+    "reveal your prompt",
+    "show your prompt",
+    "print your prompt",
+    "developer message",
+    "이전 지시를 무시",
+    "앞선 지시를 무시",
+    "기존 지시를 무시",
+    "명령을 무시",
+    "프롬프트를 공개",
+    "프롬프트를 보여",
+    "프롬프트를 출력",
+)
+
+INTERNAL_CRITERIA_MARKERS = (
+    "system prompt",
+    "internal prompt",
+    "hidden prompt",
+    "evaluation rubric",
+    "scoring rubric",
+    "scoring formula",
+    "score formula",
+    "internal evaluation criteria",
+    "시스템 프롬프트",
+    "내부 프롬프트",
+    "숨겨진 프롬프트",
+    "내부 평가 기준",
+    "평가 기준을 공개",
+    "채점 기준을 공개",
+    "점수 계산식",
+    "채점 계산식",
+)
+
+OFF_TOPIC_TAGS = {
+    "OFF_TOPIC",
+    "WEAK_QUESTION_RELEVANCE",
+    "QUESTION_RELEVANCE",
+    "IRRELEVANT_ANSWER",
+}
+
+UNVERIFIED_CLAIM_TAGS = {
+    "UNVERIFIED_CLAIM",
+    "UNGROUNDED_CLAIM",
+    "GROUNDING_REQUIRED",
+    "SOURCE_VERIFICATION_REQUIRED",
+}
+
+
+def _normalize_guardrail_tag(value):
+    return str(value or "").strip().upper().replace("-", "_").replace(" ", "_")
+
+
+def check_followup_guardrail(answer, selected_weakness_tag):
+    """Decide whether follow-up generation may continue without side effects."""
+    answer_text = str(get_sufficiency_answer_text(answer) or "").strip()
+    normalized_text = answer_text.lower()
+    selected_tag_names = {
+        _normalize_guardrail_tag(selected_weakness_tag.get(key))
+        for key in ("tag_name", "weakness_tag_id", "code", "name")
+        if isinstance(selected_weakness_tag, dict)
+    }
+    selected_tag_names.discard("")
+
+    if selected_tag_names & OFF_TOPIC_TAGS:
+        return {
+            "can_generate_followup": False,
+            "action": NextAction.NEXT_QUESTION.value,
+            "reason": "off_topic_answer",
+            "fallback_message": "질문과 관련된 경험이나 판단을 중심으로 답변해 주세요.",
+        }
+
+    if any(marker in normalized_text for marker in PROMPT_INJECTION_MARKERS):
+        return {
+            "can_generate_followup": False,
+            "action": NextAction.NEXT_QUESTION.value,
+            "reason": "prompt_injection_attempt",
+            "fallback_message": "면접 질문에 대한 답변만 처리할 수 있습니다.",
+        }
+
+    if any(marker in normalized_text for marker in INTERNAL_CRITERIA_MARKERS):
+        return {
+            "can_generate_followup": False,
+            "action": NextAction.NEXT_QUESTION.value,
+            "reason": "internal_criteria_disclosure_request",
+            "fallback_message": "내부 프롬프트나 평가 기준 대신 면접 답변을 이어가 주세요.",
+        }
+
+    if selected_tag_names & UNVERIFIED_CLAIM_TAGS:
+        return {
+            "can_generate_followup": True,
+            "action": "GENERATE_CONFIRMATION_FOLLOWUP",
+            "reason": "claim_requires_verification",
+            "fallback_message": "해당 주장을 확인할 수 있는 근거나 경험을 설명해 주세요.",
+        }
+
+    return {
+        "can_generate_followup": True,
+        "action": NextAction.GENERATE_FOLLOWUP.value,
+        "reason": "allowed",
+        "fallback_message": None,
+    }
 
 
 class FollowupGenerator:
@@ -53,6 +162,14 @@ class FollowupGenerator:
 
         selected_weakness_tag = sufficiency_result.get("selected_weakness_tag")
         if not selected_weakness_tag:
+            return None, False
+
+        guardrail_result = check_followup_guardrail(
+            answer,
+            selected_weakness_tag,
+        )
+        if not guardrail_result["can_generate_followup"]:
+            cls._cache_no_followup_decision(answer, guardrail_result)
             return None, False
 
         answer_weakness_mapping = cls._get_or_create_answer_weakness_mapping(
