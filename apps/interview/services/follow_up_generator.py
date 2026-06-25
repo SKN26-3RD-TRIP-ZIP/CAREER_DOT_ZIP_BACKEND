@@ -1,3 +1,4 @@
+import json
 import re
 
 from django.conf import settings
@@ -117,6 +118,78 @@ RELEVANCE_STOPWORDS = {
     "주세요",
 }
 
+DOCUMENT_CLAIM_KEYWORDS = {
+    "airflow",
+    "ansible",
+    "aws",
+    "azure",
+    "cassandra",
+    "databricks",
+    "docker",
+    "dynamodb",
+    "elasticsearch",
+    "firebase",
+    "flink",
+    "gcp",
+    "graphql",
+    "hadoop",
+    "istio",
+    "kafka",
+    "kubernetes",
+    "mongodb",
+    "nasa",
+    "neo4j",
+    "oracle",
+    "pytorch",
+    "rabbitmq",
+    "redis",
+    "snowflake",
+    "spark",
+    "terraform",
+    "tensorflow",
+}
+
+DOCUMENT_CLAIM_ALIASES = {
+    "k8s": "kubernetes",
+    "쿠버네티스": "kubernetes",
+    "그래프ql": "graphql",
+    "그래프큐엘": "graphql",
+    "도커": "docker",
+    "테라폼": "terraform",
+    "카프카": "kafka",
+    "레디스": "redis",
+}
+
+EXPERIENCE_CLAIM_MARKERS = (
+    "i built",
+    "i developed",
+    "i implemented",
+    "i led",
+    "i migrated",
+    "i operated",
+    "i worked",
+    "my project",
+    "my role",
+    "경험이 있습니다",
+    "구축했습니다",
+    "개발했습니다",
+    "구현했습니다",
+    "담당했습니다",
+    "도입했습니다",
+    "마이그레이션했습니다",
+    "운영했습니다",
+    "참여했습니다",
+    "프로젝트에서",
+    "사용했습니다",
+    "수행했습니다",
+    "재직했습니다",
+)
+
+CONFIRMATION_FOLLOWUP_MESSAGE = (
+    "제출하신 문서에서는 해당 경험이 확인되지 않아요. "
+    "이 경험이 실제 본인 프로젝트라면 수행 기간과 본인 역할을 간단히 설명해 주세요."
+)
+
 
 def _normalize_guardrail_tag(value):
     return str(value or "").strip().upper().replace("-", "_").replace(" ", "_")
@@ -139,6 +212,122 @@ def _is_obviously_off_topic(question_text, answer_text):
     question_terms = _relevance_terms(question_text)
     answer_terms = _relevance_terms(answer_text)
     return not bool(question_terms & answer_terms)
+
+
+def _stringify_context_value(value):
+    if value in (None, "", [], {}):
+        return ""
+    if isinstance(value, str):
+        return value
+    try:
+        return json.dumps(value, ensure_ascii=False)
+    except (TypeError, ValueError):
+        return str(value)
+
+
+def _build_document_context(answer):
+    session = answer.session
+    question = answer.question
+    context_parts = [question.question_text, question.source_reference]
+
+    for source_tag in question.source_tags.all():
+        context_parts.extend(
+            (
+                source_tag.source_label,
+                source_tag.source_text_excerpt,
+                source_tag.source_reference,
+            )
+        )
+
+    jd = session.jd
+    if jd is not None:
+        context_parts.extend(
+            (
+                jd.company_name,
+                jd.position,
+                jd.original_text,
+                jd.company_summary,
+                jd.talent_profile,
+                jd.job_requirements,
+                jd.keywords,
+            )
+        )
+
+    resume = session.resume
+    if resume is not None:
+        context_parts.extend((resume.original_text, resume.extracted_keywords))
+        context_parts.extend(resume.skills.values_list("name", flat=True))
+        for career in resume.careers.all():
+            context_parts.extend(
+                (
+                    career.company_name,
+                    career.position,
+                    career.description,
+                )
+            )
+
+    cover_letter = session.cover_letter
+    if cover_letter is not None:
+        context_parts.extend((cover_letter.title, cover_letter.company_name))
+        for item in cover_letter.items.all():
+            context_parts.extend((item.question, item.answer_text))
+
+    try:
+        from apps.analysis.models import JdAnalysis
+
+        analysis = (
+            JdAnalysis.objects.filter(
+                user_id=session.user_id,
+                jd_id=session.jd_id,
+                resume_id=session.resume_id,
+            )
+            .order_by("-analyzed_at")
+            .first()
+        )
+        if analysis is not None:
+            context_parts.extend(
+                (
+                    analysis.matched_keywords,
+                    analysis.unmatched_keywords,
+                    analysis.jd_keywords,
+                    analysis.resume_analysis,
+                    analysis.strengths,
+                    analysis.weaknesses,
+                    analysis.cl_points,
+                )
+            )
+    except Exception:
+        # Document guardrail must degrade safely when optional analysis data
+        # is unavailable; the original follow-up flow should remain usable.
+        pass
+
+    return " ".join(_stringify_context_value(value) for value in context_parts)
+
+
+def _extract_claim_keywords(text):
+    normalized_text = str(text or "").lower()
+    keywords = {
+        keyword
+        for keyword in DOCUMENT_CLAIM_KEYWORDS
+        if re.search(rf"(?<![a-z0-9]){re.escape(keyword)}(?![a-z0-9])", normalized_text)
+    }
+    for alias, canonical in DOCUMENT_CLAIM_ALIASES.items():
+        if alias in normalized_text:
+            keywords.add(canonical)
+    return keywords
+
+
+def _find_unverified_document_claim(answer, answer_text):
+    normalized_answer = str(answer_text or "").lower()
+    if not any(marker in normalized_answer for marker in EXPERIENCE_CLAIM_MARKERS):
+        return set()
+
+    answer_keywords = _extract_claim_keywords(answer_text)
+    if not answer_keywords:
+        return set()
+
+    context_keywords = _extract_claim_keywords(_build_document_context(answer))
+    return answer_keywords - context_keywords
 
 
 def check_followup_guardrail(answer, selected_weakness_tag):
@@ -184,6 +373,16 @@ def check_followup_guardrail(answer, selected_weakness_tag):
             "action": NextAction.NEXT_QUESTION.value,
             "reason": "off_topic_answer",
             "fallback_message": "질문과 관련된 경험이나 판단을 중심으로 답변해 주세요.",
+        }
+
+    unverified_keywords = _find_unverified_document_claim(answer, answer_text)
+    if unverified_keywords:
+        return {
+            "can_generate_followup": True,
+            "action": "GENERATE_CONFIRMATION_FOLLOWUP",
+            "reason": "claim_requires_document_confirmation",
+            "fallback_message": CONFIRMATION_FOLLOWUP_MESSAGE,
+            "unverified_keywords": sorted(unverified_keywords),
         }
 
     if selected_tag_names & UNVERIFIED_CLAIM_TAGS:
@@ -251,6 +450,12 @@ class FollowupGenerator:
             cls._cache_no_followup_decision(answer, guardrail_result)
             return None, False
 
+        if guardrail_result["action"] == "GENERATE_CONFIRMATION_FOLLOWUP":
+            return cls._create_confirmation_followup(
+                answer,
+                guardrail_result,
+            )
+
         answer_weakness_mapping = cls._get_or_create_answer_weakness_mapping(
             answer,
             selected_weakness_tag,
@@ -300,6 +505,31 @@ class FollowupGenerator:
                 question,
             )
 
+        return question, True
+
+    @classmethod
+    def _create_confirmation_followup(cls, answer, guardrail_result):
+        with transaction.atomic():
+            last_index = (
+                InterviewQuestion.objects.filter(session=answer.session)
+                .aggregate(last=Max("order_index"))["last"]
+                or 0
+            )
+            question = InterviewQuestion.objects.create(
+                session=answer.session,
+                parent_question=answer.question,
+                source_answer=answer,
+                question_text=(
+                    guardrail_result.get("fallback_message")
+                    or CONFIRMATION_FOLLOWUP_MESSAGE
+                ),
+                question_type="follow_up",
+                question_category="general",
+                source_type="general",
+                source_reference="guardrail:document_confirmation",
+                difficulty="medium",
+                order_index=last_index + 1,
+            )
         return question, True
 
     @classmethod
