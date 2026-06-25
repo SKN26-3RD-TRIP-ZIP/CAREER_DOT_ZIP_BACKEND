@@ -146,7 +146,7 @@ class InterviewSessionTurnsAPITests(APITestCase):
         )
         Evaluation.objects.create(
             answer=main_answer,
-            final_tech_score=88,
+            answer_score=88,
             llm_concept_score=85,
             score_detail={'summary': 'Good answer'},
         )
@@ -172,7 +172,7 @@ class InterviewSessionTurnsAPITests(APITestCase):
         turn = response.data['turns'][0]
         self.assertEqual(turn['turn_index'], 1)
         self.assertEqual(turn['answer']['answer_text'], 'Main answer')
-        self.assertEqual(turn['evaluation']['final_tech_score'], 88)
+        self.assertEqual(turn['evaluation']['answer_score'], 88)
         self.assertEqual(len(turn['follow_up_questions']), 1)
         self.assertEqual(
             turn['follow_up_questions'][0]['answer']['answer_text'],

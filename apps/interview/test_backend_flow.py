@@ -76,7 +76,7 @@ class BackendMVPFlowIntegrationTests(APITestCase):
             bei_score={'score': 80},
             cbi_score={'score': 86},
             llm_concept_score=85,
-            final_tech_score=88,
+            answer_score=88,
             score_detail={
                 'summary': 'Technically solid answer.',
                 'improvement': 'Add more business impact details.',

@@ -283,7 +283,7 @@ class InterviewTurnEvaluationSerializer(serializers.ModelSerializer):
         model = Evaluation
         fields = (
             'evaluation_id',
-            'final_tech_score',
+            'answer_score',
             'llm_concept_score',
             'score_detail',
             'evaluated_at',
