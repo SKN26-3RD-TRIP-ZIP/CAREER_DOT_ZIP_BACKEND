@@ -967,6 +967,82 @@ class MVPAnswerFollowupRealModeAPITests(APITestCase):
         self.assertEqual(decision['reason'], 'claim_requires_verification')
         self.assertTrue(decision['fallback_message'])
 
+    def test_undocumented_technology_claim_creates_confirmation_followup(self):
+        self.answer.answer_text = (
+            'NASA 프로젝트에서 Kubernetes 배포와 GraphQL API를 구현했습니다.'
+        )
+        self.answer.save(update_fields=['answer_text', 'updated_at'])
+        service = FakeFollowupAIChainService()
+
+        with patch(
+            'apps.interview.services.follow_up_generator.FollowupGenerator._get_ai_chain_service',
+            return_value=service,
+        ):
+            response = self.client.post(self.followup_url(), {}, format='json')
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data['next_action'], 'GENERATE_FOLLOWUP')
+        self.assertEqual(service.sufficiency_call_count, 1)
+        self.assertEqual(service.followup_call_count, 0)
+
+        followup = InterviewQuestion.objects.get(
+            id=response.data['followup_question']['question_id'],
+        )
+        self.assertEqual(followup.question_type, 'follow_up')
+        self.assertEqual(
+            followup.source_reference,
+            'guardrail:document_confirmation',
+        )
+        self.assertIn('제출하신 문서에서는', followup.question_text)
+        self.assertIn('수행 기간과 본인 역할', followup.question_text)
+        self.assertNotEqual(
+            followup.question_text,
+            'Which concrete decision proves that contribution?',
+        )
+        self.assertFalse(
+            AnswerWeaknessTag.objects.filter(answer=self.answer).exists()
+        )
+
+    def test_document_backed_technology_claim_keeps_normal_followup_flow(self):
+        resume = ResumeMaster.objects.create(
+            user=self.user,
+            name='Real Followup Owner',
+            email='real-followup-owner@example.com',
+            original_text=(
+                'Implemented Kubernetes deployment and GraphQL APIs '
+                'for an internal platform project.'
+            ),
+            extracted_keywords='Kubernetes, GraphQL',
+        )
+        self.session.resume = resume
+        self.session.save(update_fields=['resume', 'updated_at'])
+        self.answer.answer_text = (
+            'I implemented Kubernetes deployment and GraphQL APIs '
+            'for the platform project.'
+        )
+        self.answer.save(update_fields=['answer_text', 'updated_at'])
+        service = FakeFollowupAIChainService()
+
+        with patch(
+            'apps.interview.services.follow_up_generator.FollowupGenerator._get_ai_chain_service',
+            return_value=service,
+        ):
+            response = self.client.post(self.followup_url(), {}, format='json')
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data['next_action'], 'GENERATE_FOLLOWUP')
+        self.assertEqual(service.followup_call_count, 1)
+        followup = InterviewQuestion.objects.get(
+            id=response.data['followup_question']['question_id'],
+        )
+        self.assertNotEqual(
+            followup.source_reference,
+            'guardrail:document_confirmation',
+        )
+        self.assertTrue(
+            AnswerWeaknessTag.objects.filter(answer=self.answer).exists()
+        )
+
     def test_sufficient_answer_does_not_call_followup_generation_llm(self):
         service = FakeFollowupAIChainService(
             sufficiency_result={
