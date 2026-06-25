@@ -59,6 +59,7 @@ def build_answer_sufficiency_system_prompt(persona: Any = None) -> str:
 def build_answer_sufficiency_user_prompt(payload: dict[str, Any]) -> str:
     compact_payload = {
         "session_id": payload.get("session_id"),
+        "interview_type": payload.get("interview_type"),
         "question": payload.get("question"),
         "answer": payload.get("answer"),
         "persona": payload.get("persona"),
@@ -103,10 +104,12 @@ def build_followup_system_prompt(persona: Any = None) -> str:
 def build_followup_user_prompt(payload: dict[str, Any]) -> str:
     compact_payload = {
         "session_id": payload.get("session_id"),
+        "interview_type": payload.get("interview_type"),
         "parent_question": payload.get("parent_question"),
         "answer": payload.get("answer"),
         "selected_weakness_tag": payload.get("selected_weakness_tag"),
         "persona": payload.get("persona"),
+        "followup_context": payload.get("followup_context"),
         "conversation_context": payload.get("conversation_context"),
     }
     return json.dumps(compact_payload, ensure_ascii=False)

@@ -2,8 +2,17 @@ from django.contrib.auth import get_user_model
 from django.test import SimpleTestCase, TestCase, override_settings
 
 from apps.interview.ai_chain_contracts import NextAction
-from apps.interview.models import InterviewAnswer, InterviewQuestion, InterviewSession
+from apps.interview.models import (
+    InterviewAnswer,
+    InterviewQuestion,
+    InterviewSession,
+    QuestionSourceTag,
+)
 from apps.interview.services.ai_chain_service import InterviewAIChainService
+from apps.interview.services.follow_up_generator import FollowupGenerator
+from apps.interview.services.sufficiency_payload import (
+    build_sufficiency_payload_from_answer,
+)
 
 
 @override_settings(
@@ -197,6 +206,13 @@ class EvaluateAnswerSufficiencyPublicInterfaceTest(TestCase):
             answer_text="Text answer",
             stt_text="Voice STT answer",
         )
+        QuestionSourceTag.objects.create(
+            question=self.question,
+            source_type="resume",
+            source_label="expected_technical_keywords",
+            source_text_excerpt="transaction, atomicity, rollback",
+            source_reference="test:technical-keywords",
+        )
 
     def test_evaluate_answer_sufficiency_builds_payload_and_normalizes_result(self):
         engine = RecordingSufficiencyEngine(
@@ -236,6 +252,55 @@ class EvaluateAnswerSufficiencyPublicInterfaceTest(TestCase):
         self.assertEqual(engine.payload["answer"]["answer_id"], str(self.answer.id))
         self.assertEqual(engine.payload["answer"]["answer_text"], "Text answer")
         self.assertEqual(engine.payload["question"]["question_id"], str(self.question.id))
+        self.assertEqual(engine.payload["interview_type"], "technical")
+        self.assertEqual(
+            engine.payload["question"]["question_category"],
+            "technical",
+        )
+        self.assertEqual(
+            engine.payload["question"]["interview_type"],
+            "technical",
+        )
+        self.assertEqual(
+            engine.payload["question"]["expected_technical_keywords"],
+            "transaction, atomicity, rollback",
+        )
+
+    def test_personality_sufficiency_payload_has_no_technical_keywords(self):
+        self.question.question_category = "personality"
+        self.question.save(update_fields=("question_category", "updated_at"))
+
+        payload = build_sufficiency_payload_from_answer(self.answer)
+
+        self.assertEqual(payload["question"]["question_category"], "personality")
+        self.assertEqual(payload["question"]["expected_technical_keywords"], "")
+
+    def test_followup_payload_preserves_technical_question_context(self):
+        payload = FollowupGenerator._build_followup_payload(
+            self.answer,
+            {
+                "tag_name": "NO_ALTERNATIVE",
+                "reason": "Alternative comparison is missing.",
+            },
+        )
+
+        self.assertEqual(payload["interview_type"], "technical")
+        self.assertEqual(
+            payload["parent_question"]["question_category"],
+            "technical",
+        )
+        self.assertEqual(
+            payload["parent_question"]["interview_type"],
+            "technical",
+        )
+        self.assertEqual(
+            payload["parent_question"]["expected_technical_keywords"],
+            "transaction, atomicity, rollback",
+        )
+        self.assertEqual(
+            payload["followup_context"]["purpose"],
+            "alternative_and_tradeoff_comparison",
+        )
 
     def test_evaluate_answer_sufficiency_guarantees_empty_contract(self):
         service = InterviewAIChainService(

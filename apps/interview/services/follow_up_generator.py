@@ -13,6 +13,7 @@ from apps.interview.ai_chain_contracts import (
 from apps.interview.models import InterviewQuestion
 from apps.interview.services.ai_chain_service import InterviewAIChainService
 from apps.interview.services.sufficiency_payload import (
+    build_question_context,
     build_sufficiency_payload_from_answer,
     get_sufficiency_answer_text,
 )
@@ -544,6 +545,7 @@ class FollowupGenerator:
     def _build_followup_payload(cls, answer, selected_weakness_tag):
         question = answer.question
         session = answer.session
+        question_context = build_question_context(question, session)
 
         previous_followup_count = InterviewQuestion.objects.filter(
             session=session,
@@ -557,10 +559,12 @@ class FollowupGenerator:
 
         return {
             "session_id": str(session.id),
+            "interview_type": session.interview_type,
             "parent_question": {
                 "question_id": str(question.id),
                 "question_text": question.question_text,
                 "question_type": cls._map_question_type(question.question_type),
+                **question_context,
                 "source_tags": [
                     {
                         "source_type": question.source_type or "general",
@@ -584,10 +588,38 @@ class FollowupGenerator:
                 "description": "",
             },
             "prompt_version_id": None,
+            "followup_context": cls._build_followup_context(
+                selected_weakness_tag,
+                question_context,
+            ),
             "conversation_context": {
                 "previous_question_count": previous_question_count,
                 "previous_followup_count_for_parent": previous_followup_count,
             },
+        }
+
+    @staticmethod
+    def _build_followup_context(selected_weakness_tag, question_context):
+        raw_trigger = (
+            selected_weakness_tag.get("tag_name")
+            or selected_weakness_tag.get("weakness_tag_id")
+            or selected_weakness_tag.get("code")
+            or ""
+        )
+        trigger = str(raw_trigger).strip().upper().replace("-", "_").replace(" ", "_")
+        technical_purposes = {
+            "TECH_DEPTH_LOW": "technical_understanding",
+            "WEAK_TECHNICAL_UNDERSTANDING": "technical_understanding",
+            "MISSING_REASON": "technology_choice_reasoning",
+            "WEAK_TECHNICAL_REASONING": "technology_choice_reasoning",
+            "NO_ALTERNATIVE": "alternative_and_tradeoff_comparison",
+            "WEAK_JD_LINK": "job_requirement_alignment",
+            "WEAK_JD_FIT": "job_requirement_alignment",
+        }
+        return {
+            **question_context,
+            "trigger": trigger or None,
+            "purpose": technical_purposes.get(trigger, "answer_clarification"),
         }
 
     @staticmethod
