@@ -11,6 +11,22 @@ Pipeline 3 - ⑥ 최종 출력 조립
 """
 
 
+STAR_KEYS = ("summary", "situation", "task", "action", "result")
+
+
+def _normalize_star(question: dict) -> dict:
+    raw = question.get("star")
+    if not isinstance(raw, dict):
+        raw = question.get("answer")
+    star = dict(raw) if isinstance(raw, dict) else {}
+    for key in STAR_KEYS:
+        if star.get(key) is None:
+            star[key] = ""
+        else:
+            star.setdefault(key, "")
+    return star
+
+
 def build_question_output(questions_with_star: list[dict]) -> list[dict]:
     """
     STAR 답변이 붙은 질문 목록을 최종 API 응답 형태로 조립한다.
@@ -25,6 +41,8 @@ def build_question_output(questions_with_star: list[dict]) -> list[dict]:
             "source":   q.get("source", "jd"),
             "basis":    q.get("basis", ""),
         }
+        if "star" in q or "answer" in q:
+            item["star"] = _normalize_star(q)
         if "answer" in q:
             item["answer"] = q["answer"]
         output.append(item)

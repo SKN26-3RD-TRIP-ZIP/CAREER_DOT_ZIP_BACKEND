@@ -107,13 +107,28 @@ DEPENDENCY_FILENAMES = {
 }
 
 
+def _path_parts(path: str) -> list[str]:
+    return [part for part in str(path or "").replace("\\", "/").lower().split("/") if part]
+
+
+def _is_requirements_file(path: str) -> bool:
+    parts = _path_parts(path)
+    if not parts:
+        return False
+    name = parts[-1]
+    if name.startswith("requirements") and name.endswith(".txt"):
+        return True
+    return name.endswith(".txt") and "requirements" in parts[:-1]
+
+
 def is_dependency_file(path: str) -> bool:
     """트리 경로가 의존성 매니페스트인지 판별. (대소문자·하위 경로 무시)"""
-    name = os.path.basename(path).lower()
+    parts = _path_parts(path)
+    name = parts[-1] if parts else ""
     if name in DEPENDENCY_FILENAMES:
         return True
     # requirements-dev.txt, requirements/base.txt 등 변형 허용
-    return name.startswith("requirements") and name.endswith(".txt")
+    return _is_requirements_file(path)
 
 
 # ══════════════════════════════════════════════════════════════
@@ -219,8 +234,9 @@ def _parse_maven_gradle(content: str) -> list[str]:
 
 
 def _parser_for(path: str):
-    name = os.path.basename(path).lower()
-    if name.startswith("requirements") and name.endswith(".txt"):
+    parts = _path_parts(path)
+    name = parts[-1] if parts else ""
+    if _is_requirements_file(path):
         return _parse_requirements_txt
     return {
         "pyproject.toml":    _parse_pyproject,
