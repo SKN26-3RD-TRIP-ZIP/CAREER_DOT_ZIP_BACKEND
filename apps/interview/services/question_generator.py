@@ -1,6 +1,10 @@
 from django.db.models import Q
 
 from apps.interview.services.ai_chain_service import InterviewAIChainService
+from apps.interview.services.ai_chain_persona_prompts import (
+    get_persona_policy,
+    normalize_persona_type,
+)
 from apps.question_bank.services.question_selector import select_questions_for_session
 
 
@@ -579,6 +583,7 @@ def _build_ai_generation_payload(session, question_count):
             'persona_type': _map_persona_type(session.persona),
             'name': session.persona,
             'description': '',
+            'policy': get_persona_policy(session.persona),
         },
         'prompt_version_id': None,
         'user_profile': _build_user_profile(session),
@@ -599,11 +604,7 @@ def _build_ai_generation_payload(session, question_count):
 
 
 def _map_persona_type(persona):
-    if persona == 'verifier':
-        return 'verify'
-    if persona in {'friendly', 'coach', 'practical', 'verify'}:
-        return 'friendly' if persona == 'coach' else persona
-    return 'practical'
+    return normalize_persona_type(persona)
 
 
 def _convert_ai_questions(ai_questions, excluded_texts=None):

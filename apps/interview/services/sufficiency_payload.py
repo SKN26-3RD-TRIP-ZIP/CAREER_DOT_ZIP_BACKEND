@@ -1,4 +1,8 @@
 from apps.interview.ai_chain_contracts import DEFAULT_WEAKNESS_TAG_CANDIDATES
+from apps.interview.services.ai_chain_persona_prompts import (
+    get_persona_policy,
+    normalize_persona_type,
+)
 
 
 EXPECTED_TECHNICAL_KEYWORDS_LABEL = "expected_technical_keywords"
@@ -76,6 +80,7 @@ def build_sufficiency_payload_from_answer(answer):
             "persona_type": _map_persona_type(session.persona),
             "name": session.persona,
             "description": "",
+            "policy": get_persona_policy(session.persona),
         },
         "prompt_version_id": None,
         "weakness_tag_candidates": DEFAULT_WEAKNESS_TAG_CANDIDATES,
@@ -89,8 +94,4 @@ def _map_question_type(question_type):
 
 
 def _map_persona_type(persona):
-    if persona == "verifier":
-        return "verify"
-    if persona in {"coach", "practical", "verify"}:
-        return persona
-    return "practical"
+    return normalize_persona_type(persona)

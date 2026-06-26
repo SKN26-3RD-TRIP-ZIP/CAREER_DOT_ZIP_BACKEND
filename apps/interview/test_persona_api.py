@@ -15,12 +15,13 @@ class InterviewPersonaAPITest(APITestCase):
         self.assertEqual(len(personas), 3)
         self.assertEqual(
             [persona["persona_type"] for persona in personas],
-            ["friendly", "practical", "verify"],
+            ["coach", "practical", "verifier"],
         )
 
     def test_persona_aliases_are_normalized_to_official_types(self):
-        self.assertEqual(normalize_persona_type("coach"), "friendly")
-        self.assertEqual(normalize_persona_type("strict"), "verify")
+        self.assertEqual(normalize_persona_type("friendly"), "coach")
+        self.assertEqual(normalize_persona_type("verify"), "verifier")
+        self.assertEqual(normalize_persona_type("strict"), "verifier")
         self.assertEqual(normalize_persona_type("unknown"), "practical")
 
     def test_persona_list_api_returns_three_personas(self):
@@ -32,7 +33,7 @@ class InterviewPersonaAPITest(APITestCase):
         self.assertEqual(response.data["total"], 3)
         self.assertEqual(
             [persona["persona_type"] for persona in response.data["results"]],
-            ["friendly", "practical", "verify"],
+            ["coach", "practical", "verifier"],
         )
         self.assertIn("label", response.data["results"][0])
         self.assertIn("description", response.data["results"][0])

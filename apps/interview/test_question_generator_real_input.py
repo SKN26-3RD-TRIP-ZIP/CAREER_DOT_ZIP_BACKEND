@@ -17,7 +17,10 @@ from apps.input.models import (
     ResumeSkill,
 )
 from apps.interview.models import InterviewQuestion, InterviewSession, QuestionSourceTag
-from apps.interview.services.question_generator import generate_interview_questions
+from apps.interview.services.question_generator import (
+    _build_ai_generation_payload,
+    generate_interview_questions,
+)
 
 
 class InterviewQuestionCategoryDistributionTest(TestCase):
@@ -36,6 +39,30 @@ class InterviewQuestionCategoryDistributionTest(TestCase):
             persona='practical',
             total_question_count=5,
         )
+
+    def test_question_generation_payload_contains_canonical_persona_policy(self):
+        expected_personas = {
+            'coach': 'coach',
+            'friendly': 'coach',
+            'practical': 'practical',
+            'verifier': 'verifier',
+            'verify': 'verifier',
+        }
+
+        for stored_persona, canonical_persona in expected_personas.items():
+            session = self.create_session('technical')
+            session.persona = stored_persona
+            payload = _build_ai_generation_payload(session, 3)
+
+            self.assertEqual(
+                payload['persona']['persona_type'],
+                canonical_persona,
+            )
+            self.assertIn('question_focus', payload['persona']['policy'])
+            self.assertIn('followup_style', payload['persona']['policy'])
+            self.assertIn('feedback_tone', payload['persona']['policy'])
+            self.assertIn('verification_depth', payload['persona']['policy'])
+            self.assertIn('forbidden_tone', payload['persona']['policy'])
 
     def generate_with_empty_ai_sources(self, session):
         ai_result = {

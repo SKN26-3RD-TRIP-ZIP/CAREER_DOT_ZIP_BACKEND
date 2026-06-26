@@ -12,6 +12,10 @@ from apps.interview.ai_chain_contracts import (
 )
 from apps.interview.models import InterviewQuestion
 from apps.interview.services.ai_chain_service import InterviewAIChainService
+from apps.interview.services.ai_chain_persona_prompts import (
+    get_persona_policy,
+    normalize_persona_type,
+)
 from apps.interview.services.sufficiency_payload import (
     build_question_context,
     build_sufficiency_payload_from_answer,
@@ -191,6 +195,29 @@ CONFIRMATION_FOLLOWUP_MESSAGE = (
     "제출하신 문서에서는 해당 경험이 확인되지 않아요. "
     "이 경험이 실제 본인 프로젝트라면 수행 기간과 본인 역할을 간단히 설명해 주세요."
 )
+
+CONFIRMATION_FOLLOWUP_MESSAGES = {
+    "coach": (
+        "제출하신 문서에서는 해당 경험이 확인되지 않아요. "
+        "이 경험을 더 잘 이해할 수 있도록 수행한 시기와 본인이 맡은 역할부터 편하게 설명해 주세요."
+    ),
+    "practical": (
+        "제출하신 문서에서는 해당 경험이 확인되지 않아요. "
+        "실제 수행 경험이라면 수행 기간과 본인 역할, 직접 구현한 내용을 구체적으로 설명해 주세요."
+    ),
+    "verifier": (
+        "제출하신 문서에서는 해당 경험이 확인되지 않습니다. "
+        "사실 관계를 확인할 수 있도록 수행 기간, 본인 기여도와 이를 뒷받침하는 구체적 근거를 설명해 주세요."
+    ),
+}
+
+
+def get_confirmation_followup_message(persona):
+    persona_type = normalize_persona_type(persona)
+    return CONFIRMATION_FOLLOWUP_MESSAGES.get(
+        persona_type,
+        CONFIRMATION_FOLLOWUP_MESSAGE,
+    )
 
 
 def _normalize_guardrail_tag(value):
@@ -383,7 +410,9 @@ def check_followup_guardrail(answer, selected_weakness_tag):
             "can_generate_followup": True,
             "action": "GENERATE_CONFIRMATION_FOLLOWUP",
             "reason": "claim_requires_document_confirmation",
-            "fallback_message": CONFIRMATION_FOLLOWUP_MESSAGE,
+            "fallback_message": get_confirmation_followup_message(
+                answer.session.persona
+            ),
             "unverified_keywords": sorted(unverified_keywords),
         }
 
@@ -392,7 +421,9 @@ def check_followup_guardrail(answer, selected_weakness_tag):
             "can_generate_followup": True,
             "action": "GENERATE_CONFIRMATION_FOLLOWUP",
             "reason": "claim_requires_verification",
-            "fallback_message": "해당 주장을 확인할 수 있는 근거나 경험을 설명해 주세요.",
+            "fallback_message": get_confirmation_followup_message(
+                answer.session.persona
+            ),
         }
 
     return {
@@ -588,6 +619,7 @@ class FollowupGenerator:
                 "persona_type": cls._map_persona_type(session.persona),
                 "name": session.persona,
                 "description": "",
+                "policy": get_persona_policy(session.persona),
             },
             "prompt_version_id": None,
             "followup_context": cls._build_followup_context(
@@ -634,11 +666,7 @@ class FollowupGenerator:
 
     @staticmethod
     def _map_persona_type(persona):
-        if persona == "verifier":
-            return "verify"
-        if persona in {"coach", "practical", "verify"}:
-            return persona
-        return "practical"
+        return normalize_persona_type(persona)
 
     @classmethod
     def _get_or_create_answer_weakness_mapping(cls, answer, selected_weakness_tag):
