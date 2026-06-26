@@ -1,4 +1,3 @@
-import re
 import logging
 import time
 from collections import Counter
@@ -43,6 +42,7 @@ logger = logging.getLogger("feedback_ai.evaluation_service")
 
 kiwi = Kiwi()
 FILLER_WORDS = [["어", "음", "그니까", "그러니까", "사실", "이제", "저기"]]
+SINGLE_SYLLABLE_FILLER_TAGS = {"IC"}
 
 
 class EvaluationService:
@@ -55,20 +55,25 @@ class EvaluationService:
 
         # 형태소 토큰을 먼저 산출 — 단음절 필러의 부분문자열 오탐(예: "들어","어렵다",
         # "마음","처음")을 막기 위해 토큰 경계 기준으로 카운트한다.
-        tokens = [t.form for t in kiwi.tokenize(stt_text)]
+        kiwi_tokens = list(kiwi.tokenize(stt_text))
+        tokens = [t.form for t in kiwi_tokens]
         token_counter = Counter(tokens)
 
         filler_counts = {}
         total_filler = 0
         for word in FILLER_WORDS[0]:
             if len(word) == 1:
-                # 단음절 필러("어","음")는 형태소 토큰 정확 일치로만 카운트
-                count = token_counter.get(word, 0)
+                # 단음절 필러("어", "음")는 활용 어미(EC)와 겹치기 쉬워
+                # 독립 감탄사(IC)로 분석된 토큰만 카운트한다.
+                count = sum(
+                    1
+                    for token in kiwi_tokens
+                    if token.form == word and token.tag in SINGLE_SYLLABLE_FILLER_TAGS
+                )
             else:
-                # 다음절 필러는 부분문자열 + 말줄임("그러니까...") 패턴 중 큰 값
-                plain_count = stt_text.count(word)
-                ellipsis_count = len(re.findall(rf'{re.escape(word)}\.+', stt_text))
-                count = max(plain_count, ellipsis_count)
+                # 다음절 필러도 "사실상", "이제는" 같은 부분 문자열 오탐을 피하기 위해
+                # Kiwi 토큰 완전 일치로만 카운트한다. 말줄임표는 별도 토큰으로 분리된다.
+                count = token_counter.get(word, 0)
             if count > 0:
                 filler_counts[word] = count
                 total_filler += count

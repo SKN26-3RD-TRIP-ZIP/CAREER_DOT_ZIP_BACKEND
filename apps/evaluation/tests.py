@@ -84,3 +84,4 @@ class EvaluationLogicTestCase(TestCase):
         
         self.assertEqual(res["total_filler_count"], 3)
         self.assertIn("어", res["filler_word_counts"])
+        self.assertEqual(res["filler_word_counts"]["어"], 1)
