@@ -14,8 +14,8 @@ from django.urls import reverse
 from rest_framework import status
 from rest_framework.test import APITestCase
 
+from apps.analysis.models import AnalysisSession, JdAnalysis, GeneratedQuestion
 from apps.input.models import JobDescription, ResumeMaster
-from .models import AnalysisSession, JdAnalysis, GeneratedQuestion
 
 User = get_user_model()
 
@@ -86,15 +86,24 @@ class AnalyzeAPITest(APITestCase):
         )
         self.client.force_authenticate(self.user)
         self.url = reverse("analysis-analyze")
+        self.jd = JobDescription.objects.create(
+            user=self.user,
+            company_name="커리어닷집",
+            position="백엔드 개발자",
+            original_text="Python, Django 기반 백엔드 개발자를 모집합니다.",
+        )
+        self.resume = ResumeMaster.objects.create(
+            user=self.user,
+            name="테스트유저",
+            email="analyze@example.com",
+            original_text="Python, Django, React 경험 보유.",
+        )
 
     @patch("apps.analysis.views.threading.Thread")
     def test_분석시작_요청시_session_id와_analyzing_상태_반환(self, mock_thread):
         request_body = {
-            "job_role":          "백엔드 개발자",
-            "company_name":      "커리어닷집",
-            "jd_text":           "Python, Django 기반 백엔드 개발자를 모집합니다.",
-            "resume_text":       "Python, Django, React 경험 보유.",
-            "cover_letter_text": "저는 문제 해결을 좋아하는 개발자입니다.",
+            "jd_id": str(self.jd.id),
+            "resume_id": str(self.resume.id),
         }
 
         response = self.client.post(self.url, request_body, format="json")
@@ -113,12 +122,14 @@ class AnalyzeAPITest(APITestCase):
         self.assertEqual(session.job_role,     "백엔드 개발자")
         self.assertEqual(session.company_name, "커리어닷집")
         self.assertEqual(session.status,       "analyzing")
+        self.assertEqual(session.jd_id, self.jd.id)
+        self.assertEqual(session.resume_id, self.resume.id)
 
     @patch("apps.analysis.views.threading.Thread")
     def test_분석시작_백그라운드_스레드_실행_확인(self, mock_thread):
         request_body = {
-            "job_role": "백엔드 개발자",
-            "jd_text":  "Python Django 개발자 채용",
+            "jd_id": str(self.jd.id),
+            "resume_id": str(self.resume.id),
         }
 
         self.client.post(self.url, request_body, format="json")

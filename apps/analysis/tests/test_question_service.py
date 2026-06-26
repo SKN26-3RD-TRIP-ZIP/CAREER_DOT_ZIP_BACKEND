@@ -14,7 +14,11 @@ question_service (오케스트레이터) 통합 테스트 (실제 GPT + 임베�
   pytest apps/analysis/tests/test_question_service.py -v -s -k "format"
 """
 
-import pytest
+import unittest
+try:
+    import pytest
+except ModuleNotFoundError:
+    raise unittest.SkipTest("pytest is required for this pytest-style analysis test module")
 from unittest.mock import patch
 from apps.analysis.services.question_service import generate_all_questions
 

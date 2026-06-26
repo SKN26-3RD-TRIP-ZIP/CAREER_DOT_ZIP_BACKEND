@@ -112,6 +112,238 @@ paths:
       responses:
         '200':
           description: Legacy code resent or cooldown notice
+  /external/jobs:
+    get:
+      summary: List Career.zip synthetic mock jobs
+      tags: [External]
+      parameters:
+        - in: query
+          name: keyword
+          schema: { type: string }
+        - in: query
+          name: position
+          schema: { type: string }
+        - in: query
+          name: career_type
+          schema: { type: string }
+        - in: query
+          name: employment_type
+          schema: { type: string }
+        - in: query
+          name: location
+          schema: { type: string }
+        - in: query
+          name: tech_stack
+          schema: { type: string }
+        - in: query
+          name: page
+          schema: { type: integer, default: 1 }
+        - in: query
+          name: size
+          schema: { type: integer, default: 10, maximum: 100 }
+        - in: query
+          name: ordering
+          schema: { type: string, enum: [latest, oldest, deadline, deadline_desc, company, position] }
+      responses:
+        '200':
+          description: Synthetic mock jobs
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MockJobListResponse'
+        '401':
+          description: Authentication required
+  /external/jobs/{job_id}:
+    get:
+      summary: Get Career.zip synthetic mock job detail
+      tags: [External]
+      parameters:
+        - in: path
+          name: job_id
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Synthetic mock job
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MockJob'
+        '404':
+          description: Mock job not found
+  /external/jobs/{job_id}/save-jd:
+    post:
+      summary: Save selected synthetic mock job as current user's JD
+      tags: [External]
+      parameters:
+        - in: path
+          name: job_id
+          required: true
+          schema: { type: string }
+      responses:
+        '201':
+          description: JD created
+        '404':
+          description: Mock job not found
+  /users/me/points:
+    get:
+      summary: Get current user's point balance
+      tags: [Points]
+      responses:
+        '200':
+          description: Point balance
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PointBalance'
+  /users/me/points/history:
+    get:
+      summary: List current user's point history
+      tags: [Points]
+      parameters:
+        - in: query
+          name: page
+          schema: { type: integer, default: 1 }
+        - in: query
+          name: size
+          schema: { type: integer, default: 20, maximum: 100 }
+      responses:
+        '200':
+          description: Point history
+  /admin/members/{member_id}/points/adjust:
+    post:
+      summary: Admin point adjustment
+      tags: [Admin, Points]
+      parameters:
+        - in: path
+          name: member_id
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [amount, reason]
+              properties:
+                amount: { type: integer }
+                reason: { type: string }
+                idempotency_key: { type: string }
+      responses:
+        '201':
+          description: Adjustment created
+        '400':
+          description: Validation error
+  /admin/points/history:
+    get:
+      summary: Admin point history
+      tags: [Admin, Points]
+      parameters:
+        - in: query
+          name: page
+          schema: { type: integer, default: 1 }
+        - in: query
+          name: size
+          schema: { type: integer, default: 20, maximum: 100 }
+        - in: query
+          name: user_id
+          schema: { type: integer }
+        - in: query
+          name: transaction_type
+          schema: { type: string, enum: [EARN, USE, REFUND, EXPIRE, ADMIN] }
+      responses:
+        '200':
+          description: Admin point history
+  /users/me/action-plans:
+    get:
+      summary: List current user's improvement action plans
+      tags: [Reports]
+      parameters:
+        - in: query
+          name: page
+          schema: { type: integer, default: 1 }
+        - in: query
+          name: size
+          schema: { type: integer, default: 20, maximum: 100 }
+      responses:
+        '200':
+          description: Paginated user-owned action plans
+  /reports/{report_id}/action-plans:
+    post:
+      summary: Create an improvement action plan for a report
+      tags: [Reports]
+      parameters:
+        - in: path
+          name: report_id
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ActionPlanCreate'
+      responses:
+        '201':
+          description: Action plan created
+        '400':
+          description: Maximum three plans per report or validation error
+        '404':
+          description: Report not found or not owned by user
+  /action-plans/{action_plan_id}:
+    patch:
+      summary: Update a user-owned improvement action plan
+      tags: [Reports]
+      parameters:
+        - in: path
+          name: action_plan_id
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ActionPlanPatch'
+      responses:
+        '200':
+          description: Action plan updated
+        '404':
+          description: Action plan not found or not owned by user
+  /admin/guardrails/events:
+    get:
+      summary: List guardrail events without raw user input
+      tags: [Admin, Guardrails]
+      parameters:
+        - in: query
+          name: category
+          schema: { type: string, enum: [G0, G1, G2, G3, G4, G5] }
+        - in: query
+          name: action
+          schema: { type: string, enum: [ALLOW, GUIDE, WARN, BLOCK_INPUT, END_SESSION] }
+        - in: query
+          name: user_id
+          schema: { type: integer }
+        - in: query
+          name: page
+          schema: { type: integer, default: 1 }
+        - in: query
+          name: size
+          schema: { type: integer, default: 20, maximum: 100 }
+      responses:
+        '200':
+          description: Paginated masked guardrail events
+  /health:
+    get:
+      summary: Health check
+      tags: [Health]
+      security: []
+      responses:
+        '200':
+          description: OK
+        '503':
+          description: Degraded
 components:
   schemas:
     SignupRequest:
@@ -176,3 +408,60 @@ components:
           type: string
         code:
           type: string
+    MockJob:
+      type: object
+      properties:
+        job_id: { type: string, example: mock-job-000001 }
+        company_name: { type: string }
+        position: { type: string }
+        career_type: { type: string }
+        employment_type: { type: string }
+        location: { type: string }
+        tech_stack:
+          type: array
+          items: { type: string }
+        main_tasks:
+          type: array
+          items: { type: string }
+        requirements:
+          type: array
+          items: { type: string }
+        preferred:
+          type: array
+          items: { type: string }
+        posted_at: { type: string, format: date }
+        deadline: { type: string, format: date }
+        source: { type: string, enum: [CAREER_ZIP_MOCK] }
+        is_mock: { type: boolean, example: true }
+    MockJobListResponse:
+      type: object
+      properties:
+        source: { type: string, enum: [CAREER_ZIP_MOCK] }
+        is_mock: { type: boolean, example: true }
+        total: { type: integer }
+        page: { type: integer }
+        size: { type: integer }
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/MockJob'
+    PointBalance:
+      type: object
+      properties:
+        point_balance: { type: integer }
+        point_last_updated_at: { type: string, format: date-time, nullable: true }
+        policy_version: { type: string }
+    ActionPlanCreate:
+      type: object
+      required: [title]
+      properties:
+        title: { type: string, maxLength: 120 }
+        description: { type: string }
+        source_tag: { type: string }
+    ActionPlanPatch:
+      type: object
+      properties:
+        title: { type: string, maxLength: 120 }
+        description: { type: string }
+        status: { type: string, enum: [TODO, IN_PROGRESS, DONE] }
+        source_tag: { type: string }

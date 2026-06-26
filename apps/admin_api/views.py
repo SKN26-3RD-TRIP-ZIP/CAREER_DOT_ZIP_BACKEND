@@ -2,7 +2,7 @@ from datetime import timedelta
 
 from django.contrib.auth import get_user_model
 from django.db import transaction
-from django.db.models import Count, Q
+from django.db.models import Count, Q, Sum
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from rest_framework import status
@@ -11,15 +11,22 @@ from rest_framework.views import APIView
 from rest_framework_simplejwt.authentication import JWTAuthentication
 
 from apps.analysis.models import AnalysisSession, JdAnalysis
+from apps.accounts.models import PointHistory
+from apps.accounts.services.points import admin_adjust_points
 from apps.document.models import UploadedDocument
 from apps.input.models import JobDescription, ResumeMaster, CoverLetter, ProjectExperience, UserProfile
-from apps.interview.models import InterviewSession
+from apps.interview.models import GuardrailEvent, InterviewSession
 from apps.report.models import FinalReport
 from .models import AuditLog
 from .permissions import IsAdminUserOrRole
 from .serializers import (
     AuditLogQuerySerializer,
     AuditLogSerializer,
+    AdminPointAdjustSerializer,
+    AdminGuardrailEventQuerySerializer,
+    AdminGuardrailEventSerializer,
+    AdminPointHistoryQuerySerializer,
+    AdminPointHistorySerializer,
     MemberInviteSerializer,
     MemberListQuerySerializer,
     MemberListSerializer,
@@ -185,6 +192,19 @@ class DashboardStatsView(AdminAPIView):
         audit_24h_total = AuditLog.objects.filter(created_at__gte=since_24h).count()
         error_24h = AuditLog.objects.filter(created_at__gte=since_24h, action_type__icontains='error').count()
         error_rate = round((error_24h / audit_24h_total * 100), 1) if audit_24h_total > 0 else 0.0
+        point_summary = PointHistory.objects.aggregate(
+            earned=Sum('amount', filter=Q(transaction_type=PointHistory.TRANSACTION_EARN)),
+            used=Sum('amount', filter=Q(transaction_type=PointHistory.TRANSACTION_USE)),
+            refunded=Sum('amount', filter=Q(transaction_type=PointHistory.TRANSACTION_REFUND)),
+        )
+        guardrail_by_category = {
+            row['category']: row['count']
+            for row in GuardrailEvent.objects.values('category').annotate(count=Count('id'))
+        }
+        guardrail_by_action = {
+            row['action']: row['count']
+            for row in GuardrailEvent.objects.values('action').annotate(count=Count('id'))
+        }
 
         return Response({
             'total_members': total_members,
@@ -198,6 +218,17 @@ class DashboardStatsView(AdminAPIView):
             # 비용/AI 호출 데이터 없음
             'ai_calls': 0,
             'monthly_cost': 0,
+            'points': {
+                'earned': point_summary['earned'] or 0,
+                'used': point_summary['used'] or 0,
+                'refunded': point_summary['refunded'] or 0,
+                'transaction_count': PointHistory.objects.count(),
+            },
+            'guardrails': {
+                'by_category': guardrail_by_category,
+                'by_action': guardrail_by_action,
+                'event_count': GuardrailEvent.objects.count(),
+            },
             'weekly_sessions': weekly_sessions,
             'system_health': {
                 'stt_status': 'normal',
@@ -312,5 +343,98 @@ class AuditLogListView(AdminAPIView):
                 'page': params['page'],
                 'size': params['size'],
                 'results': AuditLogSerializer(results, many=True).data,
+            }
+        )
+
+
+class AdminPointAdjustView(AdminAPIView):
+    def post(self, request, member_id):
+        serializer = AdminPointAdjustSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        member = get_object_or_404(User, id=member_id)
+
+        try:
+            result = admin_adjust_points(
+                user=member,
+                amount=serializer.validated_data['amount'],
+                reason=serializer.validated_data['reason'],
+                actor_id=request.user.id,
+                idempotency_key=serializer.validated_data.get('idempotency_key'),
+            )
+        except ValueError as exc:
+            return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        AuditLog.objects.create(
+            actor=request.user,
+            action_type='point_admin_adjust',
+            target_type=User._meta.db_table,
+            target_id=str(member.id),
+            before_value={},
+            after_value={
+                'amount': result.history.amount,
+                'balance_after': result.history.balance_after,
+                'point_history_id': result.history.id,
+                'created': result.created,
+            },
+        )
+
+        return Response(
+            {
+                'point_history_id': result.history.id,
+                'user_id': member.id,
+                'amount': result.history.amount,
+                'balance_after': result.history.balance_after,
+                'created': result.created,
+            },
+            status=status.HTTP_201_CREATED if result.created else status.HTTP_200_OK,
+        )
+
+
+class AdminPointHistoryView(AdminAPIView):
+    def get(self, request):
+        query_serializer = AdminPointHistoryQuerySerializer(data=request.query_params)
+        query_serializer.is_valid(raise_exception=True)
+        params = query_serializer.validated_data
+
+        histories = PointHistory.objects.select_related('user').order_by('-created_at', '-id')
+        if params.get('user_id'):
+            histories = histories.filter(user_id=params['user_id'])
+        if params.get('transaction_type'):
+            histories = histories.filter(transaction_type=params['transaction_type'])
+
+        total = histories.count()
+        results = paginate(histories, params['page'], params['size'])
+        return Response(
+            {
+                'total': total,
+                'page': params['page'],
+                'size': params['size'],
+                'results': AdminPointHistorySerializer(results, many=True).data,
+            }
+        )
+
+
+class AdminGuardrailEventListView(AdminAPIView):
+    def get(self, request):
+        query_serializer = AdminGuardrailEventQuerySerializer(data=request.query_params)
+        query_serializer.is_valid(raise_exception=True)
+        params = query_serializer.validated_data
+
+        events = GuardrailEvent.objects.select_related('user').order_by('-created_at', '-id')
+        if params.get('category'):
+            events = events.filter(category=params['category'])
+        if params.get('action'):
+            events = events.filter(action=params['action'])
+        if params.get('user_id'):
+            events = events.filter(user_id=params['user_id'])
+
+        total = events.count()
+        results = paginate(events, params['page'], params['size'])
+        return Response(
+            {
+                'total': total,
+                'page': params['page'],
+                'size': params['size'],
+                'results': AdminGuardrailEventSerializer(results, many=True).data,
             }
         )

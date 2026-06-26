@@ -1,6 +1,7 @@
 import logging
 
 from django.http import HttpResponse
+from django.shortcuts import get_object_or_404
 from rest_framework import permissions, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -9,7 +10,15 @@ from django.db import transaction
 from apps.interview.models import InterviewSession
 from apps.evaluation.models import AnswerWeaknessTag
 from .models import FinalReport
-from .serializers import FinalReportSerializer, FinalReportListSerializer, FinalReportSessionSerializer
+from .models import ActionPlan
+from .serializers import (
+    ActionPlanCreateSerializer,
+    ActionPlanPatchSerializer,
+    ActionPlanSerializer,
+    FinalReportSerializer,
+    FinalReportListSerializer,
+    FinalReportSessionSerializer,
+)
 from .services.report_generator import generate_final_report
 from .services.recommendation_service import (
     get_recommended_questions_for_tags,
@@ -18,6 +27,14 @@ from .services.recommendation_service import (
 from .services.pdf_generator import generate_report_pdf
 
 logger = logging.getLogger("feedback_ai.report_views")
+
+
+def _positive_int(value, default, max_value):
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return default
+    return min(max(parsed, 1), max_value)
 
 
 class ReportGenerationFailed(RuntimeError):
@@ -180,6 +197,67 @@ class FinalReportListView(APIView):
         return Response({"total": reports.count(), "results": serializer.data}, status=status.HTTP_200_OK)
 
 
+class UserActionPlanListView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        page = _positive_int(request.query_params.get("page"), 1, 100000)
+        size = _positive_int(request.query_params.get("size"), 20, 100)
+        queryset = (
+            ActionPlan.objects
+            .filter(report__session__user=request.user)
+            .select_related("report", "report__session")
+            .order_by("-created_at", "-id")
+        )
+        total = queryset.count()
+        offset = (page - 1) * size
+        results = queryset[offset:offset + size]
+        return Response(
+            {
+                "total": total,
+                "page": page,
+                "size": size,
+                "results": ActionPlanSerializer(results, many=True).data,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+class ReportActionPlanCreateView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, report_id):
+        report = get_object_or_404(
+            FinalReport.objects.select_related("session"),
+            id=report_id,
+            session__user=request.user,
+        )
+        if report.action_plans.count() >= 3:
+            return Response(
+                {"detail": "리포트별 개선 과제는 최대 3개까지 등록할 수 있습니다."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        serializer = ActionPlanCreateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        action_plan = serializer.save(report=report)
+        return Response(ActionPlanSerializer(action_plan).data, status=status.HTTP_201_CREATED)
+
+
+class ActionPlanPatchView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def patch(self, request, action_plan_id):
+        action_plan = get_object_or_404(
+            ActionPlan.objects.select_related("report", "report__session"),
+            id=action_plan_id,
+            report__session__user=request.user,
+        )
+        serializer = ActionPlanPatchSerializer(action_plan, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(ActionPlanSerializer(action_plan).data, status=status.HTTP_200_OK)
+
+
 class LatestSessionReportView(APIView):
     """GET /sessions/latest/report"""
     permission_classes = [permissions.IsAuthenticated]
@@ -336,7 +414,7 @@ class SessionFeedbackView(APIView):
                 "persona": {
                     "short_name": p_meta["short_name"],
                     "avatar_emoji": p_meta["avatar_emoji"],
-                    "total_score": report.overall_score or 0,
+                    "total_score": report.overall_score,
                     "tags": [persona_fb.get("persona_label", p_meta["short_name"])],
                 },
                 "summary": " ".join(filter(None, [

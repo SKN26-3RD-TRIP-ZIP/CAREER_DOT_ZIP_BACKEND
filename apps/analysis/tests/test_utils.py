@@ -10,7 +10,11 @@ utils 단위 테스트 (API 호출 없음)
 """
 
 import math
-import pytest
+import unittest
+try:
+    import pytest
+except ModuleNotFoundError:
+    raise unittest.SkipTest("pytest is required for this pytest-style analysis test module")
 from apps.analysis.services.utils import clean_json, cosine_similarity
 
 

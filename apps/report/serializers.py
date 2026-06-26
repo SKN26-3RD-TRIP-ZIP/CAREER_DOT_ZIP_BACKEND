@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import FinalReport
+from .models import ActionPlan, FinalReport
 
 
 class FinalReportSerializer(serializers.ModelSerializer):
@@ -8,6 +8,9 @@ class FinalReportSerializer(serializers.ModelSerializer):
   interview_type = serializers.SerializerMethodField()
   persona = serializers.SerializerMethodField()
   overall_score = serializers.SerializerMethodField()
+  score_status = serializers.SerializerMethodField()
+  evaluation_status = serializers.SerializerMethodField()
+  is_mock = serializers.SerializerMethodField()
 
   class Meta:
     model = FinalReport
@@ -17,6 +20,9 @@ class FinalReportSerializer(serializers.ModelSerializer):
         'interview_type',
         'persona',
         'overall_score',
+        'score_status',
+        'evaluation_status',
+        'is_mock',
         'summary',
         'generated_at',
     )
@@ -36,6 +42,15 @@ class FinalReportSerializer(serializers.ModelSerializer):
   def get_overall_score(self, obj):
     return obj.overall_score
 
+  def get_score_status(self, obj):
+    return obj.score_status
+
+  def get_evaluation_status(self, obj):
+    return obj.evaluation_status
+
+  def get_is_mock(self, obj):
+    return obj.is_mock
+
 
 class FinalReportListSerializer(serializers.ModelSerializer):
   report_id = serializers.SerializerMethodField()
@@ -43,6 +58,9 @@ class FinalReportListSerializer(serializers.ModelSerializer):
   interview_type = serializers.SerializerMethodField()
   persona = serializers.SerializerMethodField()
   overall_score = serializers.SerializerMethodField()
+  score_status = serializers.SerializerMethodField()
+  evaluation_status = serializers.SerializerMethodField()
+  is_mock = serializers.SerializerMethodField()
   summary_text = serializers.SerializerMethodField()
 
   class Meta:
@@ -53,6 +71,9 @@ class FinalReportListSerializer(serializers.ModelSerializer):
         'interview_type',
         'persona',
         'overall_score',
+        'score_status',
+        'evaluation_status',
+        'is_mock',
         'summary_text',
         'generated_at',
     )
@@ -72,6 +93,15 @@ class FinalReportListSerializer(serializers.ModelSerializer):
   def get_overall_score(self, obj):
     return obj.overall_score
 
+  def get_score_status(self, obj):
+    return obj.score_status
+
+  def get_evaluation_status(self, obj):
+    return obj.evaluation_status
+
+  def get_is_mock(self, obj):
+    return obj.is_mock
+
   def get_summary_text(self, obj):
     metadata = (obj.summary or {}).get('evaluation_metadata', {})
     return metadata.get('summary_text', '')
@@ -82,6 +112,9 @@ class FinalReportSessionSerializer(serializers.ModelSerializer):
   session_id = serializers.SerializerMethodField()
   status = serializers.SerializerMethodField()
   overall_score = serializers.SerializerMethodField()
+  score_status = serializers.SerializerMethodField()
+  evaluation_status = serializers.SerializerMethodField()
+  is_mock = serializers.SerializerMethodField()
 
   class Meta:
     model = FinalReport
@@ -90,6 +123,9 @@ class FinalReportSessionSerializer(serializers.ModelSerializer):
         'session_id',
         'status',
         'overall_score',
+        'score_status',
+        'evaluation_status',
+        'is_mock',
         'summary',
         'generated_at',
     )
@@ -105,3 +141,51 @@ class FinalReportSessionSerializer(serializers.ModelSerializer):
 
   def get_overall_score(self, obj):
     return obj.overall_score
+
+  def get_score_status(self, obj):
+    return obj.score_status
+
+  def get_evaluation_status(self, obj):
+    return obj.evaluation_status
+
+  def get_is_mock(self, obj):
+    return obj.is_mock
+
+
+class ActionPlanSerializer(serializers.ModelSerializer):
+  action_plan_id = serializers.UUIDField(source='id', read_only=True)
+  report_id = serializers.UUIDField(source='report.id', read_only=True)
+  session_id = serializers.UUIDField(source='report.session.id', read_only=True)
+
+  class Meta:
+    model = ActionPlan
+    fields = (
+        'action_plan_id',
+        'report_id',
+        'session_id',
+        'title',
+        'description',
+        'status',
+        'source_tag',
+        'created_at',
+        'updated_at',
+    )
+    read_only_fields = ('created_at', 'updated_at')
+
+
+class ActionPlanCreateSerializer(serializers.ModelSerializer):
+  class Meta:
+    model = ActionPlan
+    fields = ('title', 'description', 'source_tag')
+
+
+class ActionPlanPatchSerializer(serializers.ModelSerializer):
+  class Meta:
+    model = ActionPlan
+    fields = ('title', 'description', 'status', 'source_tag')
+    extra_kwargs = {
+        'title': {'required': False},
+        'description': {'required': False},
+        'status': {'required': False},
+        'source_tag': {'required': False},
+    }

@@ -9,7 +9,11 @@ gap_service 단위 테스트
   pytest apps/analysis/tests/test_gap_service.py -v -s
 """
 
-import pytest
+import unittest
+try:
+    import pytest
+except ModuleNotFoundError:
+    raise unittest.SkipTest("pytest is required for this pytest-style analysis test module")
 from apps.analysis.services.gap_service import calculate_gap, build_gap_message
 
 

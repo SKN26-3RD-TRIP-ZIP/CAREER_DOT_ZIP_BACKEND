@@ -14,7 +14,11 @@ project_service 단위 테스트
   pytest apps/analysis/tests/test_project_service.py -v
 """
 
-import pytest
+import unittest
+try:
+    import pytest
+except ModuleNotFoundError:
+    raise unittest.SkipTest("pytest is required for this pytest-style analysis test module")
 from unittest.mock import patch
 from apps.analysis.services.project_service import (
     extract_projects,

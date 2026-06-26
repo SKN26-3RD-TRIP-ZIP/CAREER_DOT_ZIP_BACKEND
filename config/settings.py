@@ -11,18 +11,40 @@ https://docs.djangoproject.com/en/4.2/ref/settings/
 """
 
 import os
+from importlib.util import find_spec
 from pathlib import Path
 
 import dj_database_url
 from dotenv import load_dotenv
+
+try:
+    import MySQLdb  # noqa: F401
+except ImportError:
+    try:
+        import pymysql
+
+        pymysql.install_as_MySQLdb()
+    except ImportError:
+        pass
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(BASE_DIR / '.env')
 load_dotenv(BASE_DIR / '.env.local', override=True)
 
+def _env_int(name: str, default: int) -> int:
+    try:
+        return int(os.getenv(name, str(default)))
+    except (TypeError, ValueError):
+        return default
+
+
 WORKNET_API_KEY = os.getenv('WORKNET_API_KEY', '')
 WORKNET_BASE_URL = os.getenv('WORKNET_BASE_URL', '')
+JOBS_PROVIDER = os.getenv('JOBS_PROVIDER', 'mock')
+MOCK_JOBS_COUNT = _env_int('MOCK_JOBS_COUNT', 10000)
+MOCK_JOBS_SEED = _env_int('MOCK_JOBS_SEED', 2026)
+MOCK_JOBS_DATA_FILE = os.getenv('MOCK_JOBS_DATA_FILE', '')
 
 # ===== LangChain / LangSmith =====
 LANGCHAIN_TRACING_V2  = os.getenv('LANGCHAIN_TRACING_V2', 'false')
@@ -98,9 +120,10 @@ INSTALLED_APPS = [
     'apps.external',
     'apps.question_bank',
     'apps.analysis',
-    # 휴면 계정 스케줄러
-    'django_apscheduler',
 ]
+
+if find_spec('django_apscheduler') is not None:
+    INSTALLED_APPS.append('django_apscheduler')
 
 MIDDLEWARE = [
     'corsheaders.middleware.CorsMiddleware',

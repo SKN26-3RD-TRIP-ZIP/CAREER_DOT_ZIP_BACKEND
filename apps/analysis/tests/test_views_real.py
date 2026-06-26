@@ -20,9 +20,14 @@ analysis 파이프라인 실제 GPT 호출 통합 테스트 (DB 없음)
   pytest apps/analysis/tests/test_views_real.py -v -s -k "전체_파이프라인"
 """
 
+import os
 import pprint
+import unittest
 from concurrent.futures import ThreadPoolExecutor
 from django.test import SimpleTestCase
+
+if os.getenv("RUN_OPENAI_INTEGRATION_TESTS") != "1":
+    raise unittest.SkipTest("OpenAI integration tests require RUN_OPENAI_INTEGRATION_TESTS=1 and OPENAI_API_KEY")
 
 from apps.analysis.services.jd_service      import extract_jd_keywords, extract_jd_requirements
 from apps.analysis.services.resume_service  import analyze_resume

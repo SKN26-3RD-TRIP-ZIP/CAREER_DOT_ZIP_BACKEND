@@ -13,7 +13,11 @@ question_rag_service 단위 테스트 (Pinecone / MySQL 모킹)
   pytest apps/analysis/tests/test_question_rag_service.py -v -s
 """
 
-import pytest
+import unittest
+try:
+    import pytest
+except ModuleNotFoundError:
+    raise unittest.SkipTest("pytest is required for this pytest-style analysis test module")
 from unittest.mock import patch, MagicMock
 from apps.analysis.services.question_rag_service import search_similar_questions
 

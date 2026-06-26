@@ -13,7 +13,11 @@ question_gen_service 프롬프트 품질 테스트 (실제 GPT 호출)
   pytest apps/analysis/tests/test_question_gen_service.py -v -s -k "count"
 """
 
-import pytest
+import unittest
+try:
+    import pytest
+except ModuleNotFoundError:
+    raise unittest.SkipTest("pytest is required for this pytest-style analysis test module")
 from apps.analysis.services.question_gen_service import (
     generate_questions,
     generate_github_questions,

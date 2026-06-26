@@ -230,6 +230,7 @@ settings.json
 # Local datasets
 data/raw/
 data/processed/
+apps/external/data/mock_jobs.generated.json
 *.zip
 *.xlsx
 *.csv

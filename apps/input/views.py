@@ -222,11 +222,16 @@ class UserSummaryView(APIView):
                         'report_id': str(latest_report.id),
                         'session_id': str(latest_report.session_id),
                         'overall_score': latest_report.overall_score,
+                        'score_status': latest_report.score_status,
+                        'evaluation_status': latest_report.evaluation_status,
+                        'is_mock': latest_report.is_mock,
                         'generated_at': latest_report.generated_at,
                     }
                     if latest_report
                     else None
                 ),
+                'point_balance': getattr(user, 'point_balance', 0),
+                'point_last_updated_at': getattr(user, 'point_last_updated_at', None),
             },
             status=status.HTTP_200_OK,
         )
