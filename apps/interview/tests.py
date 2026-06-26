@@ -20,7 +20,10 @@ from apps.interview.services.ai_chain_openai_engine import (
     AIChainOpenAIEngine,
     AIChainOpenAIError,
 )
-from apps.interview.services.follow_up_generator import check_followup_guardrail
+from apps.interview.services.follow_up_generator import (
+    check_followup_guardrail,
+    get_confirmation_followup_message,
+)
 
 from .models import InterviewAnswer, InterviewQuestion, InterviewSession
 
@@ -1222,6 +1225,19 @@ class MVPAnswerFollowupRealModeAPITests(APITestCase):
         self.assertEqual(decision['reason'], 'claim_requires_verification')
         self.assertTrue(decision['fallback_message'])
 
+    def test_confirmation_followup_message_differs_by_persona(self):
+        coach = get_confirmation_followup_message('friendly')
+        practical = get_confirmation_followup_message('practical')
+        verifier = get_confirmation_followup_message('verify')
+
+        self.assertIn('편하게 설명', coach)
+        self.assertIn('직접 구현한 내용', practical)
+        self.assertIn('본인 기여도', verifier)
+        self.assertEqual(len({coach, practical, verifier}), 3)
+        for message in (coach, practical, verifier):
+            self.assertNotIn('거짓', message)
+            self.assertNotIn('무능', message)
+
     def test_undocumented_technology_claim_creates_confirmation_followup(self):
         self.question.question_category = 'technical'
         self.question.save(update_fields=['question_category', 'updated_at'])
@@ -1252,7 +1268,8 @@ class MVPAnswerFollowupRealModeAPITests(APITestCase):
             'guardrail:document_confirmation',
         )
         self.assertIn('제출하신 문서에서는', followup.question_text)
-        self.assertIn('수행 기간과 본인 역할', followup.question_text)
+        self.assertIn('본인 기여도', followup.question_text)
+        self.assertIn('구체적 근거', followup.question_text)
         self.assertNotEqual(
             followup.question_text,
             'Which concrete decision proves that contribution?',

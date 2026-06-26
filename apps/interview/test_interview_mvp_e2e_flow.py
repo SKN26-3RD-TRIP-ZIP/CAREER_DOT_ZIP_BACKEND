@@ -56,7 +56,7 @@ class InterviewMVPE2EFlowAPITest(APITestCase):
 
         self.assertEqual(session_response.status_code, status.HTTP_201_CREATED)
         session_id = session_response.data['session_id']
-        self.assertEqual(session_response.data['persona'], 'friendly')
+        self.assertEqual(session_response.data['persona'], 'coach')
 
         status_response = self.client.patch(
             reverse(

@@ -302,6 +302,35 @@ class EvaluateAnswerSufficiencyPublicInterfaceTest(TestCase):
             "alternative_and_tradeoff_comparison",
         )
 
+    def test_sufficiency_and_followup_payloads_include_persona_policy(self):
+        expected_personas = {
+            "coach": "coach",
+            "friendly": "coach",
+            "practical": "practical",
+            "verifier": "verifier",
+            "verify": "verifier",
+        }
+
+        for stored_persona, canonical_persona in expected_personas.items():
+            self.session.persona = stored_persona
+            sufficiency_payload = build_sufficiency_payload_from_answer(self.answer)
+            followup_payload = FollowupGenerator._build_followup_payload(
+                self.answer,
+                {
+                    "tag_name": "TECH_DEPTH_LOW",
+                    "reason": "More technical detail is needed.",
+                },
+            )
+
+            for payload in (sufficiency_payload, followup_payload):
+                persona = payload["persona"]
+                self.assertEqual(persona["persona_type"], canonical_persona)
+                self.assertIn("question_focus", persona["policy"])
+                self.assertIn("followup_style", persona["policy"])
+                self.assertIn("feedback_tone", persona["policy"])
+                self.assertIn("verification_depth", persona["policy"])
+                self.assertIn("forbidden_tone", persona["policy"])
+
     def test_comprehensive_session_preserves_each_question_category(self):
         self.session.interview_type = "comprehensive"
         self.session.save(update_fields=("interview_type", "updated_at"))

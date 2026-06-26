@@ -83,7 +83,7 @@ class InterviewTurnsFrontendResponseAPITest(APITestCase):
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data['persona'], 'friendly')
-        self.assertEqual(response.data['persona_detail']['persona_type'], 'friendly')
+        self.assertEqual(response.data['persona_detail']['persona_type'], 'coach')
         self.assertEqual(response.data['persona_detail']['label'], '친절한 코치형')
 
         progress = response.data['progress']
