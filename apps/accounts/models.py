@@ -133,6 +133,8 @@ class User(AbstractBaseUser, PermissionsMixin):
     is_active = models.BooleanField(default=True)
     dormancy_warning_sent_at = models.DateTimeField(null=True, blank=True, default=None)
     withdrawn_at = models.DateTimeField(null=True, blank=True, default=None)
+    point_balance = models.IntegerField(default=0)
+    attendance_record = models.DateField(null=True, blank=True, default=None)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     
