@@ -15,7 +15,7 @@ from rest_framework import permissions, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from apps.prompt.models import PersonaConfig
+from apps.prompt.models import AdminPromptTestRun, PersonaConfig, PromptVersion
 from .models import InterviewAnswer, InterviewQuestion, InterviewSession, QuestionSourceTag
 from .mvp_serializers import (
     MVPQuestionGenerateSerializer,
@@ -225,9 +225,24 @@ class MVPQuestionGenerateView(APIView):
         if jd_analysis:
             session._jd_analysis_id = jd_analysis.id
 
+        prompt_version_id = serializer.validated_data.get('prompt_version_id')
+        if prompt_version_id:
+            AdminPromptTestRun.objects.get_or_create(
+                session=session,
+                defaults={
+                    'admin_user': request.user,
+                    'prompt_version': PromptVersion.objects.get(id=prompt_version_id),
+                },
+            )
+
         try:
-            generated = generate_interview_questions(session)
+            generated = generate_interview_questions(
+                session,
+                prompt_version_id=prompt_version_id,
+            )
         except AIChainOpenAIError as exc:
+            if prompt_version_id:
+                session.delete()
             return ai_generation_failed_response(
                 detail='질문 생성에 실패했습니다. 잠시 후 다시 시도해 주세요.',
                 code='AI_QUESTION_GENERATION_FAILED',

@@ -569,7 +569,7 @@ def _build_ai_input_sources(session):
     return input_sources
 
 
-def _build_ai_generation_payload(session, question_count):
+def _build_ai_generation_payload(session, question_count, prompt_version_id=None):
     input_sources = _build_ai_input_sources(session)
 
     return {
@@ -585,7 +585,7 @@ def _build_ai_generation_payload(session, question_count):
             'description': '',
             'policy': get_persona_policy(session.persona),
         },
-        'prompt_version_id': None,
+        'prompt_version_id': prompt_version_id,
         'user_profile': _build_user_profile(session),
         'input_sources': input_sources,
         'generation_options': {
@@ -652,12 +652,12 @@ def _build_ai_source_reference(question, source_tags):
     return f'ai_chain:{client_key}:{source_type_part}'
 
 
-def _ai_chain_questions(session, count, excluded_texts=None):
+def _ai_chain_questions(session, count, excluded_texts=None, prompt_version_id=None):
     if count <= 0:
         return []
 
     service = InterviewAIChainService()
-    payload = _build_ai_generation_payload(session, count)
+    payload = _build_ai_generation_payload(session, count, prompt_version_id)
     result = service.generate_questions(payload)
 
     return _convert_ai_questions(
@@ -725,14 +725,18 @@ def _question_bank_questions(session, count, excluded_texts=None):
     return normalized
 
 
-def generate_interview_questions(session):
+def generate_interview_questions(session, prompt_version_id=None):
     question_count = int(session.total_question_count or 3)
     input_sources = _build_ai_input_sources(session)
 
     selected = []
 
     if input_sources:
-        ai_questions = _ai_chain_questions(session, question_count)
+        ai_questions = _ai_chain_questions(
+            session,
+            question_count,
+            prompt_version_id=prompt_version_id,
+        )
         _append_unique_questions(
             selected,
             ai_questions,
@@ -770,6 +774,7 @@ def generate_interview_questions(session):
             session,
             question_count - len(selected),
             excluded_texts=_question_texts(selected),
+            prompt_version_id=prompt_version_id,
         )
         _append_unique_questions(
             selected,

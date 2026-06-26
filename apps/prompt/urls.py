@@ -1,11 +1,13 @@
 from django.urls import path
 
 from .views import (
+    AdminPromptTestRunCleanupView,
     PersonaActiveTemplateView,
     PersonaListView,
     PromptDefaultVersionView,
     PromptTemplateDeleteView,
     PromptTemplateListCreateView,
+    PromptVersionTestSetupView,
     PromptVersionListCreateView,
 )
 
@@ -36,5 +38,15 @@ urlpatterns = [
         'prompt-templates/<int:template_id>/default-version',
         PromptDefaultVersionView.as_view(),
         name='admin-prompt-default-version',
+    ),
+    path(
+        'prompt-versions/<int:version_id>/test-setup',
+        PromptVersionTestSetupView.as_view(),
+        name='admin-prompt-version-test-setup',
+    ),
+    path(
+        'prompt-test-runs/<uuid:session_id>',
+        AdminPromptTestRunCleanupView.as_view(),
+        name='admin-prompt-test-run-cleanup',
     ),
 ]

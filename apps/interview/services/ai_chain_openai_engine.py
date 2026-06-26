@@ -30,7 +30,10 @@ from apps.interview.services.ai_chain_response_parser import (
     parse_llm_json_list,
     parse_llm_json_object,
 )
-from apps.prompt.services import get_runtime_prompt_version
+from apps.prompt.services import (
+    get_runtime_prompt_version,
+    get_runtime_prompt_version_by_id,
+)
 
 
 MAIN_QUESTION_TYPE = "main"
@@ -382,6 +385,19 @@ class AIChainOpenAIEngine:
         fallback_builder: Callable[[Any], str],
     ) -> dict[str, Any]:
         persona = payload.get("persona")
+        requested_prompt_version_id = payload.get("prompt_version_id")
+        runtime_prompt = get_runtime_prompt_version_by_id(
+            requested_prompt_version_id,
+            persona_type=self._extract_persona_type(persona),
+            prompt_type=prompt_type,
+        )
+        if runtime_prompt is not None:
+            return {
+                "content": runtime_prompt.content,
+                "prompt_version_id": runtime_prompt.version_id,
+                "prompt_source": PROMPT_SOURCE_DB,
+            }
+
         runtime_prompt = get_runtime_prompt_version(
             self._extract_persona_type(persona),
             prompt_type,

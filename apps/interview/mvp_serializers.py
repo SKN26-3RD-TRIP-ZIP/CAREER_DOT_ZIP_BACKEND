@@ -9,6 +9,8 @@ from rest_framework import serializers
 
 from apps.analysis.models import AnalysisSession, JdAnalysis
 from apps.input.models import CoverLetter, JobDescription, ProjectExperience, ResumeMaster
+from apps.prompt.models import PromptVersion
+from apps.prompt.services import normalize_prompt_persona_type
 from apps.question_bank.models import QuestionBankItem
 from .models import InterviewAnswer, InterviewQuestion, InterviewSession
 
@@ -200,6 +202,7 @@ class MVPQuestionGenerateSerializer(serializers.Serializer):
         default=list,
     )
     question_count = serializers.IntegerField(required=False, default=3, min_value=1, max_value=20)
+    prompt_version_id = serializers.IntegerField(required=False, allow_null=True)
 
     def validate(self, attrs):
         session = self.context['session']
@@ -215,7 +218,47 @@ class MVPQuestionGenerateSerializer(serializers.Serializer):
         ).count()
         if owned_count != len(set(project_ids)):
             raise serializers.ValidationError({'project_ids': 'One or more projects were not found.'})
+
+        self._validate_prompt_version(attrs)
         return attrs
+
+    def _validate_prompt_version(self, attrs):
+        prompt_version_id = attrs.get('prompt_version_id')
+        if not prompt_version_id:
+            return
+
+        user = self.context['request'].user
+        if not (
+            getattr(user, 'is_staff', False)
+            or getattr(user, 'is_superuser', False)
+            or getattr(user, 'role', None) == 'admin'
+        ):
+            raise serializers.ValidationError(
+                {'prompt_version_id': 'Only admins can select a prompt version.'}
+            )
+
+        session = self.context['session']
+        version = (
+            PromptVersion.objects.filter(id=prompt_version_id)
+            .select_related('template__persona_config')
+            .first()
+        )
+        if version is None or not version.template.is_active:
+            raise serializers.ValidationError({'prompt_version_id': 'Prompt version was not found.'})
+        if version.template.prompt_type != 'question_generation':
+            raise serializers.ValidationError(
+                {'prompt_version_id': 'Prompt version must be for question generation.'}
+            )
+        expected_persona = normalize_prompt_persona_type(
+            PERSONA_OUTPUT_MAP.get(session.persona, session.persona)
+        )
+        version_persona = normalize_prompt_persona_type(
+            version.template.persona_config.persona_type
+        )
+        if version_persona != expected_persona:
+            raise serializers.ValidationError(
+                {'prompt_version_id': 'Prompt version persona does not match this session.'}
+            )
 
     @staticmethod
     def _validate_session_reference(attrs, field_name, session_value):
