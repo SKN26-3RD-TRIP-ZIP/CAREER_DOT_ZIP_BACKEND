@@ -95,6 +95,7 @@ INSTALLED_APPS = [
     'apps.document',
     'apps.prompt',
     'apps.admin_api',
+    'apps.points',
     'apps.external',
     'apps.question_bank',
     'apps.analysis',
