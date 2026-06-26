@@ -271,7 +271,13 @@ class AIChainOpenAIEngine:
 
     def generate_questions(self, payload: dict[str, Any]) -> dict[str, Any]:
         if not self.enable_real_call:
-            return self.fallback_engine.generate_questions(payload)
+            return {
+                **self.fallback_engine.generate_questions(payload),
+                "generation_source": "mock",
+                "prompt_type": "question_generation",
+                "prompt_source": "mock",
+                "prompt_version_id": payload.get("prompt_version_id"),
+            }
 
         try:
             prompt = self._resolve_system_prompt(
@@ -342,7 +348,13 @@ class AIChainOpenAIEngine:
 
     def generate_followup_question(self, payload: dict[str, Any]) -> dict[str, Any]:
         if not self.enable_real_call:
-            return self.fallback_engine.generate_followup_question(payload)
+            return {
+                **self.fallback_engine.generate_followup_question(payload),
+                "generation_source": "mock",
+                "prompt_type": "follow_up_generation",
+                "prompt_source": "mock",
+                "prompt_version_id": payload.get("prompt_version_id"),
+            }
 
         try:
             prompt = self._resolve_system_prompt(
@@ -396,6 +408,11 @@ class AIChainOpenAIEngine:
                 "content": runtime_prompt.content,
                 "prompt_version_id": runtime_prompt.version_id,
                 "prompt_source": PROMPT_SOURCE_DB,
+                "prompt_type": runtime_prompt.prompt_type or prompt_type,
+                "prompt_template_id": runtime_prompt.template_id,
+                "prompt_template_name": runtime_prompt.template_title,
+                "prompt_version_label": runtime_prompt.version_label,
+                "is_active_prompt_version": runtime_prompt.is_active_version,
             }
 
         runtime_prompt = get_runtime_prompt_version(
@@ -407,12 +424,22 @@ class AIChainOpenAIEngine:
                 "content": runtime_prompt.content,
                 "prompt_version_id": runtime_prompt.version_id,
                 "prompt_source": PROMPT_SOURCE_DB,
+                "prompt_type": runtime_prompt.prompt_type or prompt_type,
+                "prompt_template_id": runtime_prompt.template_id,
+                "prompt_template_name": runtime_prompt.template_title,
+                "prompt_version_label": runtime_prompt.version_label,
+                "is_active_prompt_version": runtime_prompt.is_active_version,
             }
 
         return {
             "content": fallback_builder(persona),
             "prompt_version_id": None,
             "prompt_source": PROMPT_SOURCE_FALLBACK,
+            "prompt_type": prompt_type,
+            "prompt_template_id": None,
+            "prompt_template_name": None,
+            "prompt_version_label": None,
+            "is_active_prompt_version": False,
         }
 
     @staticmethod
@@ -433,8 +460,14 @@ class AIChainOpenAIEngine:
     ) -> dict[str, Any]:
         return {
             **result,
+            "generation_source": "openai",
+            "prompt_type": prompt["prompt_type"],
             "prompt_version_id": prompt["prompt_version_id"],
             "prompt_source": prompt["prompt_source"],
+            "prompt_template_id": prompt["prompt_template_id"],
+            "prompt_template_name": prompt["prompt_template_name"],
+            "prompt_version_label": prompt["prompt_version_label"],
+            "is_active_prompt_version": prompt["is_active_prompt_version"],
         }
 
     def _fallback_or_raise(self, fallback: dict[str, Any] | None, message: str) -> dict[str, Any]:

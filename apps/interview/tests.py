@@ -1,4 +1,5 @@
 from datetime import timedelta
+import json
 import uuid
 from unittest.mock import patch
 
@@ -1565,6 +1566,11 @@ class MVPAnswerFollowupRealModeAPITests(APITestCase):
             followup.source_reference.split(':')[1],
             str(weakness_mapping.id)[:36],
         )
+        metadata_tag = followup.source_tags.get(source_label='generation_metadata')
+        metadata = json.loads(metadata_tag.source_text_excerpt)
+        self.assertEqual(metadata['generation_source'], 'openai')
+        self.assertEqual(metadata['prompt_type'], 'follow_up_generation')
+        self.assertEqual(metadata['persona'], 'verifier')
 
     @patch(
         'apps.interview.services.follow_up_generator.FollowupGenerator._get_ai_chain_service',

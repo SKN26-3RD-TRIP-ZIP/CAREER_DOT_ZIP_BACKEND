@@ -10,7 +10,7 @@ from apps.evaluation.models import AnswerWeaknessTag, WeaknessTag
 from apps.interview.ai_chain_contracts import (
     NextAction,
 )
-from apps.interview.models import InterviewQuestion
+from apps.interview.models import InterviewQuestion, QuestionSourceTag
 from apps.interview.services.ai_chain_service import InterviewAIChainService
 from apps.interview.services.ai_chain_persona_prompts import (
     get_persona_policy,
@@ -547,6 +547,11 @@ class FollowupGenerator:
                 answer_weakness_mapping,
                 question,
             )
+            cls._save_generation_metadata_tags(
+                question,
+                followup_result,
+                answer.session.persona,
+            )
 
         return question, True
 
@@ -572,6 +577,16 @@ class FollowupGenerator:
                 source_reference="guardrail:document_confirmation",
                 difficulty="medium",
                 order_index=last_index + 1,
+            )
+            cls._save_generation_metadata_tags(
+                question,
+                {
+                    "generation_source": "guardrail",
+                    "prompt_type": "follow_up_generation",
+                    "prompt_source": "not_used",
+                    "reason": guardrail_result.get("reason"),
+                },
+                answer.session.persona,
             )
         return question, True
 
@@ -741,6 +756,40 @@ class FollowupGenerator:
             "trigger": trigger or None,
             "purpose": technical_purposes.get(trigger, "answer_clarification"),
         }
+
+    @classmethod
+    def _save_generation_metadata_tags(cls, question, generation_result, persona):
+        metadata = {
+            "generation_source": generation_result.get("generation_source")
+            or ("openai" if cls._is_real_call_mode() else "mock"),
+            "prompt_type": generation_result.get("prompt_type")
+            or "follow_up_generation",
+            "persona": normalize_persona_type(persona),
+            "prompt_source": generation_result.get("prompt_source"),
+            "prompt_template_id": generation_result.get("prompt_template_id"),
+            "prompt_template_name": generation_result.get("prompt_template_name"),
+            "prompt_version_id": generation_result.get("prompt_version_id"),
+            "prompt_version_label": generation_result.get("prompt_version_label"),
+            "is_active_prompt_version": generation_result.get(
+                "is_active_prompt_version"
+            ),
+            "reason": generation_result.get("reason"),
+        }
+        QuestionSourceTag.objects.create(
+            question=question,
+            source_type="general",
+            source_label="generation_metadata",
+            source_text_excerpt=json.dumps(
+                {
+                    key: value
+                    for key, value in metadata.items()
+                    if value not in (None, "", [], {})
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+            ),
+            source_reference=question.source_reference or "",
+        )
 
     @staticmethod
     def _map_question_type(question_type):
