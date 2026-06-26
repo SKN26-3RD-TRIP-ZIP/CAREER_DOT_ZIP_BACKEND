@@ -21,6 +21,7 @@ from apps.interview.services.ai_chain_openai_engine import (
     AIChainOpenAIError,
 )
 from apps.interview.services.follow_up_generator import (
+    FollowupGenerator,
     check_followup_guardrail,
     get_confirmation_followup_message,
 )
@@ -1378,6 +1379,125 @@ class MVPAnswerFollowupRealModeAPITests(APITestCase):
         )
         self.assertEqual(service.sufficiency_call_count, 0)
         self.assertEqual(service.followup_call_count, 0)
+
+    def test_followup_answer_does_not_create_second_followup_for_same_main_question(self):
+        existing = InterviewQuestion.objects.create(
+            session=self.session,
+            order_index=2,
+            question_type='follow_up',
+            question_text='Existing follow-up question.',
+            source_type='general',
+            source_reference='ai_chain:existing',
+            parent_question=self.question,
+            source_answer=self.answer,
+        )
+        followup_answer = InterviewAnswer.objects.create(
+            session=self.session,
+            question=existing,
+            answer_text='Additional answer to the follow-up.',
+        )
+        service = FakeFollowupAIChainService()
+
+        with patch(
+            'apps.interview.services.follow_up_generator.FollowupGenerator._get_ai_chain_service',
+            return_value=service,
+        ) as mock_get_service:
+            response = self.client.post(
+                reverse(
+                    'mvp-answer-followup-create',
+                    kwargs={'answer_id': followup_answer.id},
+                ),
+                {},
+                format='json',
+            )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['next_action'], 'NEXT_QUESTION')
+        self.assertIsNone(response.data['followup_question'])
+        self.assertEqual(mock_get_service.call_count, 0)
+        self.assertEqual(service.sufficiency_call_count, 0)
+        self.assertEqual(service.followup_call_count, 0)
+        self.assertEqual(
+            InterviewQuestion.objects.filter(
+                session=self.session,
+                question_type='follow_up',
+            ).count(),
+            1,
+        )
+        self.assertFalse(
+            AnswerWeaknessTag.objects.filter(answer=followup_answer).exists()
+        )
+
+    def test_session_followup_limit_blocks_before_llm_and_side_effects(self):
+        for index in range(2, 4):
+            main_question = InterviewQuestion.objects.create(
+                session=self.session,
+                order_index=index,
+                question_type='main',
+                question_text=f'Main question {index}.',
+                source_type='jd',
+            )
+            InterviewQuestion.objects.create(
+                session=self.session,
+                order_index=index + 10,
+                question_type='follow_up',
+                question_text=f'Existing session follow-up {index}.',
+                source_type='general',
+                parent_question=main_question,
+            )
+        service = FakeFollowupAIChainService()
+
+        with patch(
+            'apps.interview.services.follow_up_generator.FollowupGenerator._get_ai_chain_service',
+            return_value=service,
+        ) as mock_get_service:
+            response = self.client.post(self.followup_url(), {}, format='json')
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['next_action'], 'NEXT_QUESTION')
+        self.assertIsNone(response.data['followup_question'])
+        self.assertEqual(mock_get_service.call_count, 0)
+        self.assertEqual(service.sufficiency_call_count, 0)
+        self.assertEqual(service.followup_call_count, 0)
+        self.assertEqual(
+            InterviewQuestion.objects.filter(
+                session=self.session,
+                question_type='follow_up',
+            ).count(),
+            2,
+        )
+        self.assertFalse(
+            AnswerWeaknessTag.objects.filter(answer=self.answer).exists()
+        )
+
+    def test_session_question_hard_limit_blocks_before_llm_and_side_effects(self):
+        service = FakeFollowupAIChainService()
+
+        with patch.object(
+            FollowupGenerator,
+            '_get_session_question_hard_limit',
+            return_value=InterviewQuestion.objects.filter(session=self.session).count(),
+        ), patch(
+            'apps.interview.services.follow_up_generator.FollowupGenerator._get_ai_chain_service',
+            return_value=service,
+        ) as mock_get_service:
+            response = self.client.post(self.followup_url(), {}, format='json')
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['next_action'], 'NEXT_QUESTION')
+        self.assertIsNone(response.data['followup_question'])
+        self.assertEqual(mock_get_service.call_count, 0)
+        self.assertEqual(service.sufficiency_call_count, 0)
+        self.assertEqual(service.followup_call_count, 0)
+        self.assertFalse(
+            InterviewQuestion.objects.filter(
+                session=self.session,
+                question_type='follow_up',
+            ).exists()
+        )
+        self.assertFalse(
+            AnswerWeaknessTag.objects.filter(answer=self.answer).exists()
+        )
 
     def test_short_answer_calls_sufficiency_and_followup_generation_once(self):
         service = FakeFollowupAIChainService()

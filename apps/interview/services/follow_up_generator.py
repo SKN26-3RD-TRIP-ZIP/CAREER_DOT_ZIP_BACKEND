@@ -191,6 +191,9 @@ EXPERIENCE_CLAIM_MARKERS = (
     "재직했습니다",
 )
 
+MAX_FOLLOWUPS_PER_MAIN_QUESTION = 1
+MAX_FOLLOWUPS_PER_SESSION = 2
+
 CONFIRMATION_FOLLOWUP_MESSAGE = (
     "제출하신 문서에서는 해당 경험이 확인되지 않아요. "
     "이 경험이 실제 본인 프로젝트라면 수행 기간과 본인 역할을 간단히 설명해 주세요."
@@ -446,11 +449,12 @@ class FollowupGenerator:
 
     @classmethod
     def create_followup(cls, answer):
+        main_question = cls._get_main_question(answer.question)
+        existing_filter = Q(source_answer=answer)
+        if answer.question.question_type == "main":
+            existing_filter |= Q(parent_question=main_question)
         existing = (
-            InterviewQuestion.objects.filter(
-                Q(source_answer=answer) | Q(parent_question=answer.question),
-                question_type="follow_up",
-            )
+            InterviewQuestion.objects.filter(existing_filter, question_type="follow_up")
             .order_by("order_index")
             .first()
         )
@@ -458,6 +462,11 @@ class FollowupGenerator:
             return existing, False
 
         if cls._has_cached_no_followup_decision(answer):
+            return None, False
+
+        limit_decision = cls._check_followup_limit(answer)
+        if not limit_decision["can_generate_followup"]:
+            cls._cache_no_followup_decision(answer, limit_decision)
             return None, False
 
         ai_chain_service = cls._get_ai_chain_service()
@@ -573,6 +582,83 @@ class FollowupGenerator:
         # InterviewAIChainService.evaluate_answer_sufficiency(answer). Keep
         # this method until all private-method consumers are migrated.
         return build_sufficiency_payload_from_answer(answer)
+
+    @classmethod
+    def _check_followup_limit(cls, answer):
+        session = answer.session
+        main_question = cls._get_main_question(answer.question)
+        max_per_main = cls._get_max_followups_per_main_question(session)
+        max_per_session = cls._get_max_followups_per_session(session)
+
+        main_followup_count = InterviewQuestion.objects.filter(
+            session=session,
+            parent_question=main_question,
+            question_type="follow_up",
+        ).count()
+        if main_followup_count >= max_per_main:
+            return cls._limit_decision("max_followups_per_main_question_reached")
+
+        session_followup_count = InterviewQuestion.objects.filter(
+            session=session,
+            question_type="follow_up",
+        ).count()
+        if session_followup_count >= max_per_session:
+            return cls._limit_decision("max_followups_per_session_reached")
+
+        hard_limit = cls._get_session_question_hard_limit(session)
+        session_question_count = InterviewQuestion.objects.filter(
+            session=session,
+        ).count()
+        if session_question_count >= hard_limit:
+            return cls._limit_decision("session_question_hard_limit_reached")
+
+        return {
+            "can_generate_followup": True,
+            "action": NextAction.GENERATE_FOLLOWUP.value,
+            "reason": "allowed",
+            "fallback_message": None,
+        }
+
+    @staticmethod
+    def _get_main_question(question):
+        current = question
+        visited = set()
+        while (
+            current is not None
+            and current.question_type == "follow_up"
+            and current.parent_question_id
+            and current.id not in visited
+        ):
+            visited.add(current.id)
+            current = current.parent_question
+        return current or question
+
+    @staticmethod
+    def _get_max_followups_per_main_question(_session):
+        return MAX_FOLLOWUPS_PER_MAIN_QUESTION
+
+    @staticmethod
+    def _get_max_followups_per_session(_session):
+        return MAX_FOLLOWUPS_PER_SESSION
+
+    @classmethod
+    def _get_session_question_hard_limit(cls, session):
+        main_question_count = InterviewQuestion.objects.filter(
+            session=session,
+            question_type="main",
+        ).count()
+        if main_question_count <= 0:
+            main_question_count = int(session.total_question_count or 0)
+        return main_question_count + cls._get_max_followups_per_session(session)
+
+    @staticmethod
+    def _limit_decision(reason):
+        return {
+            "can_generate_followup": False,
+            "action": NextAction.NEXT_QUESTION.value,
+            "reason": reason,
+            "fallback_message": "꼬리질문 제한에 도달해 다음 질문으로 진행합니다.",
+        }
 
     @classmethod
     def _build_followup_payload(cls, answer, selected_weakness_tag):
