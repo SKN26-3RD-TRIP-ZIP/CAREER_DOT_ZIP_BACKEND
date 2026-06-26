@@ -92,6 +92,10 @@ class AIChainMockEngine:
         response: dict[str, Any] = {
             "session_id": session_id,
             "questions": questions,
+            "generation_source": "mock",
+            "prompt_type": "question_generation",
+            "prompt_source": "mock",
+            "prompt_version_id": payload.get("prompt_version_id"),
         }
 
         if fallback_used:
@@ -166,6 +170,10 @@ class AIChainMockEngine:
                 "order_index": order_index,
                 "generation_reason": f"{tag_name} 트리거 태그를 기준으로 생성됨",
             },
+            "generation_source": "mock",
+            "prompt_type": "follow_up_generation",
+            "prompt_source": "mock",
+            "prompt_version_id": payload.get("prompt_version_id"),
         }
 
     def generate_followup_mock(self, payload: dict[str, Any]) -> dict[str, Any]:

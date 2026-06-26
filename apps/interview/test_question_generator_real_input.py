@@ -1,3 +1,5 @@
+import json
+
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
@@ -288,6 +290,52 @@ class InterviewQuestionGeneratorRealInputTest(TestCase):
             self.prepared_question.question_text,
         )
 
+    def test_ai_question_prompt_metadata_is_added_to_source_tags(self):
+        ai_result = {
+            'session_id': str(self.session.id),
+            'generation_source': 'openai',
+            'prompt_type': 'question_generation',
+            'prompt_source': 'db',
+            'prompt_template_id': 12,
+            'prompt_template_name': 'Practical question prompt',
+            'prompt_version_id': 34,
+            'prompt_version_label': 'v3',
+            'is_active_prompt_version': True,
+            'questions': [
+                {
+                    'client_question_key': 'q_001',
+                    'question_text': 'DB prompt metadata question.',
+                    'question_type': 'main',
+                    'question_category': 'technical',
+                    'order_index': 1,
+                    'source_tags': [{'source_type': 'general'}],
+                }
+            ],
+        }
+
+        with patch('apps.interview.services.question_generator.InterviewAIChainService') as service_class, \
+                patch('apps.interview.services.question_generator.select_questions_for_session') as selector:
+            service = service_class.return_value
+            service.generate_questions.return_value = ai_result
+            selector.return_value = []
+
+            questions = generate_interview_questions(self.session)
+
+        metadata_tag = next(
+            tag for tag in questions[0]['source_tags']
+            if tag['source_label'] == 'generation_metadata'
+        )
+        metadata = json.loads(metadata_tag['source_text_excerpt'])
+        self.assertEqual(metadata['generation_source'], 'openai')
+        self.assertEqual(metadata['prompt_type'], 'question_generation')
+        self.assertEqual(metadata['prompt_source'], 'db')
+        self.assertEqual(metadata['prompt_template_id'], 12)
+        self.assertEqual(metadata['prompt_template_name'], 'Practical question prompt')
+        self.assertEqual(metadata['prompt_version_id'], 34)
+        self.assertEqual(metadata['prompt_version_label'], 'v3')
+        self.assertTrue(metadata['is_active_prompt_version'])
+        self.assertEqual(metadata['persona'], 'practical')
+
     def test_question_bank_is_used_after_ai_and_prepared_questions(self):
         self.session.total_question_count = 4
         self.session.save(update_fields=['total_question_count'])
@@ -333,6 +381,19 @@ class InterviewQuestionGeneratorRealInputTest(TestCase):
         self.assertEqual(questions[1]['source_type'], 'combined')
         self.assertEqual(questions[2]['source_type'], 'question_bank')
         self.assertEqual(questions[3]['source_type'], 'rule')
+        generation_sources = []
+        for question in questions:
+            metadata_tag = next(
+                tag for tag in question['source_tags']
+                if tag['source_label'] == 'generation_metadata'
+            )
+            generation_sources.append(
+                json.loads(metadata_tag['source_text_excerpt'])['generation_source']
+            )
+        self.assertEqual(
+            generation_sources,
+            ['unknown_ai', 'prepared_question', 'question_bank', 'rule_fallback'],
+        )
         selector.assert_called_once_with(self.session, 2)
 
 
