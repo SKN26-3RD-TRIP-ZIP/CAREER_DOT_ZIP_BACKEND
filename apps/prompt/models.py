@@ -93,3 +93,29 @@ class PromptVersion(models.Model):
 
     def __str__(self):
         return f'{self.template.title} v{self.version_number}'
+
+
+class AdminPromptTestRun(models.Model):
+    admin_user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='admin_prompt_test_runs',
+    )
+    prompt_version = models.ForeignKey(
+        PromptVersion,
+        on_delete=models.CASCADE,
+        related_name='admin_test_runs',
+    )
+    session = models.OneToOneField(
+        'interview.InterviewSession',
+        on_delete=models.CASCADE,
+        related_name='admin_prompt_test_run',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'admin_prompt_test_runs'
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f'admin-test session={self.session_id} prompt_version={self.prompt_version_id}'

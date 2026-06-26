@@ -106,6 +106,8 @@ DEPENDENCY_FILENAMES = {
     "pom.xml", "build.gradle", "build.gradle.kts",
 }
 
+README_FILENAMES = {"readme.md", "readme.rst", "readme.txt", "readme"}
+
 
 def _path_parts(path: str) -> list[str]:
     return [part for part in str(path or "").replace("\\", "/").lower().split("/") if part]
@@ -129,6 +131,13 @@ def is_dependency_file(path: str) -> bool:
         return True
     # requirements-dev.txt, requirements/base.txt 등 변형 허용
     return _is_requirements_file(path)
+
+
+def is_readme_file(path: str) -> bool:
+    """루트 레벨 README 파일인지 판별. 하위 디렉터리의 README는 제외."""
+    if "/" in path:
+        return False
+    return os.path.basename(path).lower() in README_FILENAMES
 
 
 # ══════════════════════════════════════════════════════════════
@@ -437,7 +446,15 @@ def fetch_manifests(owner: str, repo: str) -> dict:
         if content:
             files[path] = content
 
-    return {"default_branch": branch, "languages": languages, "files": files}
+    # 루트 README 수집 (프로젝트 도메인/목적 파악용)
+    readme_content = ""
+    for t in tree.get("tree", []):
+        if t.get("type") == "blob" and is_readme_file(t["path"]):
+            raw = fetch_file(owner, repo, t["path"])
+            readme_content = preprocess_readme(raw) if raw else ""
+            break
+
+    return {"default_branch": branch, "languages": languages, "files": files, "readme": readme_content}
 
 
 def analyze_repo(url: str) -> dict:
@@ -487,8 +504,75 @@ def analyze_repo(url: str) -> dict:
         frameworks=deps["frameworks"], raw_packages=deps["raw_packages"],
         evidence=deps["evidence"], languages=data["languages"],
         default_branch=data["default_branch"],
+        readme=data.get("readme", ""),
     )
     return result
+
+
+# ══════════════════════════════════════════════════════════════
+# README 전처리 — 노이즈 제거 후 도메인 설명 텍스트만 남긴다
+# ══════════════════════════════════════════════════════════════
+
+# 설치·기여·라이선스 등 도메인 설명과 무관한 섹션 제목 패턴
+_SKIP_SECTIONS = re.compile(
+    r"^#{1,3}\s*(install|setup|getting started|usage|how to run|quickstart|"
+    r"contributing|contributors|license|changelog|faq|troubleshooting|"
+    r"contact|acknowledgement|credit|설치|시작|사용법|기여|라이선스|변경이력)",
+    re.IGNORECASE,
+)
+
+
+def preprocess_readme(raw: str, max_chars: int = 1000) -> str:
+    """
+    README 원문에서 노이즈를 제거하고 프로젝트 도메인/목적 설명 텍스트만 남긴다.
+    (순수 함수, 네트워크 없음)
+
+    제거 대상:
+      - 뱃지: [![...](...)](#)
+      - 이미지: ![...](...)
+      - 코드블록: ```...```
+      - 인라인 코드: `...`
+      - HTML 태그
+      - 설치·라이선스 등 무관 섹션 전체
+    """
+    lines = raw.splitlines()
+    result: list[str] = []
+    skip_section = False
+    in_code_block = False
+
+    for line in lines:
+        # 코드블록 토글
+        if line.strip().startswith("```"):
+            in_code_block = not in_code_block
+            continue
+        if in_code_block:
+            continue
+
+        # 섹션 제목 감지
+        if re.match(r"^#{1,3}\s+", line):
+            skip_section = bool(_SKIP_SECTIONS.match(line))
+            if not skip_section:
+                result.append(re.sub(r"^#{1,3}\s+", "", line).strip())
+            continue
+
+        if skip_section:
+            continue
+
+        # 노이즈 제거
+        line = re.sub(r"!\[.*?\]\(.*?\)", "", line)          # 이미지
+        line = re.sub(r"\[!\[.*?\]\(.*?\)\]\(.*?\)", "", line)  # 뱃지
+        line = re.sub(r"<[^>]+>", "", line)                   # HTML 태그
+        line = re.sub(r"`[^`]+`", "", line)                   # 인라인 코드
+        line = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", line)  # 링크 → 텍스트만
+        line = line.strip()
+
+        if line:
+            result.append(line)
+
+    cleaned = "\n".join(result).strip()
+    # 연속 빈줄 정리
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+    return cleaned[:max_chars]
 
 
 # ══════════════════════════════════════════════════════════════
@@ -519,6 +603,7 @@ def pick_key_files(tree: list[str], limit: int = 4) -> list[str]:
 def fetch_code_snippets(url: str, limit: int = 4, max_chars: int = 1500) -> dict:
     """
     repo의 핵심 소스 파일 일부를 {경로: 내용(앞부분)}으로 반환한다.
+    루트 README도 함께 포함한다 (키: "__readme__").
     ★ 예외 안전 — 어떤 실패든 빈 dict 반환 (질문 생성을 막지 않는다).
     """
     try:
@@ -528,9 +613,20 @@ def fetch_code_snippets(url: str, limit: int = 4, max_chars: int = 1500) -> dict
         tree = _check(
             _get(f"{base}/git/trees/{branch}", params={"recursive": "1"})
         ).json()
-        paths = [t["path"] for t in tree.get("tree", []) if t.get("type") == "blob"]
+        blobs = [t for t in tree.get("tree", []) if t.get("type") == "blob"]
+        paths = [t["path"] for t in blobs]
 
         snippets = {}
+
+        # 루트 README 수집
+        for t in blobs:
+            if is_readme_file(t["path"]):
+                raw = fetch_file(owner, repo, t["path"])
+                processed = preprocess_readme(raw) if raw else ""
+                if processed:
+                    snippets["__readme__"] = processed
+                break
+
         for path in pick_key_files(paths, limit):
             content = fetch_file(owner, repo, path)
             if content:

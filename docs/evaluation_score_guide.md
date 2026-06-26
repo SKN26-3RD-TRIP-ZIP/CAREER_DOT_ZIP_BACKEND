@@ -37,7 +37,7 @@ STAR(Situation-Task-Action-Result) 프레임워크 기반 답변 구조 평가.
 | `result` | 결과 수치화·마무리 완결성 |
 | `total` | 4개 요소 합산 (각 최대 25점, 합계 최대 100점 이론치) |
 
-> `total`은 `final_tech_score` 산출 시 가중치 적용 전 원점수로 사용된다.
+> `total`은 `answer_score` 산출 시 가중치 적용 전 원점수로 사용된다.
 
 ---
 
@@ -119,35 +119,55 @@ DB/README 레퍼런스와의 의미 유사도 (0.0~1.0 범위 float).
 
 | 필드 | 설명 |
 |---|---|
-| `sbert_db_similarity` | 직무 레퍼런스 DB와의 의미 유사도 |
-| `sbert_readme_similarity` | 프로젝트 README 레퍼런스와의 의미 유사도 |
+| `sbert_db_similarity` | 직무 레퍼런스 DB(JD 요건)와의 의미 유사도 |
+| `sbert_readme_similarity` | `expected_technical_keywords` 발췌와의 의미 유사도 |
 
-> null이면 SBERT 평가가 적용되지 않은 상태. 현재 MVP에서는 고도화 예정 축.
+**combined 점수 및 하이브리드 반영 (기술 질문 한정):**
+
+```
+sbert_combined = (db_sim × 0.6 + readme_sim × 0.4) × 100   # 0~100
+# SBERT 모델 사용 가능 & combined > 0 이면 answer_score를 아래로 덮어씀:
+answer_score   = round(sbert_combined × 0.70 + answer_score × 0.30)
+```
+
+> 기술 질문 + SBERT 사용 가능 시, 최종 `answer_score`의 **70%가 SBERT 유사도**, 30%만
+> 기존 가중합(7절)이다. SBERT 모델 미사용/레퍼런스 부재(combined=0)면 7절 결과가 그대로 최종값.
 
 ---
 
-## 6. LLM Concept Score
+## 6. Grounding Score (근거 충족) — 단일 정의(SSOT)
 
-LLM이 평가한 개념 이해도 점수 (0~10 정수).
+LLM은 `is_grounded`(boolean)만 반환한다. 숫자 점수가 필요한 모든 곳은 반드시
+`grounding_to_score()`(`apps/evaluation/services/evaluation_services.py`)를 통해 환산한다.
 
-> 현재 `score_detail.technical_depth.is_grounded`로 활용되며, `final_tech_score` 산출 시 grounding_premium으로 반영.
+```
+답변 단위:  is_grounded == true → 100.0 / false → 0.0
+리포트 레벨: metrics.grounding_score = applicable 답변들의 위 값 평균 (= 근거 충족률 %)
+A/B 기록:    동일하게 grounding_to_score()로 환산 (인라인 0/100 금지)
+```
+
+> 의미는 항상 "근거 충족률(%)" 하나로 통일한다. 프론트 라벨도 "근거 충족률 %"로 표기.
+> `grounding_applicable=false`(개념·원리·비교 질문)인 답변은 리포트 집계에서 제외한다.
 
 ---
 
-## 7. final_tech_score (최종 종합 점수)
+## 7. answer_score (답변 단위 종합 점수)
 
-**기술 면접 (interview_type = "technical"):**
+> 과거명 `final_tech_score`. 비기술 답변 점수까지 담으면서 의미가 어긋나 `answer_score`로
+> 변경(2026-06). 세션 전체 평균인 리포트의 `overall_score`와는 다른 레벨이다.
+
+**기술 면접 (question_category = "technical"):**
 
 ```
 raw = (bei_total × 0.4) + (cbi_score × 0.4) + (speech_score × 0.2) + grounding_premium
-final_tech_score = min(raw, 100)
+answer_score = min(raw, 100)   # 이후 SBERT 하이브리드(5절)로 덮어쓸 수 있음
 ```
 
 **인성/기타 면접:**
 
 ```
 raw = (bei_total × 0.5) + (cbi_score × 0.3) + (speech_score × 0.2)
-final_tech_score = min(raw, 100)
+answer_score = min(raw, 100)
 ```
 
 | 항목 | 기술면접 가중치 | 인성면접 가중치 |
@@ -156,6 +176,7 @@ final_tech_score = min(raw, 100)
 | CBI (역량 점수) | 40% | 30% |
 | Speech Delivery | 20% | 20% |
 | Grounding Premium | +15점 (조건부) | 없음 |
+| SBERT 하이브리드 | 70% 덮어쓰기 (조건부) | 없음 |
 
 **Grounding Premium 조건:**
 

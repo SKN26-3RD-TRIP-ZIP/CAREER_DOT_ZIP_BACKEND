@@ -117,6 +117,7 @@ INSTALLED_APPS = [
     'apps.document',
     'apps.prompt',
     'apps.admin_api',
+    'apps.points',
     'apps.external',
     'apps.question_bank',
     'apps.analysis',
@@ -128,6 +129,7 @@ if find_spec('django_apscheduler') is not None:
 MIDDLEWARE = [
     'corsheaders.middleware.CorsMiddleware',
     'django.middleware.security.SecurityMiddleware',
+    'whitenoise.middleware.WhiteNoiseMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
@@ -225,9 +227,21 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/4.2/howto/static-files/
 
 STATIC_URL = 'static/'
+STATIC_ROOT = BASE_DIR / 'staticfiles'
 
-MEDIA_URL = '/media/'
-MEDIA_ROOT = BASE_DIR / 'media'
+# ===== S3 / 미디어 스토리지 =====
+AWS_S3_BUCKET = os.getenv('AWS_S3_BUCKET_NAME', '')
+
+if AWS_S3_BUCKET:
+    DEFAULT_FILE_STORAGE = 'storages.backends.s3boto3.S3Boto3Storage'
+    AWS_STORAGE_BUCKET_NAME = AWS_S3_BUCKET
+    AWS_S3_REGION_NAME = os.getenv('AWS_S3_REGION_NAME', 'ap-northeast-2')
+    AWS_DEFAULT_ACL = None
+    AWS_S3_FILE_OVERWRITE = False
+    MEDIA_URL = f'https://{AWS_S3_BUCKET}.s3.amazonaws.com/'
+else:
+    MEDIA_URL = '/media/'
+    MEDIA_ROOT = BASE_DIR / 'media'
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/4.2/ref/settings/#default-auto-field

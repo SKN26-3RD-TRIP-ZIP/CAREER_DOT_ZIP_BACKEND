@@ -13,6 +13,7 @@ from .serializers import (
     AnswerStrengthTagSerializer,
 )
 from .services.session_evaluation import create_evaluation_for_answer
+from .evaluation_chains import EvaluationFormatError
 
 
 class EvaluationAnswerMixin:
@@ -33,17 +34,30 @@ class EvaluationCreateView(EvaluationAnswerMixin, APIView):
     answer = serializer.validated_data['answer_id']
     request_sufficiency = request.data.get('answer_sufficiency')
 
-    evaluation = create_evaluation_for_answer(
-        answer,
-        request_sufficiency=request_sufficiency,
-    )
+    try:
+      evaluation = create_evaluation_for_answer(
+          answer,
+          request_sufficiency=request_sufficiency,
+      )
+    except EvaluationFormatError:
+      # LLM 응답 포맷이 재시도까지 소진하고도 깨진 경우. 500 대신 의미 있는
+      # 재시도 가능 응답(503)으로 매핑한다(세션 백필 경로의 답변 단위 격리와 일관).
+      return Response(
+          {
+              'detail': 'AI 평가 응답 형식 오류로 평가에 실패했습니다. 잠시 후 다시 시도해 주세요.',
+              'code': 'AI_EVALUATION_FORMAT_ERROR',
+              'error_code': 'AI_EVALUATION_FORMAT_ERROR',
+              'retryable': True,
+          },
+          status=status.HTTP_503_SERVICE_UNAVAILABLE,
+      )
 
     return Response(
         {
             'evaluation_id': str(evaluation.id),
             'answer_id': str(evaluation.answer.id),
             'evaluated_at': evaluation.evaluated_at,
-            'final_tech_score': evaluation.final_tech_score,
+            'answer_score': evaluation.answer_score,
         },
         status=status.HTTP_201_CREATED,
     )
@@ -57,9 +71,10 @@ class EvaluationDetailView(EvaluationAnswerMixin, APIView):
     if not answer:
       return Response({'detail': 'Answer not found or access denied.'}, status=status.HTTP_404_NOT_FOUND)
 
-    try:
-      evaluation = answer.evaluation
-    except Evaluation.DoesNotExist:
+    # OneToOneField 역참조 실패는 RelatedObjectDoesNotExist(DoesNotExist 서브클래스)를 발생시키므로
+    # hasattr/filter 방식으로 명시적으로 처리한다.
+    evaluation = Evaluation.objects.filter(answer=answer).first()
+    if evaluation is None:
       return Response({'detail': 'Evaluation not found.'}, status=status.HTTP_404_NOT_FOUND)
 
     serializer = EvaluationSerializer(evaluation)

@@ -20,6 +20,9 @@ def _should_start_scheduler():
     argv0 = os.path.basename(sys.argv[0] or "")
     command = sys.argv[1] if len(sys.argv) > 1 else ""
 
+    if "pytest" in argv0 or any("pytest" in arg for arg in sys.argv):
+        return False
+
     # Management commands initialize apps before scheduler tables may exist.
     if argv0 in {"manage.py", "django-admin", "django-admin.py"}:
         return command == "runserver" and os.environ.get("RUN_MAIN") == "true"
@@ -36,7 +39,7 @@ def _start_scheduler():
     from apscheduler.triggers.cron import CronTrigger
     from django_apscheduler.jobstores import DjangoJobStore
 
-    from .tasks import check_dormant_accounts
+    from .tasks import check_dormant_accounts, cleanup_withdrawn_accounts
 
     scheduler = BackgroundScheduler(timezone="Asia/Seoul")
     scheduler.add_jobstore(DjangoJobStore(), "default")
@@ -45,6 +48,15 @@ def _start_scheduler():
         trigger=CronTrigger(hour=0, minute=0),
         id="check_dormant_accounts",
         name="Dormant account check and transition (daily 00:00)",
+        jobstore="default",
+        replace_existing=True,
+        misfire_grace_time=3600,
+    )
+    scheduler.add_job(
+        cleanup_withdrawn_accounts,
+        trigger=CronTrigger(hour=0, minute=30),
+        id="cleanup_withdrawn_accounts",
+        name="Withdrawn account PII anonymization (daily 00:30)",
         jobstore="default",
         replace_existing=True,
         misfire_grace_time=3600,

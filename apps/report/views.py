@@ -1,5 +1,6 @@
 import logging
 
+from django.conf import settings
 from django.http import HttpResponse
 from django.shortcuts import get_object_or_404
 from rest_framework import permissions, status
@@ -9,8 +10,7 @@ from django.db import transaction
 
 from apps.interview.models import InterviewSession
 from apps.evaluation.models import AnswerWeaknessTag
-from .models import FinalReport
-from .models import ActionPlan
+from .models import ActionPlan, FinalReport, ReportShareToken
 from .serializers import (
     ActionPlanCreateSerializer,
     ActionPlanPatchSerializer,
@@ -18,13 +18,16 @@ from .serializers import (
     FinalReportSerializer,
     FinalReportListSerializer,
     FinalReportSessionSerializer,
+    RoadmapResponseSerializer,
+    build_shared_summary,
 )
-from .services.report_generator import generate_final_report
+from .services.report_jobs import ensure_report_generation
 from .services.recommendation_service import (
     get_recommended_questions_for_tags,
     get_session_weakness_recommended_questions,
 )
 from .services.pdf_generator import generate_report_pdf
+from .services.roadmap_service import get_or_create_roadmap
 
 logger = logging.getLogger("feedback_ai.report_views")
 
@@ -73,41 +76,28 @@ def _check_evaluation_failure(report):
     return metadata.get("answer_count", 0) > 0 and metadata.get("evaluated_answer_count", 0) == 0
 
 
-def _create_report(session):
-    # LLM 평가/리포트 요약 생성은 외부 API 호출을 포함할 수 있으므로 DB 락 밖에서 수행한다.
-    # 저장 직전에만 짧게 세션 row lock을 잡아 중복 FinalReport 생성을 방지한다.
-    existing = FinalReport.objects.filter(session=session).first()
-    if existing:
-        return existing
-
-    summary = generate_final_report(session)
-    if is_failed_report_summary(summary):
-        raise ReportGenerationFailed()
-
-    with transaction.atomic():
-        InterviewSession.objects.select_for_update().get(pk=session.pk)
-        report = FinalReport.objects.filter(session=session).first()
-        if report:
-            return report
-        return FinalReport.objects.create(session=session, summary=summary)
-
-
 def _build_session_report_response(session):
+    """폴링 계약: done → 200, processing → 202, failed → 503(retryable).
+
+    무거운 생성은 ensure_report_generation 이 백그라운드 스레드에서 수행한다
+    (DB 락/커넥션 장기 점유 없음). 프론트는 done/failed 가 될 때까지 폴링한다.
+    """
     report = _get_existing_report(session)
-    if report and _check_evaluation_failure(report):
-        report.delete()
-        report = None
+    if report and report.status == FinalReport.STATUS_DONE:
+        return Response(FinalReportSessionSerializer(report).data, status=status.HTTP_200_OK)
 
-    if not report:
-        try:
-            report = _create_report(session)
-        except ReportGenerationFailed:
-            return report_generation_failed_response()
-        except Exception:
-            return report_generation_failed_response()
+    try:
+        report, _started = ensure_report_generation(session)
+    except Exception:
+        logger.exception("리포트 생성 트리거 실패 (session=%s)", getattr(session, "id", "?"))
+        return report_generation_failed_response()
 
-    serializer = FinalReportSessionSerializer(report)
-    return Response(serializer.data, status=status.HTTP_200_OK)
+    if report.status == FinalReport.STATUS_DONE:
+        return Response(FinalReportSessionSerializer(report).data, status=status.HTTP_200_OK)
+    if report.status == FinalReport.STATUS_FAILED:
+        return report_generation_failed_response()
+    # processing/pending → 폴링 안내 (202 Accepted)
+    return Response(FinalReportSessionSerializer(report).data, status=status.HTTP_202_ACCEPTED)
 
 
 class FinalReportGenerateView(APIView):
@@ -124,45 +114,28 @@ class FinalReportGenerateView(APIView):
         if not session:
             return Response({"detail": "Session not found."}, status=status.HTTP_404_NOT_FOUND)
 
-        force = request.data.get("force_regenerate", False)
-        try:
-            report = session.final_report
-        except FinalReport.DoesNotExist:
-            report = None
+        force = bool(request.data.get("force_regenerate", False))
 
-        if report and is_failed_report_summary(report.summary):
-            report.delete()
-            report = None
-
-        if report and not force:
-            serializer = FinalReportSerializer(report)
-            return Response(serializer.data, status=status.HTTP_200_OK)
+        report = _get_existing_report(session)
+        if report and report.status == FinalReport.STATUS_DONE and not force:
+            return Response(FinalReportSerializer(report).data, status=status.HTTP_200_OK)
 
         try:
-            # LLM 호출/백필은 락 밖에서 수행하고, 저장 구간만 잠근다.
-            summary = generate_final_report(session)
-            if is_failed_report_summary(summary):
-                raise ReportGenerationFailed()
-
-            with transaction.atomic():
-                InterviewSession.objects.select_for_update().get(pk=session.pk)
-                report = FinalReport.objects.filter(session=session).first()
-                is_new = report is None
-                if report:
-                    report.summary = summary
-                    report.save(update_fields=["summary"])
-                else:
-                    report = FinalReport.objects.create(session=session, summary=summary)
-        except ReportGenerationFailed:
-            return report_generation_failed_response()
+            # 상태 선점만 락 안에서 짧게 수행하고, 무거운 LLM 생성은 백그라운드로 위임한다.
+            report, started = ensure_report_generation(session, force=force)
         except Exception:
+            logger.exception("리포트 생성 트리거 실패 (session=%s)", session_id)
             return report_generation_failed_response()
 
-        serializer = FinalReportSerializer(report)
-        return Response(
-            serializer.data,
-            status=status.HTTP_201_CREATED if is_new else status.HTTP_200_OK,
-        )
+        if report.status == FinalReport.STATUS_DONE:
+            return Response(
+                FinalReportSerializer(report).data,
+                status=status.HTTP_201_CREATED if started else status.HTTP_200_OK,
+            )
+        if report.status == FinalReport.STATUS_FAILED:
+            return report_generation_failed_response()
+        # processing/pending → 클라이언트는 GET 으로 폴링 (202 Accepted)
+        return Response(FinalReportSerializer(report).data, status=status.HTTP_202_ACCEPTED)
 
 
 class FinalReportDetailView(APIView):
@@ -295,7 +268,6 @@ class SessionFinalReportView(APIView):
         return _build_session_report_response(session)
 
 
-# E7.9 -- 약점 태그 기반 추천 질문
 class WeaknessRecommendedQuestionsView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
@@ -348,7 +320,6 @@ class TagRecommendedQuestionsView(APIView):
         )
 
 
-# E7.9+ -- 면접관 피드백 (페르소나 피드백 + 동적 태그 + 추천 질문 통합)
 class SessionFeedbackView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
@@ -381,28 +352,24 @@ class SessionFeedbackView(APIView):
 
         p_meta = self._PERSONA_META.get(persona_type, {"short_name": persona_type, "avatar_emoji": "💼"})
 
-        # pros: strength_tags description (최대 3개)
         pros = [
             t.get("description") or t.get("tag_name", "")
             for t in triggered.get("strength_tags", [])[:3]
             if t.get("description") or t.get("tag_name")
         ] or ["분석된 강점 데이터가 없습니다."]
 
-        # cons: weakness_tags description (최대 3개)
         cons = [
             t.get("description") or t.get("tag_name", "")
             for t in triggered.get("weakness_tags", [])[:3]
             if t.get("description") or t.get("tag_name")
         ] or ["분석된 보완점 데이터가 없습니다."]
 
-        # 약점 태그 빈도 기반 추천 질문
         rec_result = get_session_weakness_recommended_questions(session, total_limit=5)
         expected_questions = [
             {"order": i + 1, "text": q["question_text"]}
             for i, q in enumerate(rec_result["recommended_questions"])
         ]
 
-        # 페르소나별 추천 답변 구조
         answer_structure_map = {
             "practical": ["핵심 결론", "수치 근거", "트레이드오프", "결과"],
             "coach":     ["상황", "행동", "배움", "성장"],
@@ -423,14 +390,15 @@ class SessionFeedbackView(APIView):
                 ])) or "페르소나 피드백을 생성 중입니다.",
                 "pros": pros,
                 "cons": cons,
-                "recommended_answer_structure": answer_structure_map.get(persona_type, ["상황", "과제", "행동", "결과"]),
+                "recommended_answer_structure": answer_structure_map.get(
+                    persona_type, ["상황", "과제", "행동", "결과"]
+                ),
                 "expected_questions": expected_questions,
             },
             status=status.HTTP_200_OK,
         )
 
 
-# E7.12 -- PDF 다운로드
 class ReportPDFDownloadView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
@@ -445,19 +413,27 @@ class ReportPDFDownloadView(APIView):
         if not session:
             return Response({"detail": "Session not found."}, status=status.HTTP_404_NOT_FOUND)
 
+        # PDF는 완성된(done) 리포트만 렌더링한다. 미완성이면 생성을 트리거하고
+        # 폴링을 안내한다(202) — 다운로드 요청에서 수십 초 동기 LLM 생성을 막기 위함.
         report = _get_existing_report(session)
-        if report and _check_evaluation_failure(report):
-            report.delete()
-            report = None
-
-        if not report:
+        if not report or report.status != FinalReport.STATUS_DONE:
             try:
-                report = _create_report(session)
-            except ReportGenerationFailed:
-                return report_generation_failed_response()
+                report, _started = ensure_report_generation(session)
             except Exception as exc:
-                logger.exception("PDF용 리포트 생성 중 오류: %s", exc)
+                logger.exception("PDF용 리포트 생성 트리거 오류: %s", exc)
                 return report_generation_failed_response()
+
+            if report.status == FinalReport.STATUS_FAILED:
+                return report_generation_failed_response()
+            if report.status != FinalReport.STATUS_DONE:
+                return Response(
+                    {
+                        "detail": "리포트 생성 중입니다. 완료 후 다시 시도해 주세요.",
+                        "code": "REPORT_PROCESSING",
+                        "retryable": True,
+                    },
+                    status=status.HTTP_202_ACCEPTED,
+                )
 
         try:
             pdf_bytes = generate_report_pdf(report)
@@ -473,3 +449,118 @@ class ReportPDFDownloadView(APIView):
         resp["Content-Disposition"] = f'attachment; filename="{filename}"'
         resp["Content-Length"] = len(pdf_bytes)
         return resp
+
+
+
+
+class SessionRoadmapView(APIView):
+    """GET /api/v1/sessions/{session_id}/roadmap
+
+    weakness_tags LLM roadmap. Returns cached DB result if available.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_session(self, session_id):
+        try:
+            return InterviewSession.objects.get(id=session_id, user=self.request.user)
+        except InterviewSession.DoesNotExist:
+            return None
+
+    def get(self, request, session_id):
+        session = self.get_session(session_id)
+        if not session:
+            return Response({"detail": "Session not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        try:
+            roadmap = get_or_create_roadmap(session)
+        except Exception as exc:
+            logger.exception("roadmap generation error (session=%s): %s", session_id, exc)
+            return Response(
+                {"detail": "roadmap generation failed.", "code": "ROADMAP_GENERATION_FAILED"},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+
+        session_count = InterviewSession.objects.filter(user=request.user).count()
+        if session_count <= 2:
+            target_delta_label = "+2~4"
+        elif session_count <= 5:
+            target_delta_label = "+3~6"
+        else:
+            target_delta_label = "+5~10"
+
+        data = {
+            "week_priority_text": roadmap["week_priority_text"],
+            "target_delta_label": target_delta_label,
+            "practice_question": roadmap["practice_question"],
+            "items": roadmap["items"],
+        }
+        serializer = RoadmapResponseSerializer(data)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+class ShareLinkCreateView(APIView):
+    """POST /api/v1/reports/sessions/{session_id}/share-link
+
+    유효한 공유 토큰이 있으면 재사용, 없으면 신규 발급.
+    응답: { share_url, expires_at, created }
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, session_id):
+        try:
+            session = InterviewSession.objects.get(id=session_id, user=request.user)
+        except InterviewSession.DoesNotExist:
+            return Response({"detail": "Session not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        report = _get_existing_report(session)
+        if not report:
+            return Response(
+                {"detail": "리포트가 아직 생성되지 않았습니다.", "code": "REPORT_NOT_FOUND"},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        token_obj, created = ReportShareToken.get_or_create_for_report(report, request.user)
+        frontend_base = getattr(settings, "FRONTEND_BASE_URL", "http://localhost:5173").rstrip("/")
+        share_url = f"{frontend_base}/shared/{token_obj.token}"
+
+        return Response(
+            {
+                "share_url": share_url,
+                "expires_at": token_obj.expires_at.isoformat(),
+                "created": created,
+            },
+            status=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
+        )
+
+
+class SharedReportView(APIView):
+    """GET /api/v1/reports/share/{token}/
+
+    인증 불필요. 토큰 유효성(존재 + 미만료) 검증 후 FinalReport summary 반환.
+    """
+    permission_classes = [permissions.AllowAny]
+
+    def get(self, request, token):
+        try:
+            token_obj = ReportShareToken.objects.select_related("report").get(token=token)
+        except (ReportShareToken.DoesNotExist, ValueError):
+            return Response({"detail": "유효하지 않은 공유 링크입니다."}, status=status.HTTP_404_NOT_FOUND)
+
+        if not token_obj.is_valid:
+            return Response(
+                {"detail": "공유 링크가 만료되었습니다.", "code": "SHARE_LINK_EXPIRED"},
+                status=status.HTTP_410_GONE,
+            )
+
+        report = token_obj.report
+        return Response(
+            {
+                "report_id": str(report.id),
+                "session_id": str(report.session_id),
+                "generated_at": report.generated_at.isoformat(),
+                # 공유 링크는 안전 필드만 노출한다(#4).
+                "summary": build_shared_summary(report.summary),
+                "expires_at": token_obj.expires_at.isoformat(),
+            },
+            status=status.HTTP_200_OK,
+        )

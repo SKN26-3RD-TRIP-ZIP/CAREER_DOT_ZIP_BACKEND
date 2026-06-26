@@ -23,6 +23,7 @@ logger = logging.getLogger("apps.accounts")
 
 DORMANT_DAYS = 180
 WARNING_DAYS = 150
+WITHDRAWAL_RETENTION_DAYS = 30
 
 
 def _activity_date(user):
@@ -80,3 +81,34 @@ def check_dormant_accounts(dormant_days: int = DORMANT_DAYS, warning_days: int =
 
     logger.info("휴면 처리 완료: 전환=%d건, 예고=%d건", converted, warned)
     return {"converted": converted, "warned": warned}
+
+
+def cleanup_withdrawn_accounts(retention_days: int = WITHDRAWAL_RETENTION_DAYS):
+    """탈퇴 후 보관 기간이 지난 계정의 개인정보를 익명화한다.
+
+    APScheduler 또는 management command(run_withdrawal_cleanup)에서 호출한다.
+    retention_days는 테스트 시 단축 기준으로 덮어쓸 수 있다.
+
+    대상: status='withdrawn' 이고 withdrawn_at 이 보관 기간을 초과한 계정.
+    이미 익명화된 계정(email이 'withdrawn_'로 시작)은 중복 처리하지 않는다.
+    익명화 내용: email→'withdrawn_<id>@deleted.invalid', name→'탈퇴회원',
+    비밀번호 무효화.
+    """
+    from .models import User
+
+    cutoff = timezone.now() - timedelta(days=retention_days)
+    targets = User.objects.filter(
+        status="withdrawn", withdrawn_at__lte=cutoff
+    ).exclude(email__startswith="withdrawn_")
+
+    anonymized = 0
+    for user in targets:
+        user.email = f"withdrawn_{user.id}@deleted.invalid"
+        user.name = "탈퇴회원"
+        user.set_unusable_password()
+        user.save(update_fields=["email", "name", "password", "updated_at"])
+        anonymized += 1
+        logger.info("탈퇴 계정 익명화 user_id=%s", user.id)
+
+    logger.info("탈퇴 익명화 완료: %d건", anonymized)
+    return {"anonymized": anonymized}

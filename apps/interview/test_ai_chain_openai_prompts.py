@@ -16,11 +16,12 @@ class AIChainOpenAIPromptsTest(SimpleTestCase):
     def test_question_generation_system_prompt_includes_persona_instruction(self):
         prompt = build_question_generation_system_prompt({"persona_type": "friendly"})
 
-        self.assertIn("persona_type: friendly", prompt)
+        self.assertIn("persona_type: coach", prompt)
         self.assertIn("친절한 코치형", prompt)
         self.assertIn("session_id", prompt)
         self.assertIn("questions", prompt)
         self.assertIn("source_tags", prompt)
+        self.assertIn("expected_technical_keywords", prompt)
 
     def test_question_generation_user_prompt_serializes_payload(self):
         payload = {
@@ -39,7 +40,7 @@ class AIChainOpenAIPromptsTest(SimpleTestCase):
     def test_answer_sufficiency_system_prompt_includes_persona_instruction(self):
         prompt = build_answer_sufficiency_system_prompt({"persona_type": "verify"})
 
-        self.assertIn("persona_type: verify", prompt)
+        self.assertIn("persona_type: verifier", prompt)
         self.assertIn("검증 면접관형", prompt)
         self.assertIn("next_action", prompt)
         self.assertIn("NEXT_QUESTION", prompt)

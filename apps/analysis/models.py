@@ -79,6 +79,9 @@ class JdAnalysis(models.Model):
     weaknesses          = models.JSONField(default=list)    # 약점 리스트
     cl_points           = models.JSONField(default=list)    # 자소서 반영 포인트
 
+    # 예상 질문 생성 횟수 (최초 생성 + 재생성 누적). 무료 상한 관리에 사용.
+    generation_count    = models.IntegerField(default=0)
+
     analyzed_at   = models.DateTimeField(auto_now_add=True)
     updated_at    = models.DateTimeField(auto_now=True)
 
@@ -143,3 +146,30 @@ class GeneratedQuestion(models.Model):
 
     def __str__(self):
         return f"[{self.question_type}] {self.question_text[:40]}"
+
+
+class QuestionFeedback(models.Model):
+    """
+    예상 질문/답변에 대한 사용자 만족도 신호.
+    - 명시 신호: 👍/👎 (rating)
+    - 암묵 신호: generation_count (몇 번째 생성 결과에 피드백했는지 — 재생성이 많을수록 불만족)
+    품질 모니터링·관리자 대시보드의 기초 데이터.
+    """
+    id          = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    jd_analysis = models.ForeignKey(JdAnalysis, on_delete=models.CASCADE, related_name="feedbacks")
+
+    RATING_CHOICES = [
+        ("up",   "만족"),
+        ("down", "불만족"),
+    ]
+    rating           = models.CharField(max_length=10, choices=RATING_CHOICES)
+    generation_count = models.IntegerField(default=0)   # 피드백 시점의 생성 횟수
+    comment          = models.TextField(blank=True, default="")
+    created_at       = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'analysis_question_feedback'
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"[{self.rating}] analysis:{self.jd_analysis_id} (gen {self.generation_count})"

@@ -1,6 +1,12 @@
+import json
+
 from django.db.models import Q
 
 from apps.interview.services.ai_chain_service import InterviewAIChainService
+from apps.interview.services.ai_chain_persona_prompts import (
+    get_persona_policy,
+    normalize_persona_type,
+)
 from apps.question_bank.services.question_selector import select_questions_for_session
 
 
@@ -63,6 +69,8 @@ QUESTION_CATEGORY_ALIASES = {
     'follow_up': 'general',
 }
 
+EXPECTED_TECHNICAL_KEYWORDS_LABEL = 'expected_technical_keywords'
+
 
 def _normalize_question_source_type(source_type):
     normalized = str(source_type or 'general').strip().lower()
@@ -114,6 +122,97 @@ def _question_texts(questions):
     return [question.get('question_text', '') for question in questions]
 
 
+def _normalize_expected_technical_keywords(value):
+    if value is None:
+        return ''
+    if isinstance(value, (list, tuple, set)):
+        return ', '.join(
+            str(item).strip()
+            for item in value
+            if str(item).strip()
+        )
+    return str(value).strip()
+
+
+def _extract_expected_technical_keywords(question):
+    if not isinstance(question, dict):
+        return ''
+
+    for key in (
+        'expected_technical_keywords',
+        'technical_keywords',
+        'expected_keywords',
+    ):
+        keywords = _normalize_expected_technical_keywords(question.get(key))
+        if keywords:
+            return keywords
+
+    return ''
+
+
+def _extract_analysis_expected_technical_keywords(question):
+    answer = getattr(question, 'answer', None) or {}
+    if not isinstance(answer, dict):
+        return ''
+
+    for key in (
+        'expected_technical_keywords',
+        'technical_keywords',
+        'expected_keywords',
+        'keywords',
+    ):
+        keywords = _normalize_expected_technical_keywords(answer.get(key))
+        if keywords:
+            return keywords
+
+    return ''
+
+
+def _with_expected_technical_keyword_tag(question):
+    question_category = _normalize_question_category(question.get('question_category'))
+    keywords = _normalize_expected_technical_keywords(
+        question.get('expected_technical_keywords')
+    )
+    source_tags = list(question.get('source_tags') or [])
+
+    if question_category != 'technical' or not keywords:
+        return {
+            **question,
+            'source_tags': [
+                tag
+                for tag in source_tags
+                if not (
+                    isinstance(tag, dict)
+                    and tag.get('source_label') == EXPECTED_TECHNICAL_KEYWORDS_LABEL
+                )
+            ],
+        }
+
+    has_keyword_tag = any(
+        isinstance(tag, dict)
+        and tag.get('source_label') == EXPECTED_TECHNICAL_KEYWORDS_LABEL
+        for tag in source_tags
+    )
+    if has_keyword_tag:
+        return {
+            **question,
+            'source_tags': source_tags,
+        }
+
+    return {
+        **question,
+        'source_tags': [
+            *source_tags,
+            {
+                'source_type': question.get('source_type') or 'general',
+                'source_label': EXPECTED_TECHNICAL_KEYWORDS_LABEL,
+                'source_text_excerpt': keywords,
+                'source_reference': question.get('source_reference') or '',
+            },
+        ],
+    }
+
+
 def _normalize_source_tags(source_tags, fallback_source_type='general', fallback_reference=''):
     normalized = []
 
@@ -149,6 +248,59 @@ def _normalize_source_tags(source_tags, fallback_source_type='general', fallback
     ]
 
 
+def _metadata_text(metadata):
+    return json.dumps(
+        {
+            key: value
+            for key, value in metadata.items()
+            if value not in (None, '', [], {})
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+    )
+
+
+def _generation_metadata_tag(generation_source, *, prompt_metadata=None, source_reference=''):
+    metadata = {
+        **(prompt_metadata or {}),
+        'generation_source': generation_source,
+    }
+    return {
+        'source_type': 'general',
+        'source_label': 'generation_metadata',
+        'source_text_excerpt': _metadata_text(metadata),
+        'source_reference': source_reference,
+    }
+
+
+def _prompt_metadata_from_result(result):
+    return {
+        'generation_source': result.get('generation_source'),
+        'prompt_type': result.get('prompt_type'),
+        'prompt_source': result.get('prompt_source'),
+        'prompt_template_id': result.get('prompt_template_id'),
+        'prompt_template_name': result.get('prompt_template_name'),
+        'prompt_version_id': result.get('prompt_version_id'),
+        'prompt_version_label': result.get('prompt_version_label'),
+        'is_active_prompt_version': result.get('is_active_prompt_version'),
+    }
+
+
+def _attach_generation_metadata(question, generation_source, *, prompt_metadata=None):
+    source_reference = question.get('source_reference') or ''
+    return {
+        **question,
+        'source_tags': [
+            *(question.get('source_tags') or []),
+            _generation_metadata_tag(
+                generation_source,
+                prompt_metadata=prompt_metadata,
+                source_reference=source_reference,
+            ),
+        ],
+    }
+
+
 def _append_unique_questions(target, candidates, *, limit, excluded_texts=None):
     excluded = {_candidate_key(text) for text in (excluded_texts or [])}
 
@@ -175,6 +327,9 @@ def _append_unique_questions(target, candidates, *, limit, excluded_texts=None):
                 'question_text': question_text,
                 'question_category': _normalize_question_category(
                     question.get('question_category') or question.get('question_type')
+                ),
+                'expected_technical_keywords': _normalize_expected_technical_keywords(
+                    question.get('expected_technical_keywords')
                 ),
                 'source_type': source_type,
                 'source_reference': source_reference,
@@ -206,21 +361,24 @@ def _rule_based_questions(session, count, excluded_texts=None):
             continue
 
         questions.append(
-            {
-                'question_text': text,
-                'question_category': _normalize_question_category(session.interview_type),
-                'source_type': 'rule',
-                'source_reference': reference,
-                'difficulty': 'medium',
-                'source_tags': [
-                    {
-                        'source_type': 'rule',
-                        'source_label': 'Rule fallback',
-                        'source_text_excerpt': reference,
-                        'source_reference': reference,
-                    }
-                ],
-            }
+            _attach_generation_metadata(
+                {
+                    'question_text': text,
+                    'question_category': _normalize_question_category(session.interview_type),
+                    'source_type': 'rule',
+                    'source_reference': reference,
+                    'difficulty': 'medium',
+                    'source_tags': [
+                        {
+                            'source_type': 'rule',
+                            'source_label': 'Rule fallback',
+                            'source_text_excerpt': reference,
+                            'source_reference': reference,
+                        }
+                    ],
+                },
+                'rule_fallback',
+            )
         )
         excluded.add(_candidate_key(text))
 
@@ -410,6 +568,7 @@ def _build_prepared_question_sources(session):
             'source': question.source,
             'source_ref': question.source_ref,
             'answer': question.answer,
+            'expected_technical_keywords': _extract_analysis_expected_technical_keywords(question),
             'order': question.order,
         }
         for question in prepared_questions
@@ -468,7 +627,7 @@ def _build_ai_input_sources(session):
     return input_sources
 
 
-def _build_ai_generation_payload(session, question_count):
+def _build_ai_generation_payload(session, question_count, prompt_version_id=None):
     input_sources = _build_ai_input_sources(session)
 
     return {
@@ -482,8 +641,9 @@ def _build_ai_generation_payload(session, question_count):
             'persona_type': _map_persona_type(session.persona),
             'name': session.persona,
             'description': '',
+            'policy': get_persona_policy(session.persona),
         },
-        'prompt_version_id': None,
+        'prompt_version_id': prompt_version_id,
         'user_profile': _build_user_profile(session),
         'input_sources': input_sources,
         'generation_options': {
@@ -502,14 +662,10 @@ def _build_ai_generation_payload(session, question_count):
 
 
 def _map_persona_type(persona):
-    if persona == 'verifier':
-        return 'verify'
-    if persona in {'friendly', 'coach', 'practical', 'verify'}:
-        return 'friendly' if persona == 'coach' else persona
-    return 'practical'
+    return normalize_persona_type(persona)
 
 
-def _convert_ai_questions(ai_questions, excluded_texts=None):
+def _convert_ai_questions(ai_questions, excluded_texts=None, result_metadata=None):
     excluded = {_candidate_key(text) for text in (excluded_texts or [])}
     converted = []
 
@@ -525,16 +681,25 @@ def _convert_ai_questions(ai_questions, excluded_texts=None):
         source_type = _normalize_question_source_type(first_source.get('source_type') or 'general')
         source_reference = _build_ai_source_reference(question, source_tags)
 
+        generation_source = (result_metadata or {}).get('generation_source') or 'unknown_ai'
         converted.append(
             {
                 'question_text': question_text,
                 'question_category': _normalize_question_category(
                     question.get('question_category') or question.get('question_type')
                 ),
+                'expected_technical_keywords': _extract_expected_technical_keywords(question),
                 'source_type': source_type,
                 'source_reference': source_reference,
                 'difficulty': question.get('difficulty') or 'medium',
-                'source_tags': source_tags,
+                'source_tags': [
+                    *source_tags,
+                    _generation_metadata_tag(
+                        generation_source,
+                        prompt_metadata=result_metadata,
+                        source_reference=source_reference,
+                    ),
+                ],
             }
         )
         excluded.add(key)
@@ -553,17 +718,22 @@ def _build_ai_source_reference(question, source_tags):
     return f'ai_chain:{client_key}:{source_type_part}'
 
 
-def _ai_chain_questions(session, count, excluded_texts=None):
+def _ai_chain_questions(session, count, excluded_texts=None, prompt_version_id=None):
     if count <= 0:
         return []
 
     service = InterviewAIChainService()
-    payload = _build_ai_generation_payload(session, count)
+    payload = _build_ai_generation_payload(session, count, prompt_version_id)
     result = service.generate_questions(payload)
+    result_metadata = {
+        **_prompt_metadata_from_result(result),
+        'persona': payload.get('persona', {}).get('persona_type'),
+    }
 
     return _convert_ai_questions(
         result.get('questions') or [],
         excluded_texts=excluded_texts,
+        result_metadata=result_metadata,
     )[:count]
 
 
@@ -576,27 +746,31 @@ def _prepared_questions(session, count, excluded_texts=None):
         source_type = _normalize_question_source_type(question.source)
         source_reference = f'analysis_generated_question:{question.id}'
         converted.append(
-            {
-                'question_text': question.question_text,
-                'question_category': _normalize_question_category(question.question_type),
-                'source_type': source_type,
-                'source_reference': source_reference,
-                'difficulty': 'medium',
-                'source_tags': [
-                    {
-                        'source_type': source_type,
-                        'source_label': '준비 질문 근거',
-                        'source_text_excerpt': question.source_ref,
-                        'source_reference': source_reference,
-                    },
-                    {
-                        'source_type': 'prepared_question',
-                        'source_label': '분석 단계 생성 질문',
-                        'source_text_excerpt': question.question_text,
-                        'source_reference': source_reference,
-                    },
-                ],
-            }
+            _attach_generation_metadata(
+                {
+                    'question_text': question.question_text,
+                    'question_category': _normalize_question_category(question.question_type),
+                    'expected_technical_keywords': _extract_analysis_expected_technical_keywords(question),
+                    'source_type': source_type,
+                    'source_reference': source_reference,
+                    'difficulty': 'medium',
+                    'source_tags': [
+                        {
+                            'source_type': source_type,
+                            'source_label': '준비 질문 근거',
+                            'source_text_excerpt': question.source_ref,
+                            'source_reference': source_reference,
+                        },
+                        {
+                            'source_type': 'prepared_question',
+                            'source_label': '분석 단계 생성 질문',
+                            'source_text_excerpt': question.question_text,
+                            'source_reference': source_reference,
+                        },
+                    ],
+                },
+                'prepared_question',
+            )
         )
 
     selected = []
@@ -622,17 +796,24 @@ def _question_bank_questions(session, count, excluded_texts=None):
         limit=count,
         excluded_texts=excluded_texts,
     )
-    return normalized
+    return [
+        _attach_generation_metadata(question, 'question_bank')
+        for question in normalized
+    ]
 
 
-def generate_interview_questions(session):
+def generate_interview_questions(session, prompt_version_id=None):
     question_count = int(session.total_question_count or 3)
     input_sources = _build_ai_input_sources(session)
 
     selected = []
 
     if input_sources:
-        ai_questions = _ai_chain_questions(session, question_count)
+        ai_questions = _ai_chain_questions(
+            session,
+            question_count,
+            prompt_version_id=prompt_version_id,
+        )
         _append_unique_questions(
             selected,
             ai_questions,
@@ -670,6 +851,7 @@ def generate_interview_questions(session):
             session,
             question_count - len(selected),
             excluded_texts=_question_texts(selected),
+            prompt_version_id=prompt_version_id,
         )
         _append_unique_questions(
             selected,
@@ -698,12 +880,12 @@ def generate_interview_questions(session):
     )
 
     return [
-        {
+        _with_expected_technical_keyword_tag({
             **question,
             'source_type': _normalize_question_source_type(question.get('source_type')),
             'order_index': index,
             'question_type': 'main',
             'question_category': _normalize_question_category(question.get('question_category')),
-        }
+        })
         for index, question in enumerate(categorized, start=1)
     ]

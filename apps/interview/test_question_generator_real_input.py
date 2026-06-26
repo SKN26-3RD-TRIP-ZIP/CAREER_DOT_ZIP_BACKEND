@@ -1,3 +1,5 @@
+import json
+
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
@@ -17,7 +19,10 @@ from apps.input.models import (
     ResumeSkill,
 )
 from apps.interview.models import InterviewQuestion, InterviewSession, QuestionSourceTag
-from apps.interview.services.question_generator import generate_interview_questions
+from apps.interview.services.question_generator import (
+    _build_ai_generation_payload,
+    generate_interview_questions,
+)
 
 
 class InterviewQuestionCategoryDistributionTest(TestCase):
@@ -36,6 +41,30 @@ class InterviewQuestionCategoryDistributionTest(TestCase):
             persona='practical',
             total_question_count=5,
         )
+
+    def test_question_generation_payload_contains_canonical_persona_policy(self):
+        expected_personas = {
+            'coach': 'coach',
+            'friendly': 'coach',
+            'practical': 'practical',
+            'verifier': 'verifier',
+            'verify': 'verifier',
+        }
+
+        for stored_persona, canonical_persona in expected_personas.items():
+            session = self.create_session('technical')
+            session.persona = stored_persona
+            payload = _build_ai_generation_payload(session, 3)
+
+            self.assertEqual(
+                payload['persona']['persona_type'],
+                canonical_persona,
+            )
+            self.assertIn('question_focus', payload['persona']['policy'])
+            self.assertIn('followup_style', payload['persona']['policy'])
+            self.assertIn('feedback_tone', payload['persona']['policy'])
+            self.assertIn('verification_depth', payload['persona']['policy'])
+            self.assertIn('forbidden_tone', payload['persona']['policy'])
 
     def generate_with_empty_ai_sources(self, session):
         ai_result = {
@@ -261,6 +290,52 @@ class InterviewQuestionGeneratorRealInputTest(TestCase):
             self.prepared_question.question_text,
         )
 
+    def test_ai_question_prompt_metadata_is_added_to_source_tags(self):
+        ai_result = {
+            'session_id': str(self.session.id),
+            'generation_source': 'openai',
+            'prompt_type': 'question_generation',
+            'prompt_source': 'db',
+            'prompt_template_id': 12,
+            'prompt_template_name': 'Practical question prompt',
+            'prompt_version_id': 34,
+            'prompt_version_label': 'v3',
+            'is_active_prompt_version': True,
+            'questions': [
+                {
+                    'client_question_key': 'q_001',
+                    'question_text': 'DB prompt metadata question.',
+                    'question_type': 'main',
+                    'question_category': 'technical',
+                    'order_index': 1,
+                    'source_tags': [{'source_type': 'general'}],
+                }
+            ],
+        }
+
+        with patch('apps.interview.services.question_generator.InterviewAIChainService') as service_class, \
+                patch('apps.interview.services.question_generator.select_questions_for_session') as selector:
+            service = service_class.return_value
+            service.generate_questions.return_value = ai_result
+            selector.return_value = []
+
+            questions = generate_interview_questions(self.session)
+
+        metadata_tag = next(
+            tag for tag in questions[0]['source_tags']
+            if tag['source_label'] == 'generation_metadata'
+        )
+        metadata = json.loads(metadata_tag['source_text_excerpt'])
+        self.assertEqual(metadata['generation_source'], 'openai')
+        self.assertEqual(metadata['prompt_type'], 'question_generation')
+        self.assertEqual(metadata['prompt_source'], 'db')
+        self.assertEqual(metadata['prompt_template_id'], 12)
+        self.assertEqual(metadata['prompt_template_name'], 'Practical question prompt')
+        self.assertEqual(metadata['prompt_version_id'], 34)
+        self.assertEqual(metadata['prompt_version_label'], 'v3')
+        self.assertTrue(metadata['is_active_prompt_version'])
+        self.assertEqual(metadata['persona'], 'practical')
+
     def test_question_bank_is_used_after_ai_and_prepared_questions(self):
         self.session.total_question_count = 4
         self.session.save(update_fields=['total_question_count'])
@@ -306,6 +381,19 @@ class InterviewQuestionGeneratorRealInputTest(TestCase):
         self.assertEqual(questions[1]['source_type'], 'combined')
         self.assertEqual(questions[2]['source_type'], 'question_bank')
         self.assertEqual(questions[3]['source_type'], 'rule')
+        generation_sources = []
+        for question in questions:
+            metadata_tag = next(
+                tag for tag in question['source_tags']
+                if tag['source_label'] == 'generation_metadata'
+            )
+            generation_sources.append(
+                json.loads(metadata_tag['source_text_excerpt'])['generation_source']
+            )
+        self.assertEqual(
+            generation_sources,
+            ['unknown_ai', 'prepared_question', 'question_bank', 'rule_fallback'],
+        )
         selector.assert_called_once_with(self.session, 2)
 
 
@@ -372,6 +460,103 @@ class InterviewQuestionGenerateSourceTagsAPITest(APITestCase):
         self.assertEqual(response.data['questions'][0]['question_category'], 'technical')
         self.assertEqual(response.data['questions'][0]['source_tags'][0]['source_type'], 'jd')
 
+    def test_question_generate_saves_expected_technical_keywords_source_tag_once(self):
+        generated = [
+            {
+                'question_text': 'Explain how you designed the Django API transaction boundary.',
+                'question_type': 'main',
+                'question_category': 'technical',
+                'order_index': 1,
+                'difficulty': 'medium',
+                'source_type': 'jd',
+                'source_reference': 'ai_chain:q_001:jd',
+                'source_tags': [
+                    {
+                        'source_type': 'jd',
+                        'source_label': 'JD basis',
+                        'source_text_excerpt': 'Django API transaction experience',
+                        'source_reference': 'ai_chain:q_001:jd',
+                    },
+                    {
+                        'source_type': 'jd',
+                        'source_label': 'expected_technical_keywords',
+                        'source_text_excerpt': 'transaction.atomic, rollback, idempotency',
+                        'source_reference': 'ai_chain:q_001:jd',
+                    },
+                    {
+                        'source_type': 'jd',
+                        'source_label': 'expected_technical_keywords',
+                        'source_text_excerpt': 'duplicate should not be stored',
+                        'source_reference': 'ai_chain:q_001:jd',
+                    },
+                ],
+            }
+        ]
+
+        with patch('apps.interview.views.generate_interview_questions', return_value=generated):
+            response = self.client.post(
+                reverse(
+                    'interview-question-generate',
+                    kwargs={'session_id': self.session.id},
+                ),
+                {},
+                format='json',
+            )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        question = InterviewQuestion.objects.get(session=self.session)
+        keyword_tags = QuestionSourceTag.objects.filter(
+            question=question,
+            source_label='expected_technical_keywords',
+        )
+
+        self.assertEqual(keyword_tags.count(), 1)
+        self.assertEqual(
+            keyword_tags.get().source_text_excerpt,
+            'transaction.atomic, rollback, idempotency',
+        )
+
+    def test_question_generate_skips_expected_technical_keywords_for_non_technical_question(self):
+        self.session.interview_type = 'personality'
+        self.session.save(update_fields=['interview_type'])
+        generated = [
+            {
+                'question_text': 'Describe a team conflict and how you handled it.',
+                'question_type': 'main',
+                'question_category': 'personality',
+                'order_index': 1,
+                'difficulty': 'medium',
+                'source_type': 'general',
+                'source_reference': 'ai_chain:q_001:general',
+                'source_tags': [
+                    {
+                        'source_type': 'general',
+                        'source_label': 'expected_technical_keywords',
+                        'source_text_excerpt': 'should not be stored',
+                    },
+                ],
+            }
+        ]
+
+        with patch('apps.interview.views.generate_interview_questions', return_value=generated):
+            response = self.client.post(
+                reverse(
+                    'interview-question-generate',
+                    kwargs={'session_id': self.session.id},
+                ),
+                {},
+                format='json',
+            )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        question = InterviewQuestion.objects.get(session=self.session)
+        self.assertFalse(
+            QuestionSourceTag.objects.filter(
+                question=question,
+                source_label='expected_technical_keywords',
+            ).exists()
+        )
+
 
 class MVPAnalysisQuestionLinkAPITest(APITestCase):
     def setUp(self):
@@ -406,7 +591,10 @@ class MVPAnalysisQuestionLinkAPITest(APITestCase):
             source='combined',
             source_ref='JD(Django) + Resume(OpenAI)',
             order=1,
-            answer={'summary': 'Explain the linked analysis question.'},
+            answer={
+                'summary': 'Explain the linked analysis question.',
+                'expected_technical_keywords': 'Django API, OpenAI integration, source tag persistence',
+            },
         )
         self.analysis_session = AnalysisSession.objects.create(
             user=self.user,
@@ -465,6 +653,11 @@ class MVPAnalysisQuestionLinkAPITest(APITestCase):
         self.assertEqual(
             question.source_reference,
             f'analysis_generated_question:{self.generated_question.id}',
+        )
+        keyword_tag = question.source_tags.get(source_label='expected_technical_keywords')
+        self.assertEqual(
+            keyword_tag.source_text_excerpt,
+            'Django API, OpenAI integration, source tag persistence',
         )
 
         payload = service.generate_questions.call_args.args[0]

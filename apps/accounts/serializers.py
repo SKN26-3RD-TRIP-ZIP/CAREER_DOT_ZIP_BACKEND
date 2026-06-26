@@ -104,6 +104,9 @@ class LoginSerializer(serializers.Serializer):
         if user.status == 'banned':
             raise serializers.ValidationError('Account is banned.')
 
+        if user.status == 'withdrawn':
+            raise serializers.ValidationError('Account is withdrawn.')
+
         if not user.is_active:
             raise serializers.ValidationError('Account is inactive.')
 

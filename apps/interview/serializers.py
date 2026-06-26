@@ -1,3 +1,9 @@
+"""Serializers for the active nested REST interview API.
+
+This contract intentionally exposes richer data than the MVP contract,
+including source tags, turns, evaluation data, and progress context.
+"""
+
 from rest_framework import serializers
 
 from apps.analysis.models import AnalysisSession, JdAnalysis
@@ -277,7 +283,7 @@ class InterviewTurnEvaluationSerializer(serializers.ModelSerializer):
         model = Evaluation
         fields = (
             'evaluation_id',
-            'final_tech_score',
+            'answer_score',
             'llm_concept_score',
             'score_detail',
             'evaluated_at',

@@ -6,12 +6,12 @@ from .views import (
     AdminPointHistoryView,
     AuditLogListView,
     DashboardStatsView,
+    MemberDetailView,
     MemberInviteView,
     MemberListView,
     MemberStatsView,
     MemberStatusView,
 )
-from .views_member_detail import MemberDetailView
 
 
 urlpatterns = [

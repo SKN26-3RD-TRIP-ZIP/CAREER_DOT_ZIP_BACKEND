@@ -4,8 +4,8 @@ from .models import Evaluation, WeaknessTag, StrengthTag, AnswerWeaknessTag, Ans
 
 @admin.register(Evaluation)
 class EvaluationAdmin(admin.ModelAdmin):
-    list_display = ('id', 'answer', 'final_tech_score', 'evaluated_at')
-    list_filter = ('evaluated_at', 'final_tech_score')
+    list_display = ('id', 'answer', 'answer_score', 'evaluated_at')
+    list_filter = ('evaluated_at', 'answer_score')
     search_fields = ('answer__id',)
     readonly_fields = ('evaluated_at', 'updated_at')
 

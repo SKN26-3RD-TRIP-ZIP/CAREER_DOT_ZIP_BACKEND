@@ -46,7 +46,7 @@ def _mock_llm_chains():
   return grounding, competency, emotion
 
 
-@override_settings(OPENAI_USE_MOCK=True)
+@override_settings(OPENAI_USE_MOCK=True, REPORT_GENERATION_EAGER=True)
 class ReportBackfillTests(APITestCase):
   def setUp(self):
     User = get_user_model()

@@ -18,9 +18,13 @@ def build_question_generation_system_prompt(persona: Any = None) -> str:
         "You generate IT job interview questions. Return only a JSON object. "
         "The top-level fields must include session_id and questions. "
         "Each question must include question_text, question_type, question_category, "
-        "difficulty, order_index, generation_reason, and source_tags. "
+        "difficulty, order_index, generation_reason, source_tags, and "
+        "expected_technical_keywords. "
         "Set question_type to 'main' for all generated main questions. "
         "Set question_category to one of technical, personality, general. "
+        "For technical questions, set expected_technical_keywords to a concise "
+        "comma-separated list of key technical concepts, not a model answer. "
+        "For non-technical questions, use an empty string for expected_technical_keywords. "
         "If generation_options.question_category_plan is provided, follow it in order. "
         "source_tags must include source_type, source_label, and source_text_excerpt. "
         "source_tags.source_type must be one of jd, resume, cover_letter, "
@@ -55,6 +59,7 @@ def build_answer_sufficiency_system_prompt(persona: Any = None) -> str:
 def build_answer_sufficiency_user_prompt(payload: dict[str, Any]) -> str:
     compact_payload = {
         "session_id": payload.get("session_id"),
+        "interview_type": payload.get("interview_type"),
         "question": payload.get("question"),
         "answer": payload.get("answer"),
         "persona": payload.get("persona"),
@@ -99,10 +104,12 @@ def build_followup_system_prompt(persona: Any = None) -> str:
 def build_followup_user_prompt(payload: dict[str, Any]) -> str:
     compact_payload = {
         "session_id": payload.get("session_id"),
+        "interview_type": payload.get("interview_type"),
         "parent_question": payload.get("parent_question"),
         "answer": payload.get("answer"),
         "selected_weakness_tag": payload.get("selected_weakness_tag"),
         "persona": payload.get("persona"),
+        "followup_context": payload.get("followup_context"),
         "conversation_context": payload.get("conversation_context"),
     }
     return json.dumps(compact_payload, ensure_ascii=False)

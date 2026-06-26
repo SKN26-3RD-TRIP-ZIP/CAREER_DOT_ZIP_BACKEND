@@ -1,7 +1,16 @@
+"""Serializers for the active flat MVP interview API.
+
+This contract intentionally uses compact frontend payloads and status/persona
+aliases. It remains separate from serializers.py until a canonical API is
+selected.
+"""
+
 from rest_framework import serializers
 
 from apps.analysis.models import AnalysisSession, JdAnalysis
 from apps.input.models import CoverLetter, JobDescription, ProjectExperience, ResumeMaster
+from apps.prompt.models import PromptVersion
+from apps.prompt.services import normalize_prompt_persona_type
 from apps.question_bank.models import QuestionBankItem
 from .models import InterviewAnswer, InterviewQuestion, InterviewSession
 
@@ -40,6 +49,7 @@ class MVPSessionCreateSerializer(serializers.Serializer):
     # persona_type: 프론트 필드명. persona도 별칭으로 허용
     persona_type = serializers.ChoiceField(choices=PERSONA_INPUT_MAP, required=False)
     persona = serializers.ChoiceField(choices=PERSONA_INPUT_MAP, required=False)
+    # interview_mode controls text/voice I/O, not question content.
     interview_mode = serializers.ChoiceField(choices=('text', 'voice'), required=False, default='voice')
     # interview_type: 프론트에서 전송하는 기존 필드(무시하지 않고 저장)
     interview_type = serializers.ChoiceField(
@@ -160,6 +170,26 @@ class MVPSessionStatusSerializer(serializers.Serializer):
     status = serializers.ChoiceField(choices=STATUS_INPUT_MAP)
 
 
+class PracticeSessionCreateSerializer(serializers.Serializer):
+    question_count = serializers.IntegerField(
+        required=False,
+        default=5,
+        min_value=1,
+        max_value=10,
+    )
+    persona_type = serializers.ChoiceField(
+        choices=PERSONA_INPUT_MAP,
+        required=False,
+    )
+    interview_mode = serializers.ChoiceField(
+        choices=('text', 'voice'),
+        required=False,
+    )
+
+    def validate_persona_type(self, value):
+        return PERSONA_INPUT_MAP[value]
+
+
 class MVPQuestionGenerateSerializer(serializers.Serializer):
     jd_id = serializers.UUIDField(required=False)
     resume_id = serializers.UUIDField(required=False)
@@ -172,6 +202,7 @@ class MVPQuestionGenerateSerializer(serializers.Serializer):
         default=list,
     )
     question_count = serializers.IntegerField(required=False, default=3, min_value=1, max_value=20)
+    prompt_version_id = serializers.IntegerField(required=False, allow_null=True)
 
     def validate(self, attrs):
         session = self.context['session']
@@ -187,7 +218,47 @@ class MVPQuestionGenerateSerializer(serializers.Serializer):
         ).count()
         if owned_count != len(set(project_ids)):
             raise serializers.ValidationError({'project_ids': 'One or more projects were not found.'})
+
+        self._validate_prompt_version(attrs)
         return attrs
+
+    def _validate_prompt_version(self, attrs):
+        prompt_version_id = attrs.get('prompt_version_id')
+        if not prompt_version_id:
+            return
+
+        user = self.context['request'].user
+        if not (
+            getattr(user, 'is_staff', False)
+            or getattr(user, 'is_superuser', False)
+            or getattr(user, 'role', None) == 'admin'
+        ):
+            raise serializers.ValidationError(
+                {'prompt_version_id': 'Only admins can select a prompt version.'}
+            )
+
+        session = self.context['session']
+        version = (
+            PromptVersion.objects.filter(id=prompt_version_id)
+            .select_related('template__persona_config')
+            .first()
+        )
+        if version is None or not version.template.is_active:
+            raise serializers.ValidationError({'prompt_version_id': 'Prompt version was not found.'})
+        if version.template.prompt_type != 'question_generation':
+            raise serializers.ValidationError(
+                {'prompt_version_id': 'Prompt version must be for question generation.'}
+            )
+        expected_persona = normalize_prompt_persona_type(
+            PERSONA_OUTPUT_MAP.get(session.persona, session.persona)
+        )
+        version_persona = normalize_prompt_persona_type(
+            version.template.persona_config.persona_type
+        )
+        if version_persona != expected_persona:
+            raise serializers.ValidationError(
+                {'prompt_version_id': 'Prompt version persona does not match this session.'}
+            )
 
     @staticmethod
     def _validate_session_reference(attrs, field_name, session_value):
@@ -217,6 +288,8 @@ class MVPQuestionGenerateSerializer(serializers.Serializer):
 
 
 class MVPQuestionSerializer(serializers.ModelSerializer):
+    # question_type is the flow role (main/follow_up); question_category is
+    # the content class (technical/personality/general).
     question_id = serializers.UUIDField(source='id', read_only=True)
     question_category = serializers.CharField(read_only=True)
     difficulty = serializers.SerializerMethodField()
@@ -249,6 +322,7 @@ class MVPQuestionSerializer(serializers.ModelSerializer):
 
 
 class MVPAnswerCreateSerializer(serializers.Serializer):
+    # 음성/텍스트 답변 생성 API에서 공통으로 받는 최소 입력값만 검증한다.
     session_id = serializers.UUIDField()
     question_id = serializers.UUIDField()
     answer_text = serializers.CharField(allow_blank=False, trim_whitespace=True)
@@ -256,6 +330,7 @@ class MVPAnswerCreateSerializer(serializers.Serializer):
 
 
 class MVPSTTResultUpdateSerializer(serializers.ModelSerializer):
+    # STT 후처리 patch는 텍스트와 음성 분석 지표만 답변 레코드에 덧붙인다.
     stt_text = serializers.CharField(allow_blank=False, trim_whitespace=True)
     audio_url = serializers.URLField(required=False, allow_null=True, allow_blank=True)
     speech_duration = serializers.FloatField(required=False, min_value=0)

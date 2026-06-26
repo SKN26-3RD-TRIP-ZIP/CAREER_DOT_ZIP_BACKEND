@@ -30,7 +30,10 @@ from apps.interview.services.ai_chain_response_parser import (
     parse_llm_json_list,
     parse_llm_json_object,
 )
-from apps.prompt.services import get_runtime_prompt_version
+from apps.prompt.services import (
+    get_runtime_prompt_version,
+    get_runtime_prompt_version_by_id,
+)
 
 
 MAIN_QUESTION_TYPE = "main"
@@ -268,7 +271,13 @@ class AIChainOpenAIEngine:
 
     def generate_questions(self, payload: dict[str, Any]) -> dict[str, Any]:
         if not self.enable_real_call:
-            return self.fallback_engine.generate_questions(payload)
+            return {
+                **self.fallback_engine.generate_questions(payload),
+                "generation_source": "mock",
+                "prompt_type": "question_generation",
+                "prompt_source": "mock",
+                "prompt_version_id": payload.get("prompt_version_id"),
+            }
 
         try:
             prompt = self._resolve_system_prompt(
@@ -339,7 +348,13 @@ class AIChainOpenAIEngine:
 
     def generate_followup_question(self, payload: dict[str, Any]) -> dict[str, Any]:
         if not self.enable_real_call:
-            return self.fallback_engine.generate_followup_question(payload)
+            return {
+                **self.fallback_engine.generate_followup_question(payload),
+                "generation_source": "mock",
+                "prompt_type": "follow_up_generation",
+                "prompt_source": "mock",
+                "prompt_version_id": payload.get("prompt_version_id"),
+            }
 
         try:
             prompt = self._resolve_system_prompt(
@@ -382,6 +397,24 @@ class AIChainOpenAIEngine:
         fallback_builder: Callable[[Any], str],
     ) -> dict[str, Any]:
         persona = payload.get("persona")
+        requested_prompt_version_id = payload.get("prompt_version_id")
+        runtime_prompt = get_runtime_prompt_version_by_id(
+            requested_prompt_version_id,
+            persona_type=self._extract_persona_type(persona),
+            prompt_type=prompt_type,
+        )
+        if runtime_prompt is not None:
+            return {
+                "content": runtime_prompt.content,
+                "prompt_version_id": runtime_prompt.version_id,
+                "prompt_source": PROMPT_SOURCE_DB,
+                "prompt_type": runtime_prompt.prompt_type or prompt_type,
+                "prompt_template_id": runtime_prompt.template_id,
+                "prompt_template_name": runtime_prompt.template_title,
+                "prompt_version_label": runtime_prompt.version_label,
+                "is_active_prompt_version": runtime_prompt.is_active_version,
+            }
+
         runtime_prompt = get_runtime_prompt_version(
             self._extract_persona_type(persona),
             prompt_type,
@@ -391,12 +424,22 @@ class AIChainOpenAIEngine:
                 "content": runtime_prompt.content,
                 "prompt_version_id": runtime_prompt.version_id,
                 "prompt_source": PROMPT_SOURCE_DB,
+                "prompt_type": runtime_prompt.prompt_type or prompt_type,
+                "prompt_template_id": runtime_prompt.template_id,
+                "prompt_template_name": runtime_prompt.template_title,
+                "prompt_version_label": runtime_prompt.version_label,
+                "is_active_prompt_version": runtime_prompt.is_active_version,
             }
 
         return {
             "content": fallback_builder(persona),
             "prompt_version_id": None,
             "prompt_source": PROMPT_SOURCE_FALLBACK,
+            "prompt_type": prompt_type,
+            "prompt_template_id": None,
+            "prompt_template_name": None,
+            "prompt_version_label": None,
+            "is_active_prompt_version": False,
         }
 
     @staticmethod
@@ -417,8 +460,14 @@ class AIChainOpenAIEngine:
     ) -> dict[str, Any]:
         return {
             **result,
+            "generation_source": "openai",
+            "prompt_type": prompt["prompt_type"],
             "prompt_version_id": prompt["prompt_version_id"],
             "prompt_source": prompt["prompt_source"],
+            "prompt_template_id": prompt["prompt_template_id"],
+            "prompt_template_name": prompt["prompt_template_name"],
+            "prompt_version_label": prompt["prompt_version_label"],
+            "is_active_prompt_version": prompt["is_active_prompt_version"],
         }
 
     def _fallback_or_raise(self, fallback: dict[str, Any] | None, message: str) -> dict[str, Any]:
@@ -534,6 +583,9 @@ class AIChainOpenAIEngine:
                     "question_category": self._normalize_question_category(
                         question.get("question_category") or question.get("question_type")
                     ),
+                    "expected_technical_keywords": self._normalize_expected_technical_keywords(
+                        question.get("expected_technical_keywords")
+                    ),
                     "difficulty": question.get("difficulty"),
                     "order_index": int(question.get("order_index") or index),
                     "generation_reason": question.get(
@@ -573,6 +625,18 @@ class AIChainOpenAIEngine:
             "other": "general",
         }
         return aliases.get(normalized, "general")
+
+    @staticmethod
+    def _normalize_expected_technical_keywords(value: Any) -> str:
+        if value is None:
+            return ""
+        if isinstance(value, (list, tuple, set)):
+            return ", ".join(
+                str(item).strip()
+                for item in value
+                if str(item).strip()
+            )
+        return str(value).strip()
 
     def _normalize_source_tags(self, source_tags: list[Any]) -> list[dict[str, Any]]:
         normalized = []

@@ -148,8 +148,9 @@ def compute_tech_depth_score(
 def get_reference_texts_for_answer(answer) -> tuple[str | None, str | None]:
     """답변의 세션 컨텍스트에서 SBERT 비교 레퍼런스 텍스트를 추출한다.
 
-    - reference_db_text  : JD 기술 요건 + 포지션 텍스트
-    - reference_readme_text: 질문 텍스트 (기술 문서 부재 시 질문 자체를 레퍼런스로 사용)
+    - reference_db_text     : JD 기술 요건 + 포지션 텍스트
+    - reference_readme_text : expected_technical_keywords 태그의 source_text_excerpt.
+                              태그가 없으면 None (non-technical 질문 또는 인터뷰팀 미저장).
     """
     reference_db_text = None
     reference_readme_text = None
@@ -167,7 +168,18 @@ def get_reference_texts_for_answer(answer) -> tuple[str | None, str | None]:
 
         question = getattr(answer, "question", None)
         if question:
-            reference_readme_text = question.question_text or None
+            keyword_tag = next(
+                (t for t in question.source_tags.all()
+                 if t.source_label == "expected_technical_keywords"),
+                None,
+            )
+            if keyword_tag:
+                if not keyword_tag.source_text_excerpt:
+                    logger.warning(
+                        "expected_technical_keywords 태그 존재하나 source_text_excerpt 비어있음 (question_id=%s)",
+                        question.id,
+                    )
+                reference_readme_text = keyword_tag.source_text_excerpt or None
 
     except Exception as e:
         logger.warning("레퍼런스 텍스트 추출 실패: %s", str(e))

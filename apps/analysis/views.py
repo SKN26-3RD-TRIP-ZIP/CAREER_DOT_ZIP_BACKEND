@@ -7,9 +7,10 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from rest_framework import status
-from django.db import connection
+from django.db import connection, transaction
+from django.db.models import F
 
-from .models import AnalysisSession, JdAnalysis, GeneratedQuestion
+from .models import AnalysisSession, JdAnalysis, GeneratedQuestion, QuestionFeedback
 from apps.input.models import JobDescription, ResumeMaster, CoverLetter
 from .serializers import (
     JDListSerializer, ResumeListSerializer, CoverLetterListSerializer,
@@ -24,13 +25,33 @@ from .services.jd_service              import extract_jd_requirements
 from .services.match_service           import calculate_match_score
 from .services.result_service          import build_match_result
 from .services.gap_service             import calculate_gap, build_gap_message
-from .services.question_rag_service    import search_similar_questions
-from .services.question_gen_service    import generate_questions
-from .services.question_merge_service  import merge_and_deduplicate
-from .services.star_service            import generate_star_answers
-from .services.question_output_service import build_question_output, to_db_records
+from .services.question_service        import generate_all_questions
+from .services.question_output_service import to_db_records
 
 logger = logging.getLogger(__name__)
+
+# 한 분석당 예상 질문 생성 무료 상한 (최초 생성 + 재생성 누적).
+# 초과 시 Phase 2의 포인트 차감으로 확장 예정 (현재는 차단).
+MAX_QUESTION_GENERATIONS = 3
+
+
+def _serialize_generated_questions(jd_analysis):
+    questions = jd_analysis.questions.values(
+        "id",
+        "question_type",
+        "question_text",
+        "answer",
+        "order",
+    )
+    if hasattr(questions, "order_by"):
+        questions = questions.order_by("order")
+    serialized = []
+    for question in questions:
+        item = dict(question)
+        if item.get("id") is not None:
+            item["id"] = str(item["id"])
+        serialized.append(item)
+    return serialized
 
 
 def _resolve_future(future, label: str, fallback):
@@ -83,86 +104,33 @@ def _run_analysis(session_id: int):
         session.career_level    = inferred_level
         session.save(update_fields=["jd_keywords", "resume_analysis", "career_level"])
 
-        # Step 2: match_score(임베딩+LLM) ↔ RAG검색+질문생성(LLM) 병렬
-        # generate_questions는 jd_kw + resume_summary만 필요하므로 match_result를 기다릴 필요 없음
+        # Step 2: 매칭 점수 계산
+        # (예상 질문/STAR 생성은 분석에서 분리됨 → /analysis/questions/ 에서 온디맨드 생성)
         t0 = time.time()
-        with ThreadPoolExecutor(max_workers=4) as executor:
-            f_match = executor.submit(
-                calculate_match_score,
-                jd_keywords=jd_kw,
-                resume_analysis=resume_summary,
-                cover_letter_text=session.cover_letter_text,
-                career_level=inferred_level,
-                jd_requirements=jd_req,
-                job_role=session.job_role,
-            )
-            f_rag = executor.submit(search_similar_questions, jd_kw, 20)
-            f_llm = executor.submit(
-                generate_questions,
-                job_role=session.job_role,
-                company_name=session.company_name,
-                jd_keywords=jd_kw,
-                resume_analysis=resume_summary,
-            )
-
-        match_result_raw, err_match = _resolve_future(f_match, "매칭 점수 계산", {})
-        rag_questions,    _         = _resolve_future(f_rag,   "RAG 질문 검색",  [])
-        llm_questions,    _         = _resolve_future(f_llm,   "LLM 질문 생성",  [])
-        logger.info("[TIMING] step2 병렬(match+RAG+question_gen): %.2fs", time.time() - t0)
-
-        if err_match:
-            raise RuntimeError("매칭 점수 계산 실패로 파이프라인을 중단합니다.")
-
-        match_result = build_match_result(match_result_raw, inferred_level)
-
-        # Step 3: gap 계산(순수 로직) ↔ 질문 merge(임베딩) 병렬
-        t0 = time.time()
-        with ThreadPoolExecutor(max_workers=2) as executor:
-            f_gap   = executor.submit(
-                calculate_gap,
-                jd_keywords=jd_kw,
-                jd_requirements=jd_req,
-                resume_analysis=resume_summary,
-                unmatched_keywords=match_result["unmatched_keywords"],
-                trait_details=match_result.get("trait_details"),
-            )
-            f_merge = executor.submit(merge_and_deduplicate, rag_questions, llm_questions)
-
-        gap_result, _ = _resolve_future(f_gap,   "갭 계산",       {})
-        questions,  _ = _resolve_future(f_merge, "질문 통합/중복 제거", [])
-        gap_message   = build_gap_message(gap_result, inferred_level)
-        logger.info("[TIMING] step3 병렬(gap+merge): %.2fs", time.time() - t0)
-
-        # Step 4: STAR 답안 생성 — 타입별 3그룹 병렬
-        t0 = time.time()
-        star_groups = {
-            "personality": [q for q in questions if q.get("type") == "personality"],
-            "technical":   [q for q in questions if q.get("type") == "technical"],
-            "experience":  [q for q in questions if q.get("type") == "experience"],
-        }
-        star_kwargs = dict(
-            job_role=session.job_role,
-            company_name=session.company_name,
-            jd_text=session.jd_text,
-            resume_text=session.resume_text,
+        match_result_raw = calculate_match_score(
+            jd_keywords=jd_kw,
+            resume_analysis=resume_summary,
             cover_letter_text=session.cover_letter_text,
+            career_level=inferred_level,
+            jd_requirements=jd_req,
+            job_role=session.job_role,
         )
-        with ThreadPoolExecutor(max_workers=3) as executor:
-            star_futures = {
-                qtype: executor.submit(generate_star_answers, questions=qs, **star_kwargs)
-                for qtype, qs in star_groups.items()
-                if qs
-            }
+        match_result = build_match_result(match_result_raw, inferred_level)
+        logger.info("[TIMING] step2 매칭 점수: %.2fs", time.time() - t0)
 
-        questions_with_star = []
-        for qtype, f in star_futures.items():
-            group_result, err = _resolve_future(f, f"STAR 생성({qtype})", [])
-            questions_with_star.extend(group_result)
-        logger.info("[TIMING] step4 STAR 3그룹 병렬: %.2fs", time.time() - t0)
+        # Step 3: gap 계산
+        t0 = time.time()
+        gap_result = calculate_gap(
+            jd_keywords=jd_kw,
+            jd_requirements=jd_req,
+            resume_analysis=resume_summary,
+            unmatched_keywords=match_result["unmatched_keywords"],
+            trait_details=match_result.get("trait_details"),
+        )
+        gap_message = build_gap_message(gap_result, inferred_level)
+        logger.info("[TIMING] step3 gap: %.2fs", time.time() - t0)
 
-        questions = build_question_output(questions_with_star)
-
-        # Step 5: JdAnalysis 생성
+        # Step 4: JdAnalysis 생성
         jd_analysis = JdAnalysis.objects.create(
             user=session.user,
             jd_id=session.jd_id,
@@ -180,20 +148,8 @@ def _run_analysis(session_id: int):
             cl_points=match_result["cl_points"],
         )
 
-        # 7) 질문 DB 저장
-        db_records = to_db_records(questions, str(jd_analysis.id))
-        GeneratedQuestion.objects.bulk_create([
-            GeneratedQuestion(
-                jd_analysis=jd_analysis,
-                question_type=r["question_type"],
-                question_text=r["question_text"],
-                source=r["source"],
-                source_ref=r["source_ref"],
-                answer=r["answer"],
-                order=r["order"],
-            )
-            for r in db_records
-        ])
+        # 예상 질문/STAR은 분석과 분리됨 — 결과 화면의 "예상 질문 생성" 버튼이
+        # /analysis/questions/ 를 호출할 때 생성·저장된다 (AnalysisQuestionsView).
 
         # input.JobDescription에 분석 결과 반영
         summary_parts = []
@@ -379,7 +335,7 @@ class AnalysisStartView(APIView):
         threading.Thread(
             target=_run_analysis,
             args=(session.id,),
-            daemon=True,
+            daemon=False,
         ).start()
 
         return Response({"session_id": session.id, "status": "analyzing"}, status=201)
@@ -423,17 +379,8 @@ class AnalysisMatchView(APIView):
             "resume_analysis": {...},
             "strengths":       [...],
             "weaknesses":      [...],
-            "cl_points":       [...],
-            "questions": [
-                {
-                    "id":            "uuid",
-                    "question_type": "technical",
-                    "question_text": "...",
-                    "answer":        { "summary": "...", "situation": "...", ... },
-                    "order":         0
-                },
-                ...
-            ]
+            "cl_points":       [...]
+            # 예상 질문은 분리됨 — GET/POST /analysis/questions/ 로 조회·생성
         }
     """
     permission_classes = [IsAuthenticated]
@@ -451,12 +398,10 @@ class AnalysisMatchView(APIView):
                 status=400,
             )
 
-        jd_analysis = JdAnalysis.objects.get(id=session.jd_analysis_id)
-        questions = list(
-            jd_analysis.questions.values(
-                "id", "question_type", "question_text", "answer", "order"
-            )
-        )
+        try:
+            jd_analysis = JdAnalysis.objects.get(id=session.jd_analysis_id)
+        except JdAnalysis.DoesNotExist:
+            return Response({"error": "분석 결과를 찾을 수 없습니다."}, status=status.HTTP_404_NOT_FOUND)
 
         resume_meta = jd_analysis.resume_analysis
         return Response({
@@ -473,5 +418,161 @@ class AnalysisMatchView(APIView):
             "strengths":           jd_analysis.strengths,
             "weaknesses":          jd_analysis.weaknesses,
             "cl_points":           jd_analysis.cl_points,
-            "questions":           questions,
+            "questions":           _serialize_generated_questions(jd_analysis),
         })
+
+
+class AnalysisQuestionsView(APIView):
+    """
+    예상 면접 질문 + STAR 답변 (분석과 분리된 온디맨드 생성).
+
+    GET  /api/v1/analysis/questions/?session_id=1
+        → 이미 생성된 질문 반환. 없으면 생성하지 않고 generated=false.
+    POST /api/v1/analysis/questions/  { "session_id": 1 }
+        → 생성(이미 있으면 기존 반환) 후 질문 목록 반환. 멱등.
+
+    RESPONSE (200):
+        {
+            "generated": true,
+            "questions": [
+                {"id": "uuid", "question_type": "technical", "question_text": "...",
+                 "answer": {...}, "order": 0},
+                ...
+            ]
+        }
+    """
+    permission_classes = [IsAuthenticated]
+
+    def _serialize(self, jd_analysis):
+        return _serialize_generated_questions(jd_analysis)
+
+    def _ready_analysis(self, request, session_id):
+        """(jd_analysis | None, session). 세션 없으면 DoesNotExist 전파."""
+        session = AnalysisSession.objects.get(id=session_id, user=request.user)
+        if session.status != "ready" or not session.jd_analysis_id:
+            return None, session
+        return JdAnalysis.objects.get(id=session.jd_analysis_id), session
+
+    def _payload(self, jd_analysis, questions):
+        return {
+            "generated":         bool(questions),
+            "questions":         questions,
+            "generation_count":  jd_analysis.generation_count,
+            "max_generations":   MAX_QUESTION_GENERATIONS,
+        }
+
+    def get(self, request):
+        session_id = request.query_params.get("session_id")
+        try:
+            jd_analysis, _ = self._ready_analysis(request, session_id)
+        except AnalysisSession.DoesNotExist:
+            return Response({"error": "세션을 찾을 수 없습니다."}, status=status.HTTP_404_NOT_FOUND)
+        if jd_analysis is None:
+            return Response({"generated": False, "questions": [], "generation_count": 0,
+                             "max_generations": MAX_QUESTION_GENERATIONS})
+        return Response(self._payload(jd_analysis, self._serialize(jd_analysis)))
+
+    def post(self, request):
+        session_id = request.data.get("session_id")
+        regenerate = bool(request.data.get("regenerate"))
+        try:
+            jd_analysis, session = self._ready_analysis(request, session_id)
+        except AnalysisSession.DoesNotExist:
+            return Response({"error": "세션을 찾을 수 없습니다."}, status=status.HTTP_404_NOT_FOUND)
+        if jd_analysis is None:
+            return Response({"error": "분석이 아직 완료되지 않았습니다."}, status=400)
+
+        existing = self._serialize(jd_analysis)
+
+        # 멱등 조회: 이미 있고 재생성 요청이 아니면 그대로 반환 (카운트 변동 없음)
+        if existing and not regenerate:
+            return Response(self._payload(jd_analysis, existing))
+
+        # 생성 또는 재생성 — 무료 상한 검사
+        if jd_analysis.generation_count >= MAX_QUESTION_GENERATIONS:
+            return Response(
+                {
+                    "error": f"이 분석의 질문 생성 횟수({MAX_QUESTION_GENERATIONS}회)를 모두 사용했습니다.",
+                    "generation_count": jd_analysis.generation_count,
+                    "max_generations": MAX_QUESTION_GENERATIONS,
+                },
+                status=429,   # Too Many Requests (Phase 2: 포인트 차감 분기 자리)
+            )
+
+        try:
+            # 재생성 시 직전 질문을 프롬프트에 넘겨 "다르게" 생성하도록 유도할 수 있음 (추후)
+            questions = generate_all_questions(
+                job_role=session.job_role,
+                company_name=session.company_name,
+                jd_keywords=jd_analysis.jd_keywords,
+                resume_analysis=jd_analysis.resume_analysis,
+                jd_text=session.jd_text,
+                resume_text=session.resume_text,
+                cover_letter_text=session.cover_letter_text,
+                # projects=...: GitHub 검증 질문은 merge_with_github 연동 후 주입 (현재 미연동)
+            )
+            db_records = to_db_records(questions, str(jd_analysis.id))
+            with transaction.atomic():
+                if regenerate:
+                    jd_analysis.questions.all().delete()   # 기존 질문 교체
+                GeneratedQuestion.objects.bulk_create([
+                    GeneratedQuestion(
+                        jd_analysis=jd_analysis,
+                        question_type=r["question_type"],
+                        question_text=r["question_text"],
+                        source=r["source"],
+                        source_ref=r["source_ref"],
+                        answer=r["answer"],
+                        order=r["order"],
+                    )
+                    for r in db_records
+                ])
+                # 원자적 증가 (더블클릭 이중 카운트 방지)
+                JdAnalysis.objects.filter(id=jd_analysis.id).update(
+                    generation_count=F("generation_count") + 1
+                )
+        except Exception as e:
+            logger.error("[Analysis] 질문 생성 실패 session=%s: %s", session_id, e, exc_info=True)
+            return Response({"error": "질문 생성 중 오류가 발생했습니다."}, status=500)
+
+        jd_analysis.refresh_from_db(fields=["generation_count"])
+        return Response(self._payload(jd_analysis, self._serialize(jd_analysis)))
+
+
+class QuestionFeedbackView(APIView):
+    """
+    예상 질문/답변 만족도 신호 저장 (👍/👎).
+
+    POST /api/v1/analysis/feedback/
+        { "session_id": 1, "rating": "up" | "down", "comment": "(선택)" }
+
+    피드백 시점의 generation_count를 함께 저장해 "몇 번째 생성에 만족했는지"를 남긴다.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        session_id = request.data.get("session_id")
+        rating     = request.data.get("rating")
+        comment    = request.data.get("comment", "") or ""
+
+        if rating not in ("up", "down"):
+            return Response({"error": "rating은 'up' 또는 'down'이어야 합니다."}, status=400)
+
+        try:
+            session = AnalysisSession.objects.get(id=session_id, user=request.user)
+        except AnalysisSession.DoesNotExist:
+            return Response({"error": "세션을 찾을 수 없습니다."}, status=status.HTTP_404_NOT_FOUND)
+        if not session.jd_analysis_id:
+            return Response({"error": "분석이 아직 완료되지 않았습니다."}, status=400)
+
+        try:
+            jd_analysis = JdAnalysis.objects.get(id=session.jd_analysis_id)
+        except JdAnalysis.DoesNotExist:
+            return Response({"error": "분석 결과를 찾을 수 없습니다."}, status=status.HTTP_404_NOT_FOUND)
+        QuestionFeedback.objects.create(
+            jd_analysis=jd_analysis,
+            rating=rating,
+            generation_count=jd_analysis.generation_count,
+            comment=comment[:1000],
+        )
+        return Response({"ok": True}, status=201)

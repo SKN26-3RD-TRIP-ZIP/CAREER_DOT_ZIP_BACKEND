@@ -181,6 +181,42 @@ class AIChainOpenAIEngineTest(TestCase):
         with self.assertRaises(AIChainOpenAIError):
             engine.generate_questions(self._question_generation_payload())
 
+    def test_openai_question_generation_preserves_expected_technical_keywords(self):
+        raw_response = """{
+          "session_id": "11111111-1111-1111-1111-111111111111",
+          "questions": [
+            {
+              "client_question_key": "q_001",
+              "question_text": "Explain the Django API transaction design.",
+              "question_type": "main",
+              "question_category": "technical",
+              "expected_technical_keywords": [
+                "Django transaction.atomic",
+                "rollback",
+                "idempotency"
+              ],
+              "difficulty": "medium",
+              "order_index": 1,
+              "source_tags": [{"source_type": "jd"}]
+            }
+          ]
+        }"""
+        fake_client = FakeOpenAIClient(raw_response)
+        engine = AIChainOpenAIEngine(
+            api_key="test-api-key",
+            client_factory=lambda api_key: fake_client,
+            enable_real_call=True,
+        )
+
+        result = engine.generate_questions(self._question_generation_payload())
+        question = result["questions"][0]
+
+        self.assertEqual(question["question_category"], "technical")
+        self.assertEqual(
+            question["expected_technical_keywords"],
+            "Django transaction.atomic, rollback, idempotency",
+        )
+
     def test_openai_engine_keeps_answer_sufficiency_contract_with_fallback(self):
         result = self.engine.judge_answer_sufficiency(self._sufficiency_payload())
 
@@ -742,6 +778,12 @@ class AIChainOpenAIEngineTest(TestCase):
         )
         self.assertEqual(result["prompt_version_id"], version.id)
         self.assertEqual(result["prompt_source"], "db")
+        self.assertEqual(result["generation_source"], "openai")
+        self.assertEqual(result["prompt_type"], "question_generation")
+        self.assertEqual(result["prompt_template_id"], version.template_id)
+        self.assertEqual(result["prompt_template_name"], version.template.title)
+        self.assertEqual(result["prompt_version_label"], "v1")
+        self.assertTrue(result["is_active_prompt_version"])
 
     def test_question_generation_uses_fallback_prompt_and_returns_metadata_without_db_prompt(self):
         raw_response = """{
@@ -769,6 +811,10 @@ class AIChainOpenAIEngineTest(TestCase):
         )
         self.assertIsNone(result["prompt_version_id"])
         self.assertEqual(result["prompt_source"], "fallback")
+        self.assertEqual(result["generation_source"], "openai")
+        self.assertEqual(result["prompt_type"], "question_generation")
+        self.assertIsNone(result["prompt_template_id"])
+        self.assertFalse(result["is_active_prompt_version"])
 
     def test_answer_sufficiency_uses_db_prompt_and_returns_metadata(self):
         version = self._create_prompt_version(
@@ -805,6 +851,11 @@ class AIChainOpenAIEngineTest(TestCase):
         )
         self.assertEqual(result["prompt_version_id"], version.id)
         self.assertEqual(result["prompt_source"], "db")
+        self.assertEqual(result["prompt_type"], "answer_evaluation")
+        self.assertEqual(result["prompt_template_id"], version.template_id)
+        self.assertEqual(result["prompt_template_name"], version.template.title)
+        self.assertEqual(result["prompt_version_label"], "v1")
+        self.assertTrue(result["is_active_prompt_version"])
 
     def test_followup_generation_uses_db_prompt_and_returns_metadata(self):
         version = self._create_prompt_version(
@@ -833,3 +884,9 @@ class AIChainOpenAIEngineTest(TestCase):
         )
         self.assertEqual(result["prompt_version_id"], version.id)
         self.assertEqual(result["prompt_source"], "db")
+        self.assertEqual(result["generation_source"], "openai")
+        self.assertEqual(result["prompt_type"], "follow_up_generation")
+        self.assertEqual(result["prompt_template_id"], version.template_id)
+        self.assertEqual(result["prompt_template_name"], version.template.title)
+        self.assertEqual(result["prompt_version_label"], "v1")
+        self.assertTrue(result["is_active_prompt_version"])

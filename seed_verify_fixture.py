@@ -60,7 +60,7 @@ for i, grounded in enumerate(GROUNDED, start=1):
         answer=a,
         bei_score=dict(BEI),
         cbi_score={"assigned_level": 3, "score": 70},
-        final_tech_score=70,
+        answer_score=70,
         score_detail={
             "grounding": {
                 "is_grounded": grounded,

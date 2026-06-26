@@ -1,3 +1,11 @@
+"""Active nested REST interview API.
+
+Mounted under /api/v1/interviews/. This surface provides rich session-oriented
+responses such as turns, source tags, evaluation data, and progress. The flat
+MVP API in mvp_views.py is also active; neither surface should be removed or
+merged until consumers agree on a canonical contract.
+"""
+
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from rest_framework import generics, permissions, status
@@ -35,6 +43,8 @@ from .serializers import (
     InterviewTurnSerializer,
     get_persona_detail,
 )
+
+EXPECTED_TECHNICAL_KEYWORDS_LABEL = 'expected_technical_keywords'
 
 
 class InterviewSessionListCreateView(generics.ListCreateAPIView):
@@ -277,20 +287,37 @@ class InterviewSessionTurnsView(APIView):
 
 def _save_question_source_tags(question, source_tags):
     normalized_tags = []
+    seen_labels = set(
+        question.source_tags.values_list('source_label', flat=True)
+    )
 
     for tag in source_tags or []:
         if not isinstance(tag, dict):
             continue
 
+        source_label = tag.get('source_label') or ''
+        if source_label == EXPECTED_TECHNICAL_KEYWORDS_LABEL:
+            if question.question_category != 'technical':
+                continue
+            if source_label in seen_labels:
+                continue
+            source_text_excerpt = (tag.get('source_text_excerpt') or '').strip()
+            if not source_text_excerpt:
+                continue
+        else:
+            source_text_excerpt = tag.get('source_text_excerpt') or ''
+
         normalized_tags.append(
             QuestionSourceTag(
                 question=question,
                 source_type=tag.get('source_type') or question.source_type or 'general',
-                source_label=tag.get('source_label') or '',
-                source_text_excerpt=tag.get('source_text_excerpt') or '',
+                source_label=source_label,
+                source_text_excerpt=source_text_excerpt,
                 source_reference=tag.get('source_reference') or question.source_reference or '',
             )
         )
+        if source_label:
+            seen_labels.add(source_label)
 
     if normalized_tags:
         QuestionSourceTag.objects.bulk_create(normalized_tags)
@@ -435,6 +462,8 @@ class InterviewQuestionListView(generics.ListAPIView):
 
 
 class InterviewAnswerSaveView(APIView):
+    """Save or replace an answer under the nested REST contract."""
+
     permission_classes = [permissions.IsAuthenticated]
 
     def get_session(self, session_id):

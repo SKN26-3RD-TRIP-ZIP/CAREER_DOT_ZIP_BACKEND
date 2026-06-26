@@ -12,7 +12,9 @@ class Evaluation(models.Model):
     sbert_db_similarity = models.FloatField(blank=True, null=True)
     sbert_readme_similarity = models.FloatField(blank=True, null=True)
     llm_concept_score = models.PositiveIntegerField(blank=True, null=True)
-    final_tech_score = models.PositiveIntegerField(blank=True, null=True)
+    # 답변 1개에 대한 종합 점수(기술/인성 공통). 과거명 final_tech_score는
+    # 비기술 답변 점수까지 담으면서 의미가 어긋나 answer_score로 변경(2026-06).
+    answer_score = models.PositiveIntegerField(blank=True, null=True)
     score_detail = models.JSONField(default=dict, blank=True)
     # E7.4 — 감정/의도 분류 결과 (확률값 + 신뢰도 보정)
     emotion_intent_score = models.JSONField(default=dict, blank=True)

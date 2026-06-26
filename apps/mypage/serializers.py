@@ -1,15 +1,27 @@
 from rest_framework import serializers
-
 from apps.interview.models import InterviewSession
 from apps.report.models import FinalReport
 
 
+class GrowthPointSerializer(serializers.Serializer):
+    session_id = serializers.CharField()
+    date = serializers.CharField()
+    label = serializers.CharField()
+    overall_score = serializers.IntegerField()
+
+
+class GrowthResponseSerializer(serializers.Serializer):
+    points = GrowthPointSerializer(many=True)
+    first_score = serializers.IntegerField(allow_null=True)
+    latest_score = serializers.IntegerField(allow_null=True)
+    delta = serializers.IntegerField()
+    improved_count = serializers.IntegerField()
+    insights = serializers.ListField(child=serializers.CharField())
+
+
 class InterviewHistoryQuerySerializer(serializers.Serializer):
     limit = serializers.IntegerField(required=False, default=10, min_value=1)
-    status = serializers.ChoiceField(
-        choices=InterviewSession.STATUS_CHOICES,
-        required=False,
-    )
+    status = serializers.ChoiceField(choices=InterviewSession.STATUS_CHOICES, required=False)
 
 
 class InterviewHistorySerializer(serializers.ModelSerializer):
@@ -49,13 +61,10 @@ class InterviewHistorySerializer(serializers.ModelSerializer):
         except FinalReport.DoesNotExist:
             return None
 
-    def get_has_report(self, obj):
-        return self.get_report(obj) is not None
-
+    def get_has_report(self, obj): return self.get_report(obj) is not None
     def get_report_id(self, obj):
         report = self.get_report(obj)
         return str(report.id) if report else None
-
     def get_overall_score(self, obj):
         report = self.get_report(obj)
         if not report:

@@ -121,6 +121,7 @@ class User(AbstractBaseUser, PermissionsMixin):
         ('active', 'Active'),
         ('dormant', 'Dormant'),
         ('banned', 'Banned'),
+        ('withdrawn', 'Withdrawn'),
     ]
 
     id = models.BigAutoField(primary_key=True)
@@ -133,6 +134,8 @@ class User(AbstractBaseUser, PermissionsMixin):
     dormancy_warning_sent_at = models.DateTimeField(null=True, blank=True, default=None)
     point_balance = models.PositiveIntegerField(default=0)
     point_last_updated_at = models.DateTimeField(null=True, blank=True, default=None)
+    withdrawn_at = models.DateTimeField(null=True, blank=True, default=None)
+    attendance_record = models.DateField(null=True, blank=True, default=None)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     

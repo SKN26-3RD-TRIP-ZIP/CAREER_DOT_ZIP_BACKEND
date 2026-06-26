@@ -44,22 +44,22 @@ class InterviewSessionPersonaValidationAPITest(APITestCase):
         )
 
     def test_session_creation_accepts_official_persona_type(self):
-        response = self.create_session(persona='friendly')
+        response = self.create_session(persona='coach')
 
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
-        self.assertEqual(response.data['persona'], 'friendly')
+        self.assertEqual(response.data['persona'], 'coach')
 
         session = InterviewSession.objects.get(id=response.data['session_id'])
-        self.assertEqual(session.persona, 'friendly')
+        self.assertEqual(session.persona, 'coach')
 
     def test_session_creation_normalizes_persona_aliases(self):
-        coach_response = self.create_session(persona='coach')
-        strict_response = self.create_session(persona='strict')
+        coach_response = self.create_session(persona='friendly')
+        strict_response = self.create_session(persona='verify')
 
         self.assertEqual(coach_response.status_code, status.HTTP_201_CREATED)
         self.assertEqual(strict_response.status_code, status.HTTP_201_CREATED)
-        self.assertEqual(coach_response.data['persona'], 'friendly')
-        self.assertEqual(strict_response.data['persona'], 'verify')
+        self.assertEqual(coach_response.data['persona'], 'coach')
+        self.assertEqual(strict_response.data['persona'], 'verifier')
 
     def test_session_creation_falls_back_to_practical_when_persona_is_unknown(self):
         response = self.create_session(persona='unknown-persona')

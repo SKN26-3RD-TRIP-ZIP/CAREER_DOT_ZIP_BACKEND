@@ -1,4 +1,5 @@
 from django.contrib.auth import get_user_model
+from django.test import override_settings
 from django.urls import reverse
 from rest_framework import status
 from rest_framework.test import APITestCase
@@ -9,6 +10,8 @@ from apps.interview.models import InterviewAnswer, InterviewQuestion, InterviewS
 from apps.report.models import FinalReport
 
 
+# 리포트 비동기 생성을 테스트에서는 인라인(EAGER)으로 실행해 결정성을 확보한다.
+@override_settings(REPORT_GENERATION_EAGER=True)
 class BackendMVPFlowIntegrationTests(APITestCase):
     def setUp(self):
         user_model = get_user_model()
@@ -73,7 +76,7 @@ class BackendMVPFlowIntegrationTests(APITestCase):
             bei_score={'score': 80},
             cbi_score={'score': 86},
             llm_concept_score=85,
-            final_tech_score=88,
+            answer_score=88,
             score_detail={
                 'summary': 'Technically solid answer.',
                 'improvement': 'Add more business impact details.',

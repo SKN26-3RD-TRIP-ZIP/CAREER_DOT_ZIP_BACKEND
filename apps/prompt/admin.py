@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import PersonaConfig, PromptTemplate, PromptVersion
+from .models import AdminPromptTestRun, PersonaConfig, PromptTemplate, PromptVersion
 
 
 @admin.register(PersonaConfig)
@@ -30,3 +30,10 @@ class PromptVersionAdmin(admin.ModelAdmin):
     list_display = ('id', 'template', 'version_number', 'created_by', 'created_at')
     list_filter = ('template__prompt_type', 'created_at')
     search_fields = ('template__title', 'content', 'change_note')
+
+
+@admin.register(AdminPromptTestRun)
+class AdminPromptTestRunAdmin(admin.ModelAdmin):
+    list_display = ('id', 'admin_user', 'prompt_version', 'session', 'created_at')
+    list_filter = ('created_at', 'prompt_version__template__persona_config__persona_type')
+    search_fields = ('admin_user__email', 'admin_user__username', 'session__id')
