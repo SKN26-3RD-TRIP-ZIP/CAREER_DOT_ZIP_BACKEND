@@ -134,14 +134,3 @@ Frontend 영향:
 Rollback:
 신규 FK/테이블 제거 전 참조 API 배포 롤백 필요
 ```
-
-## 고도화 제안 연계 (제안, 미반영)
-
-아래 신규 테이블은 `docs/CAREER_ZIP_ENHANCEMENT_PLAN.md`에서 `[제안]`으로 설계 중이며, **팀 합의 전에는 이 ERD 본문에 반영하지 않고 Migration도 생성하지 않는다.**
-
-- `point_wallet`, `point_transaction`, `point_policy` — 사용자 포인트 원장(멱등 적립/차감/환불). 계획서 §7-5.
-- `guardrail_event` — AI 가드레일 이벤트 로그(원문 미저장, 카테고리·등급·처리결과만). 계획서 §8-6.
-- `terms_agreements` — 약관 영구 동의 이력(현재는 PendingRegistration snapshot만 존재). 계획서 §5-4.
-- `ProjectExperience -> ResumeMaster` 매핑 — 위 "승인 필요" 항목과 동일 건. 계획서 §5-5.
-
-승인 절차·영향도·Rollback은 계획서 §11(팀 합의 Q3~Q5) 참조.
