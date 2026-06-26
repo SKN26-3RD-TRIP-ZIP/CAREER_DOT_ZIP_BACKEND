@@ -79,8 +79,14 @@ class EvaluationLogicTestCase(TestCase):
 
     def test_dysfluency_local_logic(self):
         """[Task 2] 로컬 비유창성(필러워드) 분석 로직 검증"""
-        # "어", "그니까", "사실" 총 3개의 필러워드가 포함된 텍스트 분석
-        res = EvaluationService.analyze_dysfluency_local(self.dummy_stt_text, long_pause_count=0)
-        
-        self.assertEqual(res["total_filler_count"], 3)
+        # "어", "그니까"는 필러로 집계하고,
+        # 정상 어휘 사용 빈도가 높은 "사실"은 필러에서 제외한다.
+        res = EvaluationService.analyze_dysfluency_local(
+            self.dummy_stt_text,
+            long_pause_count=0,
+        )
+
+        self.assertEqual(res["total_filler_count"], 2)
         self.assertIn("어", res["filler_word_counts"])
+        self.assertEqual(res["filler_word_counts"]["어"], 1)
+        self.assertNotIn("사실", res["filler_word_counts"])

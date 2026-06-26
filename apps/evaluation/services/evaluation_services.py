@@ -47,6 +47,7 @@ kiwi = Kiwi()
 # 추임새(필러)로 셀 단어. "사실"·"이제"는 정상 어휘로 쓰이는 빈도가 높아(추임새로서의
 # precision이 낮아) 오탐을 막기 위해 제외한다.
 FILLER_WORDS = ["어", "음", "그니까", "그러니까", "저기"]
+SINGLE_SYLLABLE_FILLER_TAGS = {"IC"}
 
 # 근접 반복 탐지 윈도우(토큰 수). 동일 content 토큰이 이 범위 안에서 재등장하면 1회 반복으로
 # 카운트한다. 말 더듬/즉시 반복 같은 비유창성을 잡되 멀리 떨어진 주제어 반복은 제외하도록 작게 둔다.
@@ -139,16 +140,26 @@ class EvaluationService:
 
         # 형태소 토큰을 먼저 산출 — 단음절 필러의 부분문자열 오탐(예: "들어","어렵다",
         # "마음","처음")을 막기 위해 토큰 경계 기준으로 카운트한다.
-        tokens = [t.form for t in kiwi.tokenize(stt_text)]
+        kiwi_tokens = list(kiwi.tokenize(stt_text))
+        tokens = [token.form for token in kiwi_tokens]
         token_counter = Counter(tokens)
 
         filler_counts = {}
         total_filler = 0
+
         for word in FILLER_WORDS:
-            # 단/다음절 필러 모두 형태소 토큰 정확 일치로만 카운트한다.
-            # (부분문자열 카운트는 "사실상"·"이제부터"처럼 정상 어휘 안에 포함된
-            #  필러까지 오탐하므로 토큰 경계 기준으로 통일)
-            count = token_counter.get(word, 0)
+            if len(word) == 1:
+                # 단음절 필러("어", "음")는 독립 감탄사(IC)인 경우만 집계한다.
+                count = sum(
+                    1
+                    for token in kiwi_tokens
+                    if token.form == word
+                    and token.tag in SINGLE_SYLLABLE_FILLER_TAGS
+                )
+            else:
+                # 다음절 필러는 형태소 토큰 완전 일치로 집계한다.
+                count = token_counter.get(word, 0)
+
             if count > 0:
                 filler_counts[word] = count
                 total_filler += count
