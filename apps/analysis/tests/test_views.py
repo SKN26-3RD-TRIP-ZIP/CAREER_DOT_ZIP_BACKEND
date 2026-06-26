@@ -20,7 +20,6 @@ import uuid
 import pprint
 from unittest.mock import MagicMock, patch
 
-from django.contrib.auth.models import AnonymousUser
 from django.test import SimpleTestCase
 from django.urls import reverse
 from rest_framework.test import APIClient
@@ -180,10 +179,25 @@ class TestAnalysisStartView(SimpleTestCase):
         self.user   = _mock_user()
         self.client.force_authenticate(user=self.user)
         self.url  = reverse("analysis-analyze")
+        self.jd = MagicMock()
+        self.jd.id = MOCK_JD_ID
+        self.jd.position = "백엔드 개발자"
+        self.jd.company_name = "커리어닷집"
+        self.jd.original_text = "Python, Django 기반 백엔드 개발자 채용"
+        self.resume = MagicMock()
+        self.resume.id = MOCK_RESUME_ID
+        self.resume.original_text = "Python Django 2년 경력"
+        self.jd_get_patcher = patch("apps.analysis.views.JobDescription.objects.get")
+        self.resume_get_patcher = patch("apps.analysis.views.ResumeMaster.objects.get")
+        self.mock_jd_get = self.jd_get_patcher.start()
+        self.mock_resume_get = self.resume_get_patcher.start()
+        self.mock_jd_get.return_value = self.jd
+        self.mock_resume_get.return_value = self.resume
+        self.addCleanup(self.jd_get_patcher.stop)
+        self.addCleanup(self.resume_get_patcher.stop)
         self.body = {
             "jd_id":             MOCK_JD_ID,
             "resume_id":         MOCK_RESUME_ID,
-            "cover_letter_id":   MOCK_CL_ID,
             "job_role":          "백엔드 개발자",
             "company_name":      "커리어닷집",
             "jd_text":           "Python, Django 기반 백엔드 개발자 채용",
@@ -223,7 +237,7 @@ class TestAnalysisStartView(SimpleTestCase):
     def test_career_level_기본값_entry(self, mock_create, mock_thread):
         """career_level 미전송 시 기본값 entry로 create 호출되어야 함"""
         mock_create.return_value = _mock_session()
-        body = {"job_role": "백엔드", "jd_text": "JD 텍스트"}
+        body = {"jd_id": MOCK_JD_ID, "resume_id": MOCK_RESUME_ID}
         self.client.post(self.url, body, format="json")
 
         _, kwargs = mock_create.call_args
@@ -240,6 +254,9 @@ class TestAnalysisStartView(SimpleTestCase):
 
         self.assertEqual(kwargs["job_role"],          "백엔드 개발자")
         self.assertEqual(kwargs["company_name"],      "커리어닷집")
+        self.assertEqual(kwargs["jd_id"],             MOCK_JD_ID)
+        self.assertEqual(kwargs["resume_id"],         MOCK_RESUME_ID)
+        self.assertIsNone(kwargs["cover_letter_id"])
         self.assertEqual(kwargs["career_level"],      "experienced")
         self.assertEqual(kwargs["status"],            "analyzing")
 
@@ -249,11 +266,10 @@ class TestAnalysisStartView(SimpleTestCase):
 
         mock_thread.assert_called_once()
         mock_thread.return_value.start.assert_called_once()
-        print("\n[analyze] 백그라운드 스레드 실행 확인 ✓")
+        print("\n[analyze] 백그라운드 스레드 실행 확인")
 
     def test_미인증_401(self, mock_create, mock_thread):
-        self.client.force_authenticate(user=AnonymousUser())
-        res = self.client.post(self.url, {}, format="json")
+        res = APIClient().post(self.url, {}, format="json")
 
         print(f"\n[analyze] 미인증 응답: {res.status_code}")
         self.assertEqual(res.status_code, 401)
@@ -328,8 +344,7 @@ class TestAnalysisStatusView(SimpleTestCase):
         self.assertIn("error", res.data)
 
     def test_미인증_401(self, mock_get):
-        self.client.force_authenticate(user=AnonymousUser())
-        res = self.client.post(self.url, {"session_id": MOCK_SESSION_ID}, format="json")
+        res = APIClient().post(self.url, {"session_id": MOCK_SESSION_ID}, format="json")
 
         self.assertEqual(res.status_code, 401)
 
@@ -465,7 +480,7 @@ class TestAnalysisMatchView(SimpleTestCase):
             missing = star_keys - set(q["answer"].keys())
             self.assertFalse(missing,
                              f"STAR 필드 누락: {missing} — {q['question_text'][:30]}")
-        print("\n[match] 모든 질문 STAR 구조 확인 ✓")
+        print("\n[match] 모든 질문 STAR 구조 확인")
 
     def test_questions_타입별_분포(self, mock_session_get, mock_jd_get):
         mock_session_get.return_value = _mock_session(status="ready")
@@ -515,7 +530,6 @@ class TestAnalysisMatchView(SimpleTestCase):
         self.assertEqual(res.status_code, 404)
 
     def test_미인증_401(self, mock_session_get, mock_jd_get):
-        self.client.force_authenticate(user=AnonymousUser())
-        res = self.client.post(self.url, {"session_id": MOCK_SESSION_ID}, format="json")
+        res = APIClient().post(self.url, {"session_id": MOCK_SESSION_ID}, format="json")
 
         self.assertEqual(res.status_code, 401)

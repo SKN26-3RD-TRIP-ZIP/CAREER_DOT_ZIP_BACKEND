@@ -12,7 +12,11 @@ question_merge_service 단위 테스트 (임베딩 모킹)
   pytest apps/analysis/tests/test_question_merge_service.py -v -s
 """
 
-import pytest
+import unittest
+try:
+    import pytest
+except ModuleNotFoundError:
+    raise unittest.SkipTest("pytest is required for this pytest-style analysis test module")
 from unittest.mock import patch
 from apps.analysis.services.question_merge_service import merge_and_deduplicate
 

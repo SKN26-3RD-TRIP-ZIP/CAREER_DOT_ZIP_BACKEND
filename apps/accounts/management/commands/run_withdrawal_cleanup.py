@@ -52,7 +52,7 @@ class Command(BaseCommand):
         for user in targets:
             self.stdout.write(f"  - id={user.id} {user.email} (탈퇴일: {user.withdrawn_at.date()})")
 
-        if dry_run:       
+        if dry_run:
             return
 
         from apps.accounts.tasks import cleanup_withdrawn_accounts

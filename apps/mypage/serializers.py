@@ -31,13 +31,28 @@ class InterviewHistorySerializer(serializers.ModelSerializer):
     has_report = serializers.SerializerMethodField()
     report_id = serializers.SerializerMethodField()
     overall_score = serializers.SerializerMethodField()
+    score_status = serializers.SerializerMethodField()
+    evaluation_status = serializers.SerializerMethodField()
+    is_mock = serializers.SerializerMethodField()
 
     class Meta:
         model = InterviewSession
         fields = (
-            'session_id', 'interview_type', 'persona', 'status',
-            'question_count', 'answer_count', 'has_report', 'report_id',
-            'overall_score', 'started_at', 'ended_at', 'created_at',
+            'session_id',
+            'interview_type',
+            'persona',
+            'status',
+            'question_count',
+            'answer_count',
+            'has_report',
+            'report_id',
+            'overall_score',
+            'score_status',
+            'evaluation_status',
+            'is_mock',
+            'started_at',
+            'ended_at',
+            'created_at',
         )
 
     def get_report(self, obj):
@@ -52,4 +67,22 @@ class InterviewHistorySerializer(serializers.ModelSerializer):
         return str(report.id) if report else None
     def get_overall_score(self, obj):
         report = self.get_report(obj)
-        return report.overall_score if report else None
+        if not report:
+            return None
+        return report.overall_score
+
+    def get_score_status(self, obj):
+        report = self.get_report(obj)
+        if not report:
+            return 'NOT_EVALUATED'
+        return report.score_status
+
+    def get_evaluation_status(self, obj):
+        report = self.get_report(obj)
+        if not report:
+            return 'PENDING'
+        return report.evaluation_status
+
+    def get_is_mock(self, obj):
+        report = self.get_report(obj)
+        return bool(report and report.is_mock)

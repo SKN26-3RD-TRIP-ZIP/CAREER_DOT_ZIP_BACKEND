@@ -1,9 +1,11 @@
 from datetime import timedelta
 
 from django.contrib.auth import get_user_model
-from django.db.models import Count, Sum
+from django.db.models import Count, Q, Sum
 from django.utils import timezone
 
+from apps.accounts.models import PointHistory
+from apps.interview.models import GuardrailEvent
 from apps.interview.models import InterviewSession
 from apps.report.models import FinalReport
 from ..models import ApiErrorLog, LlmUsageLog
@@ -43,7 +45,7 @@ def _monthly_llm_cost_usd(month_start):
     """이번 달 LlmUsageLog를 모델별로 묶어 토큰×단가로 비용(USD)을 추정한다."""
     usage = (
         LlmUsageLog.objects
-        .filter(created_at__date__gte=month_start)
+        .filter(created_at__gte=month_start)
         .values('model')
         .annotate(prompt=Sum('prompt_tokens'), completion=Sum('completion_tokens'))
     )
@@ -123,8 +125,21 @@ def build_dashboard_stats():
     ai_calls = LlmUsageLog.objects.count()
 
     # 이번 달 LLM 비용 추정 (USD)
-    month_start = today.replace(day=1)
+    month_start = timezone.now().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     monthly_cost = _monthly_llm_cost_usd(month_start)
+    point_summary = PointHistory.objects.aggregate(
+        earned=Sum('amount', filter=Q(transaction_type=PointHistory.TRANSACTION_EARN)),
+        used=Sum('amount', filter=Q(transaction_type=PointHistory.TRANSACTION_USE)),
+        refunded=Sum('amount', filter=Q(transaction_type=PointHistory.TRANSACTION_REFUND)),
+    )
+    guardrail_by_category = {
+        row['category']: row['count']
+        for row in GuardrailEvent.objects.values('category').annotate(count=Count('id'))
+    }
+    guardrail_by_action = {
+        row['action']: row['count']
+        for row in GuardrailEvent.objects.values('action').annotate(count=Count('id'))
+    }
 
     return {
         'total_members': User.objects.count(),
@@ -139,5 +154,16 @@ def build_dashboard_stats():
         # 이번 달 LLM 비용 추정치 (USD). 표에 있는 모델만 합산.
         'monthly_cost': monthly_cost,
         'cost_currency': 'USD',
+        'points': {
+            'earned': point_summary['earned'] or 0,
+            'used': point_summary['used'] or 0,
+            'refunded': point_summary['refunded'] or 0,
+            'transaction_count': PointHistory.objects.count(),
+        },
+        'guardrails': {
+            'by_category': guardrail_by_category,
+            'by_action': guardrail_by_action,
+            'event_count': GuardrailEvent.objects.count(),
+        },
         'weekly_sessions': weekly_sessions,
     }

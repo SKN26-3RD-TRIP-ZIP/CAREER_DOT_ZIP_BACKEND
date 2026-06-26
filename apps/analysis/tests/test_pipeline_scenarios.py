@@ -13,7 +13,11 @@ GPT/임베딩 호출 없이 순수 계산 함수만으로 수치 비교가 가�
   pytest apps/analysis/tests/test_pipeline_scenarios.py -v -s
 """
 
-import pytest
+import unittest
+try:
+    import pytest
+except ModuleNotFoundError:
+    raise unittest.SkipTest("pytest is required for this pytest-style analysis test module")
 from apps.analysis.services.match_service import _calc_tech_score, _calc_rule_score, CAREER_WEIGHTS
 from apps.analysis.services.gap_service   import calculate_gap, build_gap_message
 from apps.analysis.services.result_service import calc_confidence_interval

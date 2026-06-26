@@ -14,7 +14,11 @@ JD 요건 4종:
   jd_senior       5년+ (석사이상, 백엔드)
 """
 
-import pytest
+import unittest
+try:
+    import pytest
+except ModuleNotFoundError:
+    raise unittest.SkipTest("pytest is required for this pytest-style analysis test module")
 
 
 # ──────────────────────────────────────────────

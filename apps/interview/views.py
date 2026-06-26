@@ -26,11 +26,12 @@ from .serializers import (
     InterviewSessionDetailSerializer,
     InterviewSessionStatusSerializer,
 )
-from .models import InterviewQuestion, QuestionSourceTag
+from .models import GuardrailEvent, InterviewQuestion, QuestionSourceTag
 from .serializers import InterviewQuestionSerializer
 from .services.question_generator import generate_interview_questions
 from .services.follow_up_generator import FollowupGenerator
 from .services.ai_chain_openai_engine import AIChainOpenAIError
+from .services.guardrails import scan_user_input
 from .serializers import FollowUpQuestionSerializer
 from django.db import models
 from django.db.models import Prefetch
@@ -484,6 +485,32 @@ class InterviewAnswerSaveView(APIView):
         serializer = InterviewAnswerCreateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
+        previous_answers = (
+            InterviewAnswer.objects
+            .filter(session=session)
+            .exclude(question=question)
+            .values_list('answer_text', flat=True)
+        )
+        guardrail = scan_user_input(data.get('answer_text'), previous_answers=previous_answers)
+        guardrail_event = GuardrailEvent.objects.create(
+            user=request.user,
+            session=session,
+            question=question,
+            category=guardrail.category,
+            action=guardrail.action,
+            reason_code=guardrail.reason_code,
+            masked_excerpt=guardrail.masked_excerpt,
+            endpoint='interview_answer_save',
+        )
+
+        if guardrail.should_block:
+            return Response(
+                {
+                    'detail': '입력 내용을 저장할 수 없습니다.',
+                    'guardrail': guardrail.as_response(),
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         answer_obj, created = InterviewAnswer.objects.update_or_create(
             question=question,
@@ -493,9 +520,13 @@ class InterviewAnswerSaveView(APIView):
                 'answer_source': data.get('answer_source', 'text'),
             },
         )
+        guardrail_event.answer = answer_obj
+        guardrail_event.save(update_fields=['answer'])
 
         out_serializer = InterviewAnswerSerializer(answer_obj)
-        return Response(out_serializer.data, status=(status.HTTP_201_CREATED if created else status.HTTP_200_OK))
+        response_data = dict(out_serializer.data)
+        response_data['guardrail'] = guardrail.as_response()
+        return Response(response_data, status=(status.HTTP_201_CREATED if created else status.HTTP_200_OK))
 
 
 class InterviewAnswerListView(generics.ListAPIView):

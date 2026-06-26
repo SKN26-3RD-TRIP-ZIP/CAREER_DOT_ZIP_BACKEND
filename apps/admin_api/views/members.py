@@ -5,6 +5,7 @@ from django.utils import timezone
 from rest_framework import status
 from rest_framework.response import Response
 
+from apps.accounts.models import PointHistory
 from apps.report.models import FinalReport
 from ..serializers import (
     MemberInviteSerializer,
@@ -69,6 +70,7 @@ class MemberDetailView(AdminAPIView):
         completed = sessions.filter(status='completed')
         latest = sessions.order_by('-created_at').first()
         report_count = FinalReport.objects.filter(session__user=member).count()
+        recent_points = PointHistory.objects.filter(user=member).order_by('-created_at', '-id')[:10]
 
         return Response({
             'user_id': member.id,
@@ -84,6 +86,19 @@ class MemberDetailView(AdminAPIView):
             'interview_count': sessions.count(),
             'completed_interview_count': completed.count(),
             'report_count': report_count,
+            'point_balance': member.point_balance,
+            'point_last_updated_at': member.point_last_updated_at,
+            'point_histories': [
+                {
+                    'point_history_id': history.id,
+                    'transaction_type': history.transaction_type,
+                    'amount': history.amount,
+                    'balance_after': history.balance_after,
+                    'reason_code': history.reason_code,
+                    'created_at': history.created_at,
+                }
+                for history in recent_points
+            ],
             'latest_interview_at': latest.created_at if latest else None,
         })
 

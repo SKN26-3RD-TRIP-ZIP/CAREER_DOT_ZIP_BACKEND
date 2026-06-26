@@ -20,6 +20,9 @@ def _should_start_scheduler():
     argv0 = os.path.basename(sys.argv[0] or "")
     command = sys.argv[1] if len(sys.argv) > 1 else ""
 
+    if "pytest" in argv0 or any("pytest" in arg for arg in sys.argv):
+        return False
+
     # Management commands initialize apps before scheduler tables may exist.
     if argv0 in {"manage.py", "django-admin", "django-admin.py"}:
         return command == "runserver" and os.environ.get("RUN_MAIN") == "true"

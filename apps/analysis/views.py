@@ -35,6 +35,25 @@ logger = logging.getLogger(__name__)
 MAX_QUESTION_GENERATIONS = 3
 
 
+def _serialize_generated_questions(jd_analysis):
+    questions = jd_analysis.questions.values(
+        "id",
+        "question_type",
+        "question_text",
+        "answer",
+        "order",
+    )
+    if hasattr(questions, "order_by"):
+        questions = questions.order_by("order")
+    serialized = []
+    for question in questions:
+        item = dict(question)
+        if item.get("id") is not None:
+            item["id"] = str(item["id"])
+        serialized.append(item)
+    return serialized
+
+
 def _resolve_future(future, label: str, fallback):
     """
     Future 결과를 안전하게 가져온다.
@@ -399,7 +418,7 @@ class AnalysisMatchView(APIView):
             "strengths":           jd_analysis.strengths,
             "weaknesses":          jd_analysis.weaknesses,
             "cl_points":           jd_analysis.cl_points,
-            # 예상 질문은 분리됨 — GET/POST /analysis/questions/ 로 별도 조회·생성
+            "questions":           _serialize_generated_questions(jd_analysis),
         })
 
 
@@ -425,11 +444,7 @@ class AnalysisQuestionsView(APIView):
     permission_classes = [IsAuthenticated]
 
     def _serialize(self, jd_analysis):
-        return list(
-            jd_analysis.questions.values(
-                "id", "question_type", "question_text", "answer", "order"
-            ).order_by("order")
-        )
+        return _serialize_generated_questions(jd_analysis)
 
     def _ready_analysis(self, request, session_id):
         """(jd_analysis | None, session). 세션 없으면 DoesNotExist 전파."""

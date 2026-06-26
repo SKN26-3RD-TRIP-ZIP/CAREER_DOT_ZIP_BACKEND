@@ -9,7 +9,11 @@ result_service 단위 테스트
   pytest apps/analysis/tests/test_result_service.py -v -s
 """
 
-import pytest
+import unittest
+try:
+    import pytest
+except ModuleNotFoundError:
+    raise unittest.SkipTest("pytest is required for this pytest-style analysis test module")
 from apps.analysis.services.result_service import (
     calc_confidence_interval,
     build_match_result,

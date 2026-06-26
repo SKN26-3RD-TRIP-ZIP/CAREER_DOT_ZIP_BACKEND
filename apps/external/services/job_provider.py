@@ -56,6 +56,7 @@ def get_job_provider(provider_name: str | None = None) -> JobProvider:
             name = getattr(settings, "JOBS_PROVIDER", "mock")
         except Exception:  # noqa: BLE001 - Django 미로딩 환경(단독 테스트) 대비
             name = "mock"
+    name = str(name).strip().lower()
 
     if name == "mock":
         from .mock_jobs_service import MockJobsService

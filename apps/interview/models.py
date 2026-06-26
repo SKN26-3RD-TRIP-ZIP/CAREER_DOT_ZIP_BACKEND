@@ -138,3 +138,44 @@ class InterviewAnswer(models.Model):
 
     def __str__(self):
         return f"Answer for Q{self.question.order_index} (session {self.session.id})"
+
+
+class GuardrailEvent(models.Model):
+    CATEGORY_CHOICES = [
+        ('G0', 'Allow'),
+        ('G1', 'Guide'),
+        ('G2', 'Warn'),
+        ('G3', 'Block Input'),
+        ('G4', 'Sensitive Or Unsafe'),
+        ('G5', 'End Session'),
+    ]
+    ACTION_CHOICES = [
+        ('ALLOW', 'Allow'),
+        ('GUIDE', 'Guide'),
+        ('WARN', 'Warn'),
+        ('BLOCK_INPUT', 'Block Input'),
+        ('END_SESSION', 'End Session'),
+    ]
+
+    id = models.BigAutoField(primary_key=True)
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='guardrail_events')
+    session = models.ForeignKey(InterviewSession, on_delete=models.CASCADE, related_name='guardrail_events', null=True, blank=True)
+    question = models.ForeignKey(InterviewQuestion, on_delete=models.SET_NULL, related_name='guardrail_events', null=True, blank=True)
+    answer = models.ForeignKey(InterviewAnswer, on_delete=models.SET_NULL, related_name='guardrail_events', null=True, blank=True)
+    category = models.CharField(max_length=2, choices=CATEGORY_CHOICES)
+    action = models.CharField(max_length=20, choices=ACTION_CHOICES)
+    reason_code = models.CharField(max_length=80)
+    masked_excerpt = models.CharField(max_length=240, blank=True, default='')
+    endpoint = models.CharField(max_length=120, blank=True, default='')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'guardrail_events'
+        ordering = ['-created_at', '-id']
+        indexes = [
+            models.Index(fields=['category', 'created_at'], name='guardrail_cat_created_idx'),
+            models.Index(fields=['user', 'created_at'], name='guardrail_user_created_idx'),
+        ]
+
+    def __str__(self):
+        return f'GuardrailEvent(user_id={self.user_id}, category={self.category}, action={self.action})'

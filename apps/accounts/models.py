@@ -121,7 +121,7 @@ class User(AbstractBaseUser, PermissionsMixin):
         ('active', 'Active'),
         ('dormant', 'Dormant'),
         ('banned', 'Banned'),
-        ('withdrawn', 'Withdrawn'), 
+        ('withdrawn', 'Withdrawn'),
     ]
 
     id = models.BigAutoField(primary_key=True)
@@ -132,8 +132,9 @@ class User(AbstractBaseUser, PermissionsMixin):
     is_staff = models.BooleanField(default=False)
     is_active = models.BooleanField(default=True)
     dormancy_warning_sent_at = models.DateTimeField(null=True, blank=True, default=None)
+    point_balance = models.PositiveIntegerField(default=0)
+    point_last_updated_at = models.DateTimeField(null=True, blank=True, default=None)
     withdrawn_at = models.DateTimeField(null=True, blank=True, default=None)
-    point_balance = models.IntegerField(default=0)
     attendance_record = models.DateField(null=True, blank=True, default=None)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -222,3 +223,48 @@ class PendingRegistration(models.Model):
 
     def __str__(self):
         return f'PendingRegistration(email={self.email}, used={self.is_used})'
+
+
+class PointHistory(models.Model):
+    TRANSACTION_EARN = 'EARN'
+    TRANSACTION_USE = 'USE'
+    TRANSACTION_REFUND = 'REFUND'
+    TRANSACTION_EXPIRE = 'EXPIRE'
+    TRANSACTION_ADMIN = 'ADMIN'
+
+    TRANSACTION_TYPE_CHOICES = [
+        (TRANSACTION_EARN, 'Earn'),
+        (TRANSACTION_USE, 'Use'),
+        (TRANSACTION_REFUND, 'Refund'),
+        (TRANSACTION_EXPIRE, 'Expire'),
+        (TRANSACTION_ADMIN, 'Admin'),
+    ]
+
+    id = models.BigAutoField(primary_key=True)
+    user = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name='point_histories',
+    )
+    transaction_type = models.CharField(max_length=20, choices=TRANSACTION_TYPE_CHOICES)
+    amount = models.IntegerField()
+    balance_after = models.PositiveIntegerField()
+    reason_code = models.CharField(max_length=80)
+    reference_id = models.CharField(max_length=100, blank=True, default='')
+    idempotency_key = models.CharField(max_length=120, unique=True, null=True, blank=True)
+    policy_version = models.CharField(max_length=30, default='2026.06')
+    description = models.TextField(blank=True, default='')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'accounts_point_history'
+        verbose_name = 'Point History'
+        verbose_name_plural = 'Point Histories'
+        ordering = ['-created_at', '-id']
+        indexes = [
+            models.Index(fields=['user', 'created_at'], name='point_user_created_idx'),
+            models.Index(fields=['reason_code'], name='point_reason_idx'),
+        ]
+
+    def __str__(self):
+        return f'PointHistory(user_id={self.user_id}, amount={self.amount})'
