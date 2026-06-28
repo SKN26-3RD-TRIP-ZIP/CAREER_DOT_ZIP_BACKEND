@@ -1,69 +1,60 @@
-# ============================================================
-# [배포 준비 전 — 전체 주석 처리]
-# 배포 워크플로우: main 브랜치 push 또는 수동 실행 시 EC2에 배포
-# 배포 준비 완료 후 아래 주석을 해제하세요.
-# 필요한 사전 작업:
-#   - GitHub Secrets 등록:
-#       DOCKERHUB_USERNAME, DOCKERHUB_TOKEN
-#       EC2_HOST, EC2_USER, EC2_SSH_KEY
-#   - EC2 서버에 Docker, docker compose 설치
-#   - EC2 서버에 프로젝트 디렉토리 및 .env.prod 준비
-# ============================================================
+# 배치: (Backend repo) .github/workflows/deploy.yml — 기존 주석본 대체(설계, 활성 전 Secrets 필요)
+# 분리 레포 구조에 맞춤: 이 워크플로는 'backend' 이미지만 빌드/푸시 후 EC2 재배포.
+# 프론트는 frontend repo 의 동일 패턴 워크플로가 'frontend' 이미지를 빌드/푸시한다.
+# 최종 도메인/HTTPS 관련 값은 EC2 의 .env.prod 로 주입(여기서 다루지 않음 = DOMAIN_REQUIRED).
+name: backend-deploy
 
-# name: Deploy
+on:
+  push:
+    branches: [main]            # main = 운영 / develop 은 테스트 환경에 별도 매핑 가능
+  workflow_dispatch: {}
 
-# on:
-#   push:
-#     branches:
-#       - main
-#   workflow_dispatch:
-#     inputs:
-#       environment:
-#         description: "배포 환경 선택"
-#         required: true
-#         default: "staging"
-#         type: choice
-#         options:
-#           - staging
-#           - production
+concurrency:                    # 동시 배포 방지
+  group: backend-deploy
+  cancel-in-progress: false
 
-# jobs:
-#   deploy:
-#     name: Docker 빌드 & EC2 배포
-#     runs-on: ubuntu-latest
+jobs:
+  build-push-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
 
-#     steps:
-#       - name: 코드 체크아웃
-#         uses: actions/checkout@v4
+      - name: Image tag (commit SHA)
+        id: tag
+        run: echo "tag=${GITHUB_SHA::12}" >> "$GITHUB_OUTPUT"
 
-#       # Docker Hub 로그인
-#       - name: Docker Hub 로그인
-#         uses: docker/login-action@v3
-#         with:
-#           username: ${{ secrets.DOCKERHUB_USERNAME }}
-#           password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-#       # 백엔드 이미지 빌드 & 푸시
-#       - name: 백엔드 이미지 빌드 & 푸시
-#         run: |
-#           docker build -t ${{ secrets.DOCKERHUB_USERNAME }}/backend:latest ./backend
-#           docker push ${{ secrets.DOCKERHUB_USERNAME }}/backend:latest
+      - name: Build & push backend image
+        run: |
+          IMG=${{ secrets.DOCKERHUB_USERNAME }}/careerzip-backend
+          docker build -f Dockerfile.prod -t $IMG:${{ steps.tag.outputs.tag }} -t $IMG:latest .
+          docker push $IMG:${{ steps.tag.outputs.tag }}
+          docker push $IMG:latest
 
-#       # 프론트엔드 이미지 빌드 & 푸시 (멀티 스테이지 Dockerfile.prod 사용)
-#       - name: 프론트엔드 이미지 빌드 & 푸시
-#         run: |
-#           docker build -f ./frontend/Dockerfile.prod -t ${{ secrets.DOCKERHUB_USERNAME }}/frontend:latest ./frontend
-#           docker push ${{ secrets.DOCKERHUB_USERNAME }}/frontend:latest
+      - name: Deploy on EC2 (migrate 1회 -> up -d -> health)
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script: |
+            set -e
+            cd ~/CAREER_DOT_ZIP
+            export DOCKERHUB_USERNAME=${{ secrets.DOCKERHUB_USERNAME }}
+            export BACKEND_TAG=${{ steps.tag.outputs.tag }}
+            docker compose -f docker-compose.prod.yml pull backend
+            # 마이그레이션은 1회용 잡으로만 (앱 컨테이너는 RUN_MIGRATIONS=0)
+            docker compose -f docker-compose.prod.yml --profile migrate run --rm migrate
+            docker compose -f docker-compose.prod.yml up -d backend
+            # 헬스 확인(실패 시 비정상 종료 -> 배포 실패로 표시)
+            for i in $(seq 1 10); do
+              curl -fsS http://localhost:8000/api/v1/health/ready && break || sleep 5
+            done
 
-#       # EC2 SSH 접속 후 배포
-#       - name: EC2 배포
-#         uses: appleboy/ssh-action@v1
-#         with:
-#           host: ${{ secrets.EC2_HOST }}
-#           username: ${{ secrets.EC2_USER }}
-#           key: ${{ secrets.EC2_SSH_KEY }}
-#           script: |
-#             cd ~/CAREER_DOT_ZIP
-#             export DOCKERHUB_USERNAME=${{ secrets.DOCKERHUB_USERNAME }}
-#             docker compose -f docker-compose.prod.yml pull
-#             docker compose -f docker-compose.prod.yml up -d
+# 필요한 GitHub Secrets (값은 콘솔에만, 커밋 금지):
+#   DOCKERHUB_USERNAME, DOCKERHUB_TOKEN, EC2_HOST, EC2_USER, EC2_SSH_KEY
+# 롤백: EC2 에서 BACKEND_TAG=<직전 SHA> 로 docker compose up -d backend (이미지 태그 보존).
