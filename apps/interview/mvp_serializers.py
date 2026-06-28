@@ -12,7 +12,7 @@ from apps.input.models import CoverLetter, JobDescription, ProjectExperience, Re
 from apps.prompt.models import PromptVersion
 from apps.prompt.services import normalize_prompt_persona_type
 from apps.question_bank.models import QuestionBankItem
-from .models import InterviewAnswer, InterviewQuestion, InterviewSession
+from .models import InterviewAnswer, InterviewQuestion, InterviewSession, QuestionSourceTag
 
 
 PERSONA_INPUT_MAP = {
@@ -287,6 +287,17 @@ class MVPQuestionGenerateSerializer(serializers.Serializer):
         attrs['jd_analysis'] = jd_analysis
 
 
+class MVPQuestionSourceTagSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = QuestionSourceTag
+        fields = (
+            'source_type',
+            'source_label',
+            'source_text_excerpt',
+            'source_reference',
+        )
+
+
 class MVPQuestionSerializer(serializers.ModelSerializer):
     # question_type is the flow role (main/follow_up); question_category is
     # the content class (technical/personality/general).
@@ -294,6 +305,7 @@ class MVPQuestionSerializer(serializers.ModelSerializer):
     question_category = serializers.CharField(read_only=True)
     difficulty = serializers.SerializerMethodField()
     parent_question_id = serializers.UUIDField(read_only=True)
+    source_tags = serializers.SerializerMethodField()
 
     class Meta:
         model = InterviewQuestion
@@ -305,6 +317,7 @@ class MVPQuestionSerializer(serializers.ModelSerializer):
             'difficulty',
             'order_index',
             'parent_question_id',
+            'source_tags',
         )
 
     def _bank_item(self, obj):
@@ -319,6 +332,9 @@ class MVPQuestionSerializer(serializers.ModelSerializer):
     def get_difficulty(self, obj):
         bank_item = self._bank_item(obj)
         return bank_item.difficulty if bank_item else 'medium'
+
+    def get_source_tags(self, obj):
+        return MVPQuestionSourceTagSerializer(obj.source_tags.all(), many=True).data
 
 
 class MVPAnswerCreateSerializer(serializers.Serializer):
@@ -352,6 +368,7 @@ class MVPFollowupQuestionSerializer(serializers.ModelSerializer):
     question_id = serializers.UUIDField(source='id', read_only=True)
     parent_question_id = serializers.UUIDField(read_only=True)
     question_category = serializers.CharField(read_only=True)
+    source_tags = serializers.SerializerMethodField()
 
     class Meta:
         model = InterviewQuestion
@@ -361,7 +378,11 @@ class MVPFollowupQuestionSerializer(serializers.ModelSerializer):
             'question_type',
             'question_category',
             'parent_question_id',
+            'source_tags',
         )
+
+    def get_source_tags(self, obj):
+        return MVPQuestionSourceTagSerializer(obj.source_tags.all(), many=True).data
 
 
 def serialize_mvp_session(session, include_created_at=False, prompt_version_id=None):

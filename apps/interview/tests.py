@@ -532,6 +532,53 @@ class MVPTextInterviewFlowTests(APITestCase):
             [1, 2, 3],
         )
 
+    @patch('apps.interview.mvp_views.generate_interview_questions')
+    def test_question_generation_response_includes_source_tags(self, mock_generate):
+        metadata = {
+            'generation_source': 'openai',
+            'prompt_type': 'question_generation',
+            'prompt_version_id': 7,
+        }
+        mock_generate.return_value = [
+            {
+                'question_text': 'Explain how you designed the API.',
+                'question_type': 'main',
+                'question_category': 'technical',
+                'order_index': 1,
+                'difficulty': 'medium',
+                'source_type': 'jd',
+                'source_reference': 'ai_chain:question-1',
+                'source_tags': [
+                    {
+                        'source_type': 'general',
+                        'source_label': 'generation_metadata',
+                        'source_text_excerpt': json.dumps(metadata),
+                        'source_reference': 'ai_chain:question-1',
+                    }
+                ],
+            }
+        ]
+        created = self.create_session(total_question_count=1)
+        session_id = created.data['session_id']
+
+        response = self.client.post(
+            reverse('mvp-question-generate', kwargs={'session_id': session_id}),
+            {},
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        question = response.data['questions'][0]
+        self.assertIn('source_tags', question)
+        metadata_tag = next(
+            tag for tag in question['source_tags']
+            if tag['source_label'] == 'generation_metadata'
+        )
+        response_metadata = json.loads(metadata_tag['source_text_excerpt'])
+        self.assertEqual(response_metadata['generation_source'], 'openai')
+        self.assertEqual(response_metadata['prompt_type'], 'question_generation')
+        self.assertEqual(response_metadata['prompt_version_id'], 7)
+
     @override_settings(
         INTERVIEW_AI_CHAIN_ENGINE='openai',
         INTERVIEW_AI_OPENAI_ENABLE_REAL_CALL=True,
@@ -1579,6 +1626,13 @@ class MVPAnswerFollowupRealModeAPITests(APITestCase):
         self.assertEqual(metadata['generation_source'], 'openai')
         self.assertEqual(metadata['prompt_type'], 'follow_up_generation')
         self.assertEqual(metadata['persona'], 'verifier')
+        response_metadata_tag = next(
+            tag for tag in response.data['followup_question']['source_tags']
+            if tag['source_label'] == 'generation_metadata'
+        )
+        response_metadata = json.loads(response_metadata_tag['source_text_excerpt'])
+        self.assertEqual(response_metadata['generation_source'], 'openai')
+        self.assertEqual(response_metadata['prompt_type'], 'follow_up_generation')
 
     @patch(
         'apps.interview.services.follow_up_generator.FollowupGenerator._get_ai_chain_service',
