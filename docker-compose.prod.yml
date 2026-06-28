@@ -1,0 +1,79 @@
+# ============================================================
+# Career.zip 운영 Compose (단일 EC2 / 구조 C: Compose + Nginx)
+# 배치 위치: EC2 의 배포 디렉터리(예: ~/CAREER_DOT_ZIP/docker-compose.prod.yml)
+#
+# 원칙
+#  - MySQL / Redis 는 "관리형 외부 서비스"(RDS / ElastiCache) => 컨테이너로 띄우지 않는다.
+#  - 이미지는 레지스트리(Docker Hub/ECR)에서 pull (deploy.yml 이 build & push).
+#  - 비밀값은 이 파일에 적지 않는다. EC2 의 .env.prod(미커밋)로 주입(env_file).
+#  - Migration 은 매 부팅마다 자동 실행하지 않는다. 1회용 'migrate' 프로파일 잡으로 실행.
+#
+# 사용
+#   docker compose -f docker-compose.prod.yml pull
+#   docker compose -f docker-compose.prod.yml --profile migrate run --rm migrate   # 배포 시 1회
+#   docker compose -f docker-compose.prod.yml up -d
+# ============================================================
+
+x-logging: &default-logging
+  driver: "json-file"
+  options:
+    max-size: "10m"
+    max-file: "5"
+
+services:
+  backend:
+    image: ${DOCKERHUB_USERNAME:?set in EC2 env}/careerzip-backend:${BACKEND_TAG:-latest}
+    restart: unless-stopped
+    env_file:
+      - .env.prod          # DEBUG=False, SECRET_KEY, DATABASE_URL, REDIS_URL ... (미커밋)
+    environment:
+      - RUN_MIGRATIONS=0   # 앱 컨테이너는 절대 migrate 하지 않음
+    expose:
+      - "8000"             # 외부에 직접 노출하지 않음(프론트 nginx 가 프록시)
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/api/v1/health/ready"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 40s
+    volumes:
+      - static_data:/app/staticfiles
+      - media_data:/app/media
+    logging: *default-logging
+    networks: [appnet]
+
+  frontend:
+    image: ${DOCKERHUB_USERNAME:?set in EC2 env}/careerzip-frontend:${FRONTEND_TAG:-latest}
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "80:80"            # ALB/공인 IP 가 80 으로 진입(HTTPS 는 ALB/ACM 또는 certbot)
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:80/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    logging: *default-logging
+    networks: [appnet]
+
+  # 1회용 마이그레이션 잡 (동시 실행 방지를 위해 앱과 분리; 배포 시 1번만 run)
+  migrate:
+    image: ${DOCKERHUB_USERNAME:?set in EC2 env}/careerzip-backend:${BACKEND_TAG:-latest}
+    profiles: ["migrate"]
+    env_file:
+      - .env.prod
+    command: ["python", "manage.py", "migrate", "--noinput"]
+    restart: "no"
+    logging: *default-logging
+    networks: [appnet]
+
+volumes:
+  static_data:
+  media_data:
+
+networks:
+  appnet:
+    driver: bridge
