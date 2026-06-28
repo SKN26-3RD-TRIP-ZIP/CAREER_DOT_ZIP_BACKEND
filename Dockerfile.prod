@@ -1,0 +1,51 @@
+# ============================================================
+# Career.zip Backend — 운영(Production) Dockerfile
+#  - 베이스 python 버전 고정(=3.12, requirements/torch 와 정합)
+#  - 비루트(non-root) 사용자로 실행
+#  - gunicorn + gunicorn.conf.py
+#  - 컨테이너 HEALTHCHECK 로 /api/v1/health/live 폴링
+#  - entrypoint 에서 collectstatic, migrate 는 배포 잡에서 1회만(RUN_MIGRATIONS=1)
+# build: docker build -f Dockerfile.prod -t careerzip-backend:<tag> .
+# ============================================================
+FROM python:3.12-slim AS base
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+WORKDIR /app
+
+# 시스템 의존성: build-essential/libpq(빌드), ffmpeg(STT), mysqlclient 빌드, curl(헬스체크)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential \
+        libpq-dev \
+        ffmpeg \
+        pkg-config \
+        default-libmysqlclient-dev \
+        curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# 의존성 레이어 분리(캐시 최적화)
+COPY requirements.txt .
+# torch 는 CPU 휠로 고정. 버전은 requirements.txt(torch==2.12.1)와 일치시켜 재설치/충돌 방지.
+RUN pip install torch==2.12.1+cpu --index-url https://download.pytorch.org/whl/cpu \
+    && pip install -r requirements.txt
+
+# 앱 소스
+COPY . .
+
+# 비루트 사용자 생성 + 정적/미디어 디렉터리 권한
+RUN useradd --create-home --uid 10001 appuser \
+    && mkdir -p /app/staticfiles /app/media \
+    && chown -R appuser:appuser /app
+USER appuser
+
+EXPOSE 8000
+
+# 컨테이너 라이브니스(외부 의존성 없는 liveness 엔드포인트)
+HEALTHCHECK --interval=30s --timeout=5s --start-period=40s --retries=3 \
+    CMD curl -fsS http://localhost:8000/api/v1/health/live || exit 1
+
+ENTRYPOINT ["sh", "entrypoint.sh"]
+# 기본 CMD 없음 -> entrypoint 가 gunicorn 구동. compose 에서 override 가능.

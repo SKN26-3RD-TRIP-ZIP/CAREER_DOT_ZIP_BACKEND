@@ -14,3 +14,21 @@ docs/
 reports/
 eval/
 *.md
+# === 기존 .dockerignore 에 더해 권장 추가(이미지 크기/재현성/보안) ===
+.venv/
+venv/
+node_modules/
+.idea/
+.vscode/
+.agents/
+.pytest_cache/
+.github/
+artifacts/
+output/
+miketest/
+prototypes/
+fixtures/
+data/
+*.sqlite3
+*.log
+.env.*
