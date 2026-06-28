@@ -5,8 +5,7 @@
 name: backend-deploy
 
 on:
-  push:
-    branches: [main]            # main = 운영 / develop 은 테스트 환경에 별도 매핑 가능
+  # AWS 실환경 준비 완료 전까지 수동 실행만 허용
   workflow_dispatch: {}
 
 concurrency:                    # 동시 배포 방지
