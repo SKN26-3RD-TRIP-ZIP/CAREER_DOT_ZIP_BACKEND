@@ -1,0 +1,143 @@
+from rest_framework import permissions, status
+from rest_framework.response import Response
+from rest_framework.views import APIView
+
+from apps.interview.models import InterviewAnswer
+from .models import Evaluation
+from .ab_test_models import ABTestExperiment
+from .services.ab_test_service import get_experiment_stats, stats_for_experiment
+from .serializers import (
+    EvaluationCreateSerializer,
+    EvaluationSerializer,
+    AnswerWeaknessTagSerializer,
+    AnswerStrengthTagSerializer,
+)
+from .services.session_evaluation import create_evaluation_for_answer
+from .evaluation_chains import EvaluationFormatError
+
+
+class EvaluationAnswerMixin:
+  def get_answer(self, answer_id):
+    try:
+      return InterviewAnswer.objects.get(id=answer_id, session__user=self.request.user)
+    except InterviewAnswer.DoesNotExist:
+      return None
+
+
+class EvaluationCreateView(EvaluationAnswerMixin, APIView):
+  permission_classes = [permissions.IsAuthenticated]
+
+  def post(self, request):
+    serializer = EvaluationCreateSerializer(data=request.data, context={'request': request})
+    serializer.is_valid(raise_exception=True)
+
+    answer = serializer.validated_data['answer_id']
+    request_sufficiency = request.data.get('answer_sufficiency')
+
+    try:
+      evaluation = create_evaluation_for_answer(
+          answer,
+          request_sufficiency=request_sufficiency,
+      )
+    except EvaluationFormatError:
+      # LLM 응답 포맷이 재시도까지 소진하고도 깨진 경우. 500 대신 의미 있는
+      # 재시도 가능 응답(503)으로 매핑한다(세션 백필 경로의 답변 단위 격리와 일관).
+      return Response(
+          {
+              'detail': 'AI 평가 응답 형식 오류로 평가에 실패했습니다. 잠시 후 다시 시도해 주세요.',
+              'code': 'AI_EVALUATION_FORMAT_ERROR',
+              'error_code': 'AI_EVALUATION_FORMAT_ERROR',
+              'retryable': True,
+          },
+          status=status.HTTP_503_SERVICE_UNAVAILABLE,
+      )
+
+    return Response(
+        {
+            'evaluation_id': str(evaluation.id),
+            'answer_id': str(evaluation.answer.id),
+            'evaluated_at': evaluation.evaluated_at,
+            'answer_score': evaluation.answer_score,
+        },
+        status=status.HTTP_201_CREATED,
+    )
+
+
+class EvaluationDetailView(EvaluationAnswerMixin, APIView):
+  permission_classes = [permissions.IsAuthenticated]
+
+  def get(self, request, answer_id):
+    answer = self.get_answer(answer_id)
+    if not answer:
+      return Response({'detail': 'Answer not found or access denied.'}, status=status.HTTP_404_NOT_FOUND)
+
+    # OneToOneField 역참조 실패는 RelatedObjectDoesNotExist(DoesNotExist 서브클래스)를 발생시키므로
+    # hasattr/filter 방식으로 명시적으로 처리한다.
+    evaluation = Evaluation.objects.filter(answer=answer).first()
+    if evaluation is None:
+      return Response({'detail': 'Evaluation not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+    serializer = EvaluationSerializer(evaluation)
+    return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+class WeaknessTagsView(EvaluationAnswerMixin, APIView):
+  permission_classes = [permissions.IsAuthenticated]
+
+  def get(self, request, answer_id):
+    answer = self.get_answer(answer_id)
+    if not answer:
+      return Response({'detail': 'Answer not found or access denied.'}, status=status.HTTP_404_NOT_FOUND)
+
+    weakness_tags = answer.weakness_mappings.select_related('weakness_tag').order_by('priority_rank')
+    serializer = AnswerWeaknessTagSerializer(weakness_tags, many=True)
+
+    return Response(
+        {
+            'answer_id': str(answer.id),
+            'weakness_tags': serializer.data,
+        },
+        status=status.HTTP_200_OK,
+    )
+
+
+class StrengthTagsView(EvaluationAnswerMixin, APIView):
+  permission_classes = [permissions.IsAuthenticated]
+
+  def get(self, request, answer_id):
+    answer = self.get_answer(answer_id)
+    if not answer:
+      return Response({'detail': 'Answer not found or access denied.'}, status=status.HTTP_404_NOT_FOUND)
+
+    strength_tags = answer.strength_mappings.select_related('strength_tag').order_by('priority_rank')
+    serializer = AnswerStrengthTagSerializer(strength_tags, many=True)
+
+    return Response(
+        {
+            'answer_id': str(answer.id),
+            'strength_tags': serializer.data,
+        },
+        status=status.HTTP_200_OK,
+    )
+
+
+# -- E7.7 A/B 테스트 관리 API -----------------------------------------------
+class ABTestExperimentListView(APIView):
+    """GET /evaluations/ab-tests -- 전체 실험 목록 + 집계 통계."""
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        experiments = ABTestExperiment.objects.all().order_by('-created_at')
+        results = [stats_for_experiment(exp) for exp in experiments]
+        return Response({'total': len(results), 'results': results}, status=status.HTTP_200_OK)
+
+
+class ABTestExperimentDetailView(APIView):
+    """GET /evaluations/ab-tests/<experiment_name> -- 단일 실험 집계."""
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request, experiment_name: str):
+        stats = get_experiment_stats(experiment_name)
+        if 'error' in stats:
+            return Response(stats, status=status.HTTP_404_NOT_FOUND)
+        return Response(stats, status=status.HTTP_200_OK)

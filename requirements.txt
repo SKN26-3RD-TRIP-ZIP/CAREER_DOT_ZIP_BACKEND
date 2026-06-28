@@ -1,0 +1,61 @@
+# ===== Django 핵심 =====
+django==4.2
+djangorestframework==3.15
+djangorestframework-simplejwt==5.4.0
+django-cors-headers==4.3
+
+# ===== 기본 도구 =====
+setuptools>=65.0
+
+# ===== 환경변수 & 설정 =====
+python-dotenv==1.0
+dj-database-url==2.1
+requests==2.32.3
+
+# ===== 데이터베이스 =====
+mysqlclient==2.2.4
+pymysql
+
+# ===== Redis & 캐시 (운영 공유 캐시 / OAuth 일회용 교환 코드) =====
+# 운영(다중 Gunicorn worker)에서 교환 코드를 공유하기 위해 django-redis 사용.
+# 로컬/테스트는 REDIS_URL 미설정 시 LocMemCache 로 동작(settings.CACHES 참조).
+redis==5.0.8
+django-redis==5.4.0
+
+# ===== AI / LLM =====
+openai==1.59.2
+langsmith==0.3.45
+
+# ===== E7.5 — SBERT 기술 깊이 유사도 =====
+sentence-transformers==5.6.0
+torch==2.12.1
+
+# ===== E7.12 — 리포트 PDF 생성 =====
+reportlab>=4.2.0
+
+# ===== Vector DB =====
+pinecone==4.1
+
+# ===== 문서 처리 =====
+PyMuPDF==1.24
+python-docx==1.1
+
+# ===== 프로덕션 서버 =====
+gunicorn==22.0
+
+# ===== S3 스토리지 =====
+django-storages[s3]==1.14.4
+boto3==1.35.0
+
+# ===== 정적 파일 서빙 =====
+whitenoise==6.7.0
+kiwipiepy==0.23.1
+httpx==0.27.2
+
+# ===== 테스트 =====
+pytest>=8.0
+pytest-django>=4.8
+
+
+# ===== 휴면 관리 =====
+django-apscheduler==0.7.0

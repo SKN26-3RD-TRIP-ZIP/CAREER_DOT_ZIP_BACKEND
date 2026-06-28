@@ -1,0 +1,1014 @@
+openapi: 3.0.3
+info:
+  title: Career.zip API
+  version: 2026-06-18
+servers:
+  - url: /api/v1
+paths:
+  /auth/signup:
+    post:
+      summary: Create pending signup and send verification code
+      tags: [Auth]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SignupRequest'
+      responses:
+        '201':
+          description: Verification code sent. User is not created yet.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VerificationMetaResponse'
+        '200':
+          description: Pending registration already exists and resend is cooling down.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VerificationMetaResponse'
+        '400':
+          description: Validation error
+        '409':
+          description: Email already registered or pending conflict
+        '503':
+          description: Email send failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /auth/verify-email:
+    post:
+      summary: Verify pending signup code and create User
+      tags: [Auth]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VerifyEmailRequest'
+      responses:
+        '200':
+          description: Email verified and User created
+        '400':
+          description: Invalid or expired verification code
+        '404':
+          description: Pending registration not found
+        '409':
+          description: Already verified or registered
+        '429':
+          description: Too many attempts
+  /auth/verify-email/resend:
+    post:
+      summary: Resend pending signup verification code
+      tags: [Auth]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email:
+                  type: string
+                  format: email
+      responses:
+        '200':
+          description: Verification code resent
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VerificationMetaResponse'
+        '404':
+          description: Pending registration not found
+        '409':
+          description: Already verified
+        '429':
+          description: Resend cooldown
+        '503':
+          description: Email send failed
+  /auth/resend-verification:
+    post:
+      summary: Legacy resend endpoint for existing unverified User rows
+      tags: [Auth]
+      security: []
+      deprecated: true
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email:
+                  type: string
+                  format: email
+      responses:
+        '200':
+          description: Legacy code resent or cooldown notice
+  /auth/me:
+    get:
+      summary: Get current authenticated user and next navigation path
+      tags: [Auth]
+      responses:
+        '200':
+          description: Current user, profile completion, and next_path
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  user_id: { type: integer }
+                  email: { type: string, format: email }
+                  name: { type: string }
+                  is_staff: { type: boolean }
+                  is_profile_completed: { type: boolean }
+                  next_path: { type: string, enum: [/profile, /mypage, /admin/dashboard] }
+        '401':
+          description: Authentication required
+  /auth/oauth/{provider}/start:
+    get:
+      summary: Start Google or Kakao OAuth authorization code flow
+      tags: [Auth, OAuth]
+      security: []
+      parameters:
+        - in: path
+          name: provider
+          required: true
+          schema: { type: string, enum: [google, kakao] }
+        - in: query
+          name: next
+          schema: { type: string, default: /mypage }
+      responses:
+        '200':
+          description: Authorization URL and signed state. No provider token is logged or returned.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OAuthStartResponse'
+        '400':
+          description: Unsupported provider
+        '503':
+          description: LIVE_E2E_ENV_REQUIRED when client id, secret, or redirect uri is missing
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EnvRequiredResponse'
+  /auth/oauth/{provider}/callback:
+    get:
+      summary: Provider redirect target. Always 302-redirects to the frontend callback.
+      description: >
+        Browser OAuth landing endpoint (provider redirect_uri). Validates state, exchanges the
+        provider code, resolves or creates the user, then 302-redirects to
+        {FRONTEND_BASE_URL}{FRONTEND_OAUTH_CALLBACK_PATH}.
+        Success: ?code=<one-time-code>. Failure: ?error=<CODE>.
+        Never returns JWT/JSON and never puts tokens, provider tokens, or error detail in the URL.
+      tags: [Auth, OAuth]
+      security: []
+      parameters:
+        - in: path
+          name: provider
+          required: true
+          schema: { type: string, enum: [google, kakao] }
+        - in: query
+          name: code
+          schema: { type: string }
+        - in: query
+          name: state
+          schema: { type: string }
+        - in: query
+          name: error
+          schema: { type: string }
+      responses:
+        '302':
+          description: >
+            Redirect to frontend callback. Location is
+            {FRONTEND_BASE_URL}{FRONTEND_OAUTH_CALLBACK_PATH}?code=... on success, or ?error=CODE on failure.
+            error codes: OAUTH_PROVIDER_NOT_CONFIGURED, OAUTH_STATE_INVALID, OAUTH_CALLBACK_INVALID,
+            OAUTH_PROVIDER_ERROR, OAUTH_EMAIL_REQUIRED, OAUTH_ACCOUNT_BLOCKED, OAUTH_ACCOUNT_CONFLICT.
+          headers:
+            Location:
+              schema: { type: string }
+  /auth/oauth/exchange:
+    post:
+      summary: Exchange a one-time code for Career.zip access token + refresh cookie
+      description: >
+        Single-use, short-lived code issued by the callback redirect. Reuses the standard login
+        success response (access_token + HttpOnly refresh cookie). Tokens are never placed in URLs or logs.
+      tags: [Auth, OAuth]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code]
+              properties:
+                code: { type: string, description: One-time exchange code from the callback redirect }
+      responses:
+        '200':
+          description: Authenticated. Refresh cookie set; access token + next_path returned.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  access_token: { type: string }
+                  token_type: { type: string, example: Bearer }
+                  provider: { type: string, enum: [google, kakao] }
+                  created: { type: boolean }
+                  needs_terms: { type: boolean }
+                  next_path: { type: string, example: /mypage }
+        '400':
+          description: OAUTH_EXCHANGE_CODE_INVALID or OAUTH_EXCHANGE_CODE_EXPIRED
+        '409':
+          description: OAUTH_EXCHANGE_CODE_USED (code already consumed)
+        '403':
+          description: OAUTH_ACCOUNT_BLOCKED (withdrawn or suspended account)
+  /auth/oauth/social/terms:
+    post:
+      summary: Submit required terms for social signup completion
+      description: Authenticated. Records TERMS/PRIVACY (required) and MARKETING (optional) agreements.
+      tags: [Auth, OAuth, Terms]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [terms_agreed, privacy_agreed]
+              properties:
+                terms_agreed: { type: boolean }
+                privacy_agreed: { type: boolean }
+                marketing_agreed: { type: boolean, default: false }
+      responses:
+        '200':
+          description: Terms recorded; next_path = /mypage
+        '400':
+          description: TERMS_REQUIRED when a required agreement is missing
+        '401':
+          description: Authentication required
+  /external/jobs:
+    get:
+      summary: List Career.zip synthetic mock jobs
+      tags: [External]
+      parameters:
+        - in: query
+          name: keyword
+          schema: { type: string }
+        - in: query
+          name: position
+          schema: { type: string }
+        - in: query
+          name: career_type
+          schema: { type: string }
+        - in: query
+          name: employment_type
+          schema: { type: string }
+        - in: query
+          name: location
+          schema: { type: string }
+        - in: query
+          name: tech_stack
+          schema: { type: string }
+        - in: query
+          name: page
+          schema: { type: integer, default: 1 }
+        - in: query
+          name: size
+          schema: { type: integer, default: 10, maximum: 100 }
+        - in: query
+          name: ordering
+          schema: { type: string, enum: [latest, oldest, deadline, deadline_desc, company, position] }
+      responses:
+        '200':
+          description: Synthetic mock jobs
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MockJobListResponse'
+        '401':
+          description: Authentication required
+  /external/jobs/{job_id}:
+    get:
+      summary: Get Career.zip synthetic mock job detail
+      tags: [External]
+      parameters:
+        - in: path
+          name: job_id
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Synthetic mock job
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MockJob'
+        '404':
+          description: Mock job not found
+  /external/jobs/{job_id}/save-jd:
+    post:
+      summary: Save selected synthetic mock job as current user's JD
+      tags: [External]
+      parameters:
+        - in: path
+          name: job_id
+          required: true
+          schema: { type: string }
+      responses:
+        '201':
+          description: JD created
+        '404':
+          description: Mock job not found
+  /jds/analyze-url:
+    post:
+      summary: Analyze one user-provided public job posting URL and save it as JD
+      tags: [JD]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/JDAnalyzeURLRequest'
+      responses:
+        '201':
+          description: JD created from sanitized HTML extraction
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JDAnalyzeURLResponse'
+        '400':
+          description: Invalid URL or blocked SSRF target
+        '415':
+          description: Content-Type is not HTML
+        '422':
+          description: Extraction failed; user should enter JD manually
+        '504':
+          description: Fetch timeout
+  /jds/ocr:
+    post:
+      summary: Extract JD text from PDF or image upload and save it as JD
+      tags: [JD, OCR]
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+                company_name:
+                  type: string
+                position:
+                  type: string
+      responses:
+        '201':
+          description: JD created from PDF text extraction or OCR provider result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JDOCRResponse'
+        '400':
+          description: Unsupported file, size limit, or secret/PII guardrail violation
+        '413':
+          description: File too large
+        '422':
+          description: No extractable text
+        '503':
+          description: LIVE_E2E_ENV_REQUIRED for image OCR when OCR provider is not configured
+  /jds/{jd_id}:
+    parameters:
+      - name: jd_id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      summary: Get a job description by id (owner only)
+      tags: [JD]
+      responses:
+        '200': { description: JD detail }
+        '401': { description: Authentication required }
+        '404': { description: Not found or not owned by the requester }
+    patch:
+      summary: Partially update editable JD fields (owner only)
+      tags: [JD]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                company_name: { type: string, maxLength: 100 }
+                position: { type: string, maxLength: 100 }
+                job_requirements: { type: string, nullable: true }
+                keywords: { type: string, nullable: true }
+      responses:
+        '200': { description: Updated JD detail }
+        '400': { description: Validation error (e.g., blank company_name/position) }
+        '401': { description: Authentication required }
+        '404': { description: Not found or not owned by the requester }
+    delete:
+      summary: Delete a job description (owner only)
+      tags: [JD]
+      responses:
+        '204': { description: Deleted }
+        '401': { description: Authentication required }
+        '404': { description: Not found or not owned by the requester }
+  /users/me/points:
+    get:
+      summary: Get current user's point balance
+      tags: [Points]
+      responses:
+        '200':
+          description: Point balance
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PointBalance'
+  /users/me/points/history:
+    get:
+      summary: List current user's point history
+      tags: [Points]
+      parameters:
+        - in: query
+          name: page
+          schema: { type: integer, default: 1 }
+        - in: query
+          name: size
+          schema: { type: integer, default: 20, maximum: 100 }
+      responses:
+        '200':
+          description: Point history
+  /users/me/terms-agreements:
+    get:
+      summary: List current user's versioned terms agreement history
+      tags: [Terms]
+      parameters:
+        - in: query
+          name: page
+          schema: { type: integer, default: 1 }
+        - in: query
+          name: size
+          schema: { type: integer, default: 20, maximum: 100 }
+      responses:
+        '200':
+          description: Paginated append-only agreement history and required re-consent status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  total: { type: integer }
+                  page: { type: integer }
+                  size: { type: integer }
+                  required_reconsent:
+                    type: array
+                    items: { type: string }
+                  results:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/TermsAgreement'
+  /users/me/terms-agreements/marketing:
+    patch:
+      summary: Grant or withdraw marketing consent while preserving history
+      tags: [Terms]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [agreed]
+              properties:
+                agreed: { type: boolean }
+      responses:
+        '200':
+          description: New agreement history row
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TermsAgreement'
+  /mypage/growth:
+    get:
+      summary: Get current user's growth dashboard
+      tags: [Mypage, Growth]
+      parameters:
+        - in: query
+          name: interview_type
+          schema: { type: string }
+      responses:
+        '200':
+          description: Growth dashboard excluding mock, failed, pending, and null-score reports
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GrowthDashboardResponse'
+  /admin/members/{member_id}/points/adjust:
+    post:
+      summary: Admin point adjustment
+      tags: [Admin, Points]
+      parameters:
+        - in: path
+          name: member_id
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [amount, reason]
+              properties:
+                amount: { type: integer }
+                reason: { type: string }
+                idempotency_key: { type: string }
+      responses:
+        '201':
+          description: Adjustment created
+        '400':
+          description: Validation error
+  /admin/points/history:
+    get:
+      summary: Admin point history
+      tags: [Admin, Points]
+      parameters:
+        - in: query
+          name: page
+          schema: { type: integer, default: 1 }
+        - in: query
+          name: size
+          schema: { type: integer, default: 20, maximum: 100 }
+        - in: query
+          name: user_id
+          schema: { type: integer }
+        - in: query
+          name: transaction_type
+          schema: { type: string, enum: [EARN, USE, REFUND, EXPIRE, ADMIN] }
+      responses:
+        '200':
+          description: Admin point history
+  /users/me/action-plans:
+    get:
+      summary: List current user's improvement action plans
+      tags: [Reports]
+      parameters:
+        - in: query
+          name: page
+          schema: { type: integer, default: 1 }
+        - in: query
+          name: size
+          schema: { type: integer, default: 20, maximum: 100 }
+      responses:
+        '200':
+          description: Paginated user-owned action plans
+  /reports/{report_id}/action-plans:
+    post:
+      summary: Create an improvement action plan for a report
+      tags: [Reports]
+      parameters:
+        - in: path
+          name: report_id
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ActionPlanCreate'
+      responses:
+        '201':
+          description: Action plan created
+        '400':
+          description: Maximum three plans per report or validation error
+        '404':
+          description: Report not found or not owned by user
+  /action-plans/{action_plan_id}:
+    patch:
+      summary: Update a user-owned improvement action plan
+      tags: [Reports]
+      parameters:
+        - in: path
+          name: action_plan_id
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ActionPlanPatch'
+      responses:
+        '200':
+          description: Action plan updated
+        '404':
+          description: Action plan not found or not owned by user
+  /interviews/question-packs:
+    get:
+      summary: List current user's custom question packs
+      tags: [Interviews, QuestionPacks]
+      responses:
+        '200':
+          description: Question packs
+    post:
+      summary: Create a custom question pack from JD/resume/project metadata
+      tags: [Interviews, QuestionPacks]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/QuestionPackCreate'
+      responses:
+        '201':
+          description: Question pack created after point charge
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QuestionPack'
+        '402':
+          description: Insufficient points
+        '500':
+          description: Server error. Charged points are refunded.
+  /interviews/question-packs/{question_pack_id}:
+    get:
+      summary: Get a user-owned question pack
+      tags: [Interviews, QuestionPacks]
+      parameters:
+        - in: path
+          name: question_pack_id
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Question pack detail
+        '404':
+          description: Not found or not owned by user
+  /interviews/question-packs/{question_pack_id}/apply:
+    post:
+      summary: Apply a question pack to an interview session
+      tags: [Interviews, QuestionPacks]
+      parameters:
+        - in: path
+          name: question_pack_id
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [session_id]
+              properties:
+                session_id: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Pack questions copied to session
+        '409':
+          description: Session already has questions
+  /admin/dashboard:
+    get:
+      summary: Admin operational dashboard statistics
+      tags: [Admin]
+      parameters:
+        - in: query
+          name: start
+          schema: { type: string, format: date-time }
+        - in: query
+          name: end
+          schema: { type: string, format: date-time }
+      responses:
+        '200':
+          description: Members, interviews, reports, points, guardrails, prompt versions, API errors, and LLM costs
+  /admin/guardrails/events:
+    get:
+      summary: List guardrail events without raw user input
+      tags: [Admin, Guardrails]
+      parameters:
+        - in: query
+          name: category
+          schema: { type: string, enum: [G0, G1, G2, G3, G4, G5] }
+        - in: query
+          name: action
+          schema: { type: string, enum: [ALLOW, GUIDE, WARN, BLOCK_INPUT, SKIP_FOLLOWUP, END_SESSION, REQUIRE_ADMIN_REVIEW] }
+        - in: query
+          name: stage
+          schema: { type: string, enum: [SIGNUP, MYPAGE, INTERVIEW, REPORT] }
+        - in: query
+          name: direction
+          schema: { type: string, enum: [USER_TO_AI, AI_TO_USER] }
+        - in: query
+          name: user_id
+          schema: { type: integer }
+        - in: query
+          name: page
+          schema: { type: integer, default: 1 }
+        - in: query
+          name: size
+          schema: { type: integer, default: 20, maximum: 100 }
+      responses:
+        '200':
+          description: Paginated masked guardrail events
+  /health:
+    get:
+      summary: Health check
+      tags: [Health]
+      security: []
+      responses:
+        '200':
+          description: OK
+        '503':
+          description: Degraded
+components:
+  schemas:
+    SignupRequest:
+      type: object
+      required:
+        - email
+        - name
+        - password
+        - terms_agreed
+        - privacy_agreed
+      properties:
+        email:
+          type: string
+          format: email
+        name:
+          type: string
+        password:
+          type: string
+          format: password
+          minLength: 8
+        terms_version:
+          type: string
+          default: v1
+        privacy_version:
+          type: string
+          default: v1
+        terms_agreed:
+          type: boolean
+        privacy_agreed:
+          type: boolean
+        marketing_agreed:
+          type: boolean
+          default: false
+    VerifyEmailRequest:
+      type: object
+      required: [email, code]
+      properties:
+        email:
+          type: string
+          format: email
+        code:
+          type: string
+          pattern: '^[0-9]{6}$'
+    VerificationMetaResponse:
+      type: object
+      required: [detail, expires_in, resend_after]
+      properties:
+        detail:
+          type: string
+        expires_in:
+          type: integer
+          example: 600
+        resend_after:
+          type: integer
+          example: 60
+        retry_after:
+          type: integer
+    ErrorResponse:
+      type: object
+      properties:
+        detail:
+          type: string
+        code:
+          type: string
+    EnvRequiredResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [ENV_REQUIRED]
+        code:
+          type: string
+        required_env:
+          type: array
+          items: { type: string }
+    OAuthStartResponse:
+      type: object
+      properties:
+        provider:
+          type: string
+          enum: [google, kakao]
+        authorization_url:
+          type: string
+          format: uri
+        state:
+          type: string
+        nonce:
+          type: string
+        next_path:
+          type: string
+        status:
+          type: string
+          example: IMPLEMENTATION_DONE
+    OAuthCallbackRequest:
+      type: object
+      required: [code, state]
+      properties:
+        code:
+          type: string
+        state:
+          type: string
+        error:
+          type: string
+    OAuthCallbackResponse:
+      type: object
+      properties:
+        access_token:
+          type: string
+        token_type:
+          type: string
+          example: Bearer
+        user:
+          type: object
+        next_path:
+          type: string
+        is_new_user:
+          type: boolean
+        provider:
+          type: string
+    MockJob:
+      type: object
+      properties:
+        job_id: { type: string, example: mock-job-000001 }
+        company_name: { type: string }
+        position: { type: string }
+        career_type: { type: string }
+        employment_type: { type: string }
+        location: { type: string }
+        tech_stack:
+          type: array
+          items: { type: string }
+        main_tasks:
+          type: array
+          items: { type: string }
+        requirements:
+          type: array
+          items: { type: string }
+        preferred:
+          type: array
+          items: { type: string }
+        posted_at: { type: string, format: date }
+        deadline: { type: string, format: date }
+        source: { type: string, enum: [CAREER_ZIP_MOCK] }
+        is_mock: { type: boolean, example: true }
+    MockJobListResponse:
+      type: object
+      properties:
+        source: { type: string, enum: [CAREER_ZIP_MOCK] }
+        is_mock: { type: boolean, example: true }
+        total: { type: integer }
+        page: { type: integer }
+        size: { type: integer }
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/MockJob'
+    PointBalance:
+      type: object
+      properties:
+        point_balance: { type: integer }
+        point_last_updated_at: { type: string, format: date-time, nullable: true }
+        policy_version: { type: string }
+    TermsAgreement:
+      type: object
+      properties:
+        agreement_id: { type: string, format: uuid }
+        kind: { type: string, enum: [TERMS, PRIVACY, MARKETING] }
+        version: { type: string }
+        is_required: { type: boolean }
+        agreed: { type: boolean }
+        agreed_at: { type: string, format: date-time, nullable: true }
+        withdrawn_at: { type: string, format: date-time, nullable: true }
+        source: { type: string }
+    JDAnalyzeURLRequest:
+      type: object
+      required: [url]
+      properties:
+        url:
+          type: string
+          format: uri
+          description: Single user-provided public http/https URL. Localhost, private IP, and metadata IP are blocked.
+    JDAnalyzeURLResponse:
+      type: object
+      properties:
+        jd_id: { type: string, format: uuid }
+        company_name: { type: string }
+        position: { type: string }
+        original_text: { type: string }
+        source_url: { type: string, format: uri }
+        source_fetched_at: { type: string, format: date-time }
+        extraction_confidence: { type: number, format: float }
+        extracted_fields: { type: object }
+        fallback_action: { type: string, example: MANUAL_INPUT }
+    JDOCRResponse:
+      type: object
+      properties:
+        jd_id: { type: string, format: uuid }
+        company_name: { type: string }
+        position: { type: string }
+        original_text: { type: string }
+        analysis_status: { type: string }
+        extracted_fields: { type: object }
+        fallback_action: { type: string, example: MANUAL_INPUT }
+    GrowthDashboardResponse:
+      type: object
+      properties:
+        summary:
+          type: object
+          properties:
+            profile_completion_rate: { type: integer }
+            point_balance: { type: integer }
+            completed_interviews: { type: integer }
+            average_score: { type: number, nullable: true }
+            recent_login: { type: string, format: date-time, nullable: true }
+            recent_activity_at: { type: string, format: date-time, nullable: true }
+            next_action: { type: object }
+        growth_comparison:
+          type: object
+          properties:
+            points:
+              type: array
+              maxItems: 5
+              items: { type: object }
+            data_status: { type: string, enum: [OK, INSUFFICIENT_DATA] }
+            comparison_warning: { type: string, nullable: true }
+        weakness_trend:
+          type: array
+          items: { type: object }
+        action_plans:
+          type: array
+          maxItems: 3
+          items: { type: object }
+        recent_activity:
+          type: array
+          items: { type: object }
+        interview_history:
+          type: array
+          items: { type: object }
+    QuestionPackCreate:
+      type: object
+      properties:
+        title: { type: string }
+        interview_type: { type: string }
+        jd_id: { type: string, format: uuid }
+        resume_id: { type: string, format: uuid }
+        project_ids:
+          type: array
+          items: { type: string, format: uuid }
+        mix:
+          type: object
+          example: { technical: 4, behavioral: 2, project: 2, job_fit: 2 }
+    QuestionPack:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        title: { type: string }
+        interview_type: { type: string }
+        mix: { type: object }
+        questions:
+          type: array
+          items: { type: object }
+        prompt_version_snapshot: { type: object }
+        generation_model: { type: string }
+        generation_status: { type: string }
+        is_fallback: { type: boolean }
+    ActionPlanCreate:
+      type: object
+      required: [title]
+      properties:
+        title: { type: string, maxLength: 120 }
+        description: { type: string }
+        source_tag: { type: string }
+    ActionPlanPatch:
+      type: object
+      properties:
+        title: { type: string, maxLength: 120 }
+        description: { type: string }
+        status: { type: string, enum: [TODO, IN_PROGRESS, DONE] }
+        source_tag: { type: string }

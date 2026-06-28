@@ -1,0 +1,456 @@
+"""Serializers for the active nested REST interview API.
+
+This contract intentionally exposes richer data than the MVP contract,
+including source tags, turns, evaluation data, and progress context.
+"""
+
+from rest_framework import serializers
+
+from apps.analysis.models import AnalysisSession, JdAnalysis
+from apps.common.choices import ANSWER_SOURCE_CHOICES
+from apps.evaluation.models import Evaluation
+from apps.input.models import JobDescription, ResumeMaster, CoverLetter
+from .models import InterviewSession, InterviewQuestion, InterviewAnswer, QuestionPack, QuestionSourceTag
+from .services.ai_chain_persona_prompts import get_persona_options, normalize_persona_type
+
+
+class QuestionSourceTagSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = QuestionSourceTag
+        fields = (
+            'source_type',
+            'source_label',
+            'source_text_excerpt',
+            'source_reference',
+        )
+
+
+class QuestionPackCreateSerializer(serializers.Serializer):
+    title = serializers.CharField(required=False, allow_blank=True, max_length=150)
+    interview_type = serializers.ChoiceField(choices=('technical', 'personality', 'comprehensive'), default='technical')
+    question_count = serializers.IntegerField(required=False, default=5, min_value=1, max_value=20)
+    mix = serializers.DictField(required=False, default=dict)
+
+
+class QuestionPackSerializer(serializers.ModelSerializer):
+    question_pack_id = serializers.UUIDField(source='id', read_only=True)
+
+    class Meta:
+        model = QuestionPack
+        fields = (
+            'question_pack_id',
+            'title',
+            'interview_type',
+            'mix',
+            'questions',
+            'prompt_version_snapshot',
+            'generation_model',
+            'status',
+            'is_fallback',
+            'created_at',
+            'updated_at',
+        )
+
+
+class InterviewSessionCreateSerializer(serializers.ModelSerializer):
+    jd_id = serializers.UUIDField(required=False, allow_null=False, write_only=True)
+    resume_id = serializers.UUIDField(required=False, allow_null=True, write_only=True)
+    cover_letter_id = serializers.UUIDField(required=False, allow_null=True, write_only=True)
+    analysis_session_id = serializers.IntegerField(required=False, write_only=True)
+    jd_analysis_id = serializers.UUIDField(required=False, write_only=True)
+    persona = serializers.CharField(required=False, allow_blank=True, default='practical')
+    persona_type = serializers.CharField(required=False, allow_blank=True, write_only=True)
+    interview_mode = serializers.ChoiceField(choices=('text', 'voice'), required=False, default='text')
+
+    class Meta:
+        model = InterviewSession
+        fields = (
+            'jd_id',
+            'resume_id',
+            'cover_letter_id',
+            'analysis_session_id',
+            'jd_analysis_id',
+            'interview_type',
+            'persona',
+            'persona_type',
+            'interview_mode',
+            'total_question_count',
+        )
+        extra_kwargs = {
+            'total_question_count': {'required': False},
+        }
+
+    def validate_jd_id(self, value):
+        if value is None:
+            return None
+        try:
+            return JobDescription.objects.get(id=value, user=self.context['request'].user)
+        except JobDescription.DoesNotExist:
+            raise serializers.ValidationError('Job description not found.')
+
+    def validate_resume_id(self, value):
+        if value is None:
+            return None
+        try:
+            return ResumeMaster.objects.get(id=value, user=self.context['request'].user)
+        except ResumeMaster.DoesNotExist:
+            raise serializers.ValidationError('Resume not found.')
+
+    def validate_cover_letter_id(self, value):
+        if value is None:
+            return None
+        try:
+            return CoverLetter.objects.get(id=value, user=self.context['request'].user)
+        except CoverLetter.DoesNotExist:
+            raise serializers.ValidationError('Cover letter not found.')
+
+    def _owned_jd_analysis(self, jd_analysis_id):
+        try:
+            return JdAnalysis.objects.select_related(
+                'jd',
+                'resume',
+                'cover_letter',
+            ).get(id=jd_analysis_id, user=self.context['request'].user)
+        except JdAnalysis.DoesNotExist:
+            raise serializers.ValidationError({'jd_analysis_id': 'JD analysis not found.'})
+
+    def _owned_analysis_session(self, analysis_session_id):
+        try:
+            analysis_session = AnalysisSession.objects.select_related(
+                'jd_analysis__jd',
+                'jd_analysis__resume',
+                'jd_analysis__cover_letter',
+            ).get(id=analysis_session_id, user=self.context['request'].user)
+        except AnalysisSession.DoesNotExist:
+            raise serializers.ValidationError({'analysis_session_id': 'Analysis session not found.'})
+
+        if not analysis_session.jd_analysis_id:
+            raise serializers.ValidationError({'analysis_session_id': 'Analysis session has no completed result.'})
+        return analysis_session.jd_analysis
+
+    @staticmethod
+    def _matches_analysis(selected, expected):
+        if selected is None:
+            return True
+        if expected is None:
+            return False
+        return selected.id == expected.id
+        
+    def validate_persona(self, value):
+        return normalize_persona_type(value)
+
+    def validate(self, attrs):
+        jd_analysis_id = attrs.pop('jd_analysis_id', None)
+        analysis_session_id = attrs.pop('analysis_session_id', None)
+        jd_analysis = None
+
+        if jd_analysis_id:
+            jd_analysis = self._owned_jd_analysis(jd_analysis_id)
+
+        if analysis_session_id:
+            session_analysis = self._owned_analysis_session(analysis_session_id)
+            if jd_analysis and jd_analysis.id != session_analysis.id:
+                raise serializers.ValidationError(
+                    {'jd_analysis_id': 'JD analysis does not match analysis_session_id.'}
+                )
+            jd_analysis = session_analysis
+
+        if jd_analysis:
+            if not self._matches_analysis(attrs.get('jd_id'), jd_analysis.jd):
+                raise serializers.ValidationError({'jd_id': 'JD does not match the analysis result.'})
+            if not self._matches_analysis(attrs.get('resume_id'), jd_analysis.resume):
+                raise serializers.ValidationError({'resume_id': 'Resume does not match the analysis result.'})
+            if not self._matches_analysis(attrs.get('cover_letter_id'), jd_analysis.cover_letter):
+                raise serializers.ValidationError(
+                    {'cover_letter_id': 'Cover letter does not match the analysis result.'}
+                )
+
+            attrs['jd_id'] = jd_analysis.jd
+            attrs['resume_id'] = jd_analysis.resume
+            if jd_analysis.cover_letter_id:
+                attrs['cover_letter_id'] = jd_analysis.cover_letter
+
+        if not attrs.get('jd_id'):
+            raise serializers.ValidationError(
+                {'jd_id': 'This field is required unless jd_analysis_id or analysis_session_id is provided.'}
+            )
+
+        raw_persona = attrs.pop('persona_type', None) or attrs.get('persona') or 'practical'
+        attrs['persona'] = normalize_persona_type(raw_persona)
+        return attrs
+
+    def create(self, validated_data):
+        jd = validated_data.pop('jd_id', None)
+        resume = validated_data.pop('resume_id', None)
+        cover_letter = validated_data.pop('cover_letter_id', None)
+
+        if jd is not None:
+            validated_data['jd'] = jd
+        if resume is not None:
+            validated_data['resume'] = resume
+        if cover_letter is not None:
+            validated_data['cover_letter'] = cover_letter
+
+        validated_data['persona'] = normalize_persona_type(validated_data.get('persona'))
+
+        return InterviewSession.objects.create(**validated_data)
+
+
+def get_persona_detail(persona):
+    persona_type = normalize_persona_type(persona)
+
+    for option in get_persona_options():
+        if option['persona_type'] == persona_type:
+            return option
+
+    for option in get_persona_options():
+        if option['persona_type'] == 'practical':
+            return option
+
+    return None
+
+
+class InterviewSessionListSerializer(serializers.ModelSerializer):
+    session_id = serializers.SerializerMethodField()
+
+    class Meta:
+        model = InterviewSession
+        fields = ('session_id', 'interview_type', 'persona', 'status', 'created_at')
+
+    def get_session_id(self, obj):
+        return str(obj.id)
+
+
+class InterviewSessionDetailSerializer(serializers.ModelSerializer):
+    session_id = serializers.SerializerMethodField()
+    jd_id = serializers.SerializerMethodField()
+    resume_id = serializers.SerializerMethodField()
+    cover_letter_id = serializers.SerializerMethodField()
+
+    class Meta:
+        model = InterviewSession
+        fields = (
+            'session_id',
+            'jd_id',
+            'resume_id',
+            'cover_letter_id',
+            'interview_type',
+            'persona',
+            'interview_mode',
+            'status',
+            'total_question_count',
+            'current_question_index',
+            'started_at',
+            'ended_at',
+            'created_at',
+            'updated_at',
+        )
+
+    def get_session_id(self, obj):
+        return str(obj.id)
+
+    def get_jd_id(self, obj):
+        return str(obj.jd.id) if obj.jd else None
+
+    def get_resume_id(self, obj):
+        return str(obj.resume.id) if obj.resume else None
+
+    def get_cover_letter_id(self, obj):
+        return str(obj.cover_letter.id) if obj.cover_letter else None
+
+
+class InterviewSessionStatusSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = InterviewSession
+        fields = ('status',)
+
+
+class InterviewSessionCompleteSerializer(serializers.ModelSerializer):
+    session_id = serializers.UUIDField(source='id', read_only=True)
+
+    class Meta:
+        model = InterviewSession
+        fields = ('session_id', 'status', 'started_at', 'ended_at', 'updated_at')
+
+
+class InterviewTurnQuestionSerializer(serializers.ModelSerializer):
+    question_id = serializers.UUIDField(source='id', read_only=True)
+    source_tags = serializers.SerializerMethodField()
+
+    class Meta:
+        model = InterviewQuestion
+        fields = (
+            'question_id',
+            'order_index',
+            'question_type',
+            'question_category',
+            'question_text',
+            'difficulty',
+            'source_type',
+            'source_reference',
+            'source_tags',
+        )
+
+    def get_source_tags(self, obj):
+        return QuestionSourceTagSerializer(obj.source_tags.all(), many=True).data
+
+
+class InterviewTurnAnswerSerializer(serializers.ModelSerializer):
+    answer_id = serializers.UUIDField(source='id', read_only=True)
+
+    class Meta:
+        model = InterviewAnswer
+        fields = ('answer_id', 'answer_text', 'answer_source', 'created_at')
+
+
+class InterviewTurnEvaluationSerializer(serializers.ModelSerializer):
+    evaluation_id = serializers.UUIDField(source='id', read_only=True)
+
+    class Meta:
+        model = Evaluation
+        fields = (
+            'evaluation_id',
+            'answer_score',
+            'llm_concept_score',
+            'score_detail',
+            'evaluated_at',
+        )
+
+
+def get_answer(question):
+    try:
+        return question.answer
+    except InterviewAnswer.DoesNotExist:
+        return None
+
+
+def get_evaluation(answer):
+    if answer is None:
+        return None
+    try:
+        return answer.evaluation
+    except Evaluation.DoesNotExist:
+        return None
+
+
+class InterviewTurnFollowUpSerializer(InterviewTurnQuestionSerializer):
+    answer = serializers.SerializerMethodField()
+    evaluation = serializers.SerializerMethodField()
+
+    class Meta(InterviewTurnQuestionSerializer.Meta):
+        fields = InterviewTurnQuestionSerializer.Meta.fields + ('answer', 'evaluation')
+
+    def get_answer(self, obj):
+        answer = get_answer(obj)
+        return InterviewTurnAnswerSerializer(answer).data if answer else None
+
+    def get_evaluation(self, obj):
+        evaluation = get_evaluation(get_answer(obj))
+        return InterviewTurnEvaluationSerializer(evaluation).data if evaluation else None
+
+
+class InterviewTurnSerializer(serializers.Serializer):
+    turn_index = serializers.IntegerField()
+    question = InterviewTurnQuestionSerializer()
+    answer = serializers.SerializerMethodField()
+    evaluation = serializers.SerializerMethodField()
+    follow_up_questions = serializers.SerializerMethodField()
+
+    def get_answer(self, obj):
+        answer = get_answer(obj['question'])
+        return InterviewTurnAnswerSerializer(answer).data if answer else None
+
+    def get_evaluation(self, obj):
+        evaluation = get_evaluation(get_answer(obj['question']))
+        return InterviewTurnEvaluationSerializer(evaluation).data if evaluation else None
+
+    def get_follow_up_questions(self, obj):
+        answer = get_answer(obj['question'])
+        follow_up_questions = getattr(answer, 'prefetched_follow_up_questions', []) if answer else []
+        return InterviewTurnFollowUpSerializer(follow_up_questions, many=True).data
+
+
+class InterviewQuestionSerializer(serializers.ModelSerializer):
+    question_id = serializers.SerializerMethodField()
+    source_tags = serializers.SerializerMethodField()
+
+    class Meta:
+        model = InterviewQuestion
+        fields = (
+            'question_id',
+            'order_index',
+            'question_type',
+            'question_category',
+            'question_text',
+            'difficulty',
+            'source_type',
+            'source_reference',
+            'source_tags',
+            'created_at',
+        )
+
+    def get_question_id(self, obj):
+        return str(obj.id)
+
+    def get_source_tags(self, obj):
+        return QuestionSourceTagSerializer(obj.source_tags.all(), many=True).data
+
+
+class InterviewAnswerCreateSerializer(serializers.Serializer):
+    answer_text = serializers.CharField()
+    answer_source = serializers.ChoiceField(choices=ANSWER_SOURCE_CHOICES, required=False, default='text')
+
+    def validate(self, attrs):
+        return attrs
+
+
+class InterviewAnswerSerializer(serializers.ModelSerializer):
+    answer_id = serializers.SerializerMethodField()
+    question_id = serializers.SerializerMethodField()
+
+    class Meta:
+        model = InterviewAnswer
+        fields = ('answer_id', 'question_id', 'answer_text', 'answer_source', 'created_at')
+
+    def get_answer_id(self, obj):
+        return str(obj.id)
+
+    def get_question_id(self, obj):
+        return str(obj.question.id)
+
+
+class FollowUpQuestionSerializer(serializers.ModelSerializer):
+    question_id = serializers.SerializerMethodField()
+    parent_question_id = serializers.SerializerMethodField()
+    answer_id = serializers.SerializerMethodField()
+
+    class Meta:
+        model = InterviewQuestion
+        fields = (
+            'question_id',
+            'parent_question_id',
+            'answer_id',
+            'order_index',
+            'question_type',
+            'question_category',
+            'question_text',
+            'source_type',
+            'source_reference',
+            'created_at',
+        )
+
+    def get_question_id(self, obj):
+        return str(obj.id)
+
+    def get_parent_question_id(self, obj):
+        return str(obj.parent_question.id) if obj.parent_question else None
+
+    def get_answer_id(self, obj):
+        return str(obj.source_answer.id) if obj.source_answer else None
+
+
+class InterviewPersonaSerializer(serializers.Serializer):
+    persona_type = serializers.CharField()
+    label = serializers.CharField()
+    description = serializers.CharField()
+    usage_guide = serializers.CharField()

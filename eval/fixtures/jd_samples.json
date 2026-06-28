@@ -1,0 +1,20 @@
+[
+  {
+    "id": "jd_001",
+    "job_role": "백엔드 개발자",
+    "company_name": "테크스타트업A",
+    "jd_text": "저희는 Python/Django 기반의 백엔드 개발자를 모집합니다.\n\n[주요 업무]\n- RESTful API 설계 및 개발\n- 데이터베이스 설계 및 최적화\n- 클라우드 인프라(AWS) 운영 및 개선\n\n[자격 요건]\n- Python, Django 실무 경험 2년 이상\n- PostgreSQL 또는 MySQL 사용 경험\n- Git 기반 협업 경험\n\n[우대 사항]\n- Docker, Kubernetes 사용 경험\n- Redis 캐싱 경험\n- 스타트업 경험자\n\n[인재상]\n- 주도적으로 문제를 해결하는 분\n- 빠른 피드백 루프를 즐기는 분\n- 동료와 적극적으로 소통하며 협업하는 분"
+  },
+  {
+    "id": "jd_002",
+    "job_role": "프론트엔드 개발자",
+    "company_name": "이커머스B",
+    "jd_text": "React 기반 프론트엔드 개발자를 채용합니다.\n\n[주요 업무]\n- React/TypeScript 기반 웹 서비스 개발\n- 사용자 경험 개선 및 성능 최적화\n- 디자이너 및 백엔드 개발자와의 협업\n\n[자격 요건]\n- React 실무 경험 1년 이상\n- JavaScript/TypeScript 능숙자\n- HTML/CSS 기본기 보유\n\n[우대 사항]\n- Next.js 사용 경험\n- 성능 최적화(Lighthouse 90점 이상) 경험\n- 디자인 시스템 구축 경험\n\n[인재상]\n- 사용자 관점에서 생각하는 분\n- 꼼꼼하고 완성도를 중시하는 분\n- 지속적으로 학습하고 성장하는 분"
+  },
+  {
+    "id": "jd_003",
+    "job_role": "데이터 엔지니어",
+    "company_name": "핀테크C",
+    "jd_text": "데이터 파이프라인 구축 및 운영을 담당할 데이터 엔지니어를 모집합니다.\n\n[주요 업무]\n- Airflow 기반 ETL 파이프라인 설계 및 운영\n- Spark/Hadoop을 이용한 대용량 데이터 처리\n- 데이터 품질 모니터링 및 이상 탐지\n\n[자격 요건]\n- Python 또는 Scala 실무 경험 2년 이상\n- SQL 고급 쿼리 작성 능력\n- Airflow 또는 유사 워크플로우 툴 경험\n\n[우대 사항]\n- Apache Spark 최적화 경험\n- AWS Glue, Redshift 경험\n- 금융 데이터 처리 경험\n\n[인재상]\n- 데이터 품질에 집착하는 분\n- 장애 상황에서 침착하게 대응하는 분\n- 비즈니스 맥락을 이해하고 데이터를 해석하는 분"
+  }
+]
