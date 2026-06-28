@@ -11,10 +11,12 @@ https://docs.djangoproject.com/en/4.2/ref/settings/
 """
 
 import os
+import sys
 from importlib.util import find_spec
 from pathlib import Path
 
 import dj_database_url
+from django.core.exceptions import ImproperlyConfigured
 from dotenv import load_dotenv
 
 try:
@@ -280,6 +282,20 @@ REFRESH_COOKIE_SAMESITE = os.getenv("REFRESH_COOKIE_SAMESITE", "Lax")
 REFRESH_COOKIE_PATH = os.getenv("REFRESH_COOKIE_PATH", "/")
 REFRESH_COOKIE_DOMAIN = os.getenv("REFRESH_COOKIE_DOMAIN") or None
 
+# ===== 운영 HTTPS 보안 (모두 env-gated, 기본 off — 로컬/HTTP 임시배포 호환) =====
+# HTTPS 도메인이 확정·적용된 뒤 .env(.prod) 에서 True 로 켠다. (Django admin 세션/CSRF 쿠키 하드닝)
+SESSION_COOKIE_SECURE = _env_bool("SESSION_COOKIE_SECURE", False)
+CSRF_COOKIE_SECURE = _env_bool("CSRF_COOKIE_SECURE", False)
+# LB/nginx 가 TLS 종단 후 X-Forwarded-Proto 를 전달할 때만 켠다.
+if _env_bool("SECURE_BEHIND_PROXY", False):
+    SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+# http→https 강제 리다이렉트(프록시/LB 가 이미 처리하면 중복 루프 주의 → 기본 off).
+SECURE_SSL_REDIRECT = _env_bool("SECURE_SSL_REDIRECT", False)
+# HSTS (HTTPS 안정화 이후에만 켠다)
+SECURE_HSTS_SECONDS = _env_int("SECURE_HSTS_SECONDS", 0)
+SECURE_HSTS_INCLUDE_SUBDOMAINS = _env_bool("SECURE_HSTS_INCLUDE_SUBDOMAINS", False)
+SECURE_HSTS_PRELOAD = _env_bool("SECURE_HSTS_PRELOAD", False)
+
 # ===== DRF Settings =====
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': (
@@ -347,8 +363,54 @@ FRONTEND_BASE_URL = os.getenv("FRONTEND_BASE_URL", "http://localhost:5173")
 FRONTEND_OAUTH_CALLBACK_PATH = os.getenv("FRONTEND_OAUTH_CALLBACK_PATH", "/oauth/callback")
 
 # 일회용 OAuth 교환 코드 TTL(초). 실제 토큰은 코드가 아닌 exchange API 에서만 발급한다.
-# 저장소는 Django 캐시(기본 LocMemCache) — DB 모델/마이그레이션을 추가하지 않는다.
+# 저장소는 Django 캐시 프레임워크 — 아래 CACHES 설정 참조(운영은 Redis 공유 캐시).
 OAUTH_EXCHANGE_CODE_TTL_SECONDS = int(os.getenv("OAUTH_EXCHANGE_CODE_TTL_SECONDS", "120"))
+
+# ===== Cache (OAuth 일회용 교환 코드 공유 저장소) =====
+# 운영(다중 Gunicorn worker)에서는 Redis 공유 캐시가 필수다. LocMemCache 는 프로세스 로컬이라
+# worker 간에 교환 코드가 공유되지 않아 "이미 사용된 코드"처럼 보이며 로그인 흐름이 깨진다.
+#   - REDIS_URL 설정 시        : django-redis 기반 공유 캐시 사용
+#   - 테스트(manage.py test/pytest): 외부 Redis 없이 LocMemCache 사용(격리·결정성)
+#   - 로컬 개발(DEBUG=True, REDIS_URL 없음): LocMemCache 허용
+#   - 운영(DEBUG=False, REDIS_URL 없음)    : 조용히 LocMem 대체 금지 → 즉시 실패(fail loud)
+# 주의: 교환 코드 캐시 value 에는 user_id/provider/next_path 등 최소 정보만 저장하며
+#       access/refresh/Provider 토큰이나 이메일을 Key/Value 에 저장하지 않는다(서비스 계층에서 보장).
+REDIS_URL = os.getenv("REDIS_URL", "").strip()
+REDIS_KEY_PREFIX = os.getenv("REDIS_KEY_PREFIX", "careerzip")
+_RUNNING_TESTS = (
+    ("test" in sys.argv)
+    or any("pytest" in str(arg) for arg in sys.argv[:1])
+    or _env_bool("DJANGO_TESTING", False)
+)
+
+if REDIS_URL and not _RUNNING_TESTS:
+    CACHES = {
+        "default": {
+            "BACKEND": "django_redis.cache.RedisCache",
+            "LOCATION": REDIS_URL,
+            "KEY_PREFIX": REDIS_KEY_PREFIX,
+            "OPTIONS": {
+                "CLIENT_CLASS": "django_redis.client.DefaultClient",
+                # 교환 코드는 1회성·짧은 TTL — 연결 오류를 조용히 무시하지 않는다.
+                "IGNORE_EXCEPTIONS": False,
+            },
+        }
+    }
+elif _RUNNING_TESTS or DEBUG:
+    CACHES = {
+        "default": {
+            "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+            "LOCATION": "careerzip-local",
+        }
+    }
+else:
+    # 운영(DEBUG=False)인데 REDIS_URL 미설정 → 다중 worker 가 교환 코드를 공유할 수 없다.
+    # 조용한 LocMem 대체는 보안/정합성 사고로 이어지므로 명확히 실패시킨다.
+    raise ImproperlyConfigured(
+        "REDIS_URL is required when DEBUG=False. Configure a shared Redis/Valkey endpoint "
+        "(e.g. AWS ElastiCache) so all Gunicorn workers share OAuth one-time exchange codes. "
+        "Refusing to fall back to per-process LocMemCache in production."
+    )
 
 # ===== OAuth providers =====
 GOOGLE_OAUTH_CLIENT_ID = os.getenv("GOOGLE_OAUTH_CLIENT_ID", "")

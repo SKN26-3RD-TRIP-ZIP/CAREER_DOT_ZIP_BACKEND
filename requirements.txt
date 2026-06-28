@@ -16,9 +16,11 @@ requests==2.32.3
 mysqlclient==2.2.4
 pymysql
 
-# ===== Redis & 캐시 — Redis 준비 전 주석 처리 =====
-# redis==5.0
-# django-redis==5.4 
+# ===== Redis & 캐시 (운영 공유 캐시 / OAuth 일회용 교환 코드) =====
+# 운영(다중 Gunicorn worker)에서 교환 코드를 공유하기 위해 django-redis 사용.
+# 로컬/테스트는 REDIS_URL 미설정 시 LocMemCache 로 동작(settings.CACHES 참조).
+redis==5.0.8
+django-redis==5.4.0
 
 # ===== AI / LLM =====
 openai==1.59.2
