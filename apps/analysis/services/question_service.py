@@ -34,6 +34,7 @@ def generate_all_questions(
     resume_text: str = "",
     cover_letter_text: str = "",
     projects: list[dict] | None = None,
+    github_context: str = "",
 ) -> list[dict]:
     """
     Pipeline 3 ②~⑥를 순서대로 실행해 최종 질문 + STAR 답변 목록을 반환한다.
@@ -94,6 +95,7 @@ def generate_all_questions(
             jd_keywords=jd_keywords_dict,
             resume_analysis=resume_analysis,
             rag_candidates=rag_questions,
+            github_context=github_context,
         )
         # projects가 GitHub 검증(merge_with_github)을 거친 경우에만 코드 기반 질문 생성.
         # 검증된 repo가 없으면 generate_github_questions_for_projects가 [] 반환.

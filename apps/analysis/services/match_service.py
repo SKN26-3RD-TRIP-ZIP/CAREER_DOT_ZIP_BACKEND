@@ -14,6 +14,7 @@ Pipeline 1 - ③ 비교 & 점수 산출
 
 import json
 from .utils import get_client, clean_json, get_embeddings, cosine_similarity, log_llm_usage
+from .analysis_prompt import MATCH_STRENGTHS_SYSTEM, build_match_strengths_user
 
 # ────────────────────────────────────────────────────────
 # 신입 / 경력별 가중치 정의
@@ -291,39 +292,12 @@ def calculate_match_score(
         model="gpt-4o-mini",
         temperature=0.3,
         messages=[
-            {
-                "role": "system",
-                "content": (
-                    "당신은 IT 직무 채용 매칭 전문가입니다.\n"
-                    "JD 요구사항과 지원자 이력서를 비교 분석해 강점·약점·자소서 포인트를 제공합니다.\n\n"
-                    "분석 기준:\n"
-                    "1. strengths: JD 요구사항(기술·인재상 모두)과 일치하는 지원자의 강점 (최대 5개)\n"
-                    "2. weaknesses: JD에서 요구하지만 이력서에 부족한 역량 (최대 5개)\n"
-                    "3. cl_points: 자소서에서 면접에 활용할 수 있는 핵심 포인트 (최대 3개)\n\n"
-                    "반드시 아래 JSON 형식으로만 응답하세요. 마크다운 블록 금지.\n"
-                    "{\n"
-                    '  "strengths":  ["강점1", "강점2"],\n'
-                    '  "weaknesses": ["약점1", "약점2"],\n'
-                    '  "cl_points":  ["포인트1", "포인트2"]\n'
-                    "}"
-                ),
-            },
-            {
-                "role": "user",
-                "content": (
-                    f"[JD 기술 키워드]\n{', '.join(tech_keywords) or '없음'}\n\n"
-                    f"[JD 인재상·역량]\n{chr(10).join(f'- {t}' for t in trait_keywords) or '없음'}\n\n"
-                    f"[매칭된 기술 키워드]\n{', '.join(matched_keywords) or '없음'}\n\n"
-                    f"[부족한 기술 키워드]\n{', '.join(unmatched_keywords) or '없음'}\n\n"
-                    f"[지원자 기술 스택]\n{', '.join(tech_stack)}\n\n"
-                    f"[핵심 경험]\n" + "\n".join(f"- {e}" for e in experiences) + "\n\n"
-                    f"[역량 증거 문장]\n" + "\n".join(f"- {e}" for e in trait_evidence) + "\n\n"
-                    f"[강점]\n" + "\n".join(f"- {s}" for s in strengths_raw) + "\n\n"
-                    f"[프로젝트]\n{proj_str}\n\n"
-                    f"[자기소개서 요약]\n{cover_letter_text[:500] if cover_letter_text else '미입력'}\n\n"
-                    "위 정보를 바탕으로 강점·약점·자소서 포인트를 분석해주세요."
-                ),
-            },
+            {"role": "system", "content": MATCH_STRENGTHS_SYSTEM},
+            {"role": "user",   "content": build_match_strengths_user(
+                tech_keywords, trait_keywords, matched_keywords, unmatched_keywords,
+                tech_stack, experiences, trait_evidence, strengths_raw,
+                proj_str, cover_letter_text,
+            )},
         ],
     )
 
