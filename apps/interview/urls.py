@@ -12,10 +12,16 @@ from .views import (
     InterviewPersonaListView,
     FollowUpGenerateView,
     FollowUpListView,
+    QuestionPackApplyView,
+    QuestionPackDetailView,
+    QuestionPackListCreateView,
 )
 
 urlpatterns = [
     path('personas', InterviewPersonaListView.as_view(), name='interview-persona-list'),
+    path('question-packs', QuestionPackListCreateView.as_view(), name='question-pack-list-create'),
+    path('question-packs/<uuid:question_pack_id>', QuestionPackDetailView.as_view(), name='question-pack-detail'),
+    path('question-packs/<uuid:question_pack_id>/apply', QuestionPackApplyView.as_view(), name='question-pack-apply'),
     path('sessions', InterviewSessionListCreateView.as_view(), name='interview-session-list-create'),
     path('sessions/<uuid:session_id>', InterviewSessionDetailView.as_view(), name='interview-session-detail'),
     path('sessions/<uuid:session_id>/status', InterviewSessionStatusUpdateView.as_view(), name='interview-session-status-update'),

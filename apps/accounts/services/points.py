@@ -2,10 +2,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from django.db import transaction
+from django.db import models, transaction
 from django.utils import timezone
 
-from apps.accounts.models import PointHistory, User
+from apps.accounts.models import PointHistory, PointPolicy, User
 
 
 POLICY_VERSION = "2026.06"
@@ -14,6 +14,7 @@ POINT_POLICIES = {
     "AUTH.EMAIL_VERIFIED": 100,
     "PROFILE.COMPLETED": 500,
     "PROFILE.DESIRED_JOB_SET": 200,
+    "JD.FIRST_CREATED": 500,
     "RESUME.FIRST_CREATED": 500,
     "COVER_LETTER.FIRST_CREATED": 500,
     "PROJECT.FIRST_CREATED": 500,
@@ -61,6 +62,118 @@ def _validate_amount(transaction_type: str, amount: int) -> None:
         raise ValueError("Use and expire transactions require a negative amount.")
     if transaction_type == PointHistory.TRANSACTION_ADMIN and amount == 0:
         raise ValueError("Admin adjustment amount cannot be zero.")
+
+
+def _default_policy_for(reason_code: str) -> dict:
+    if reason_code not in POINT_POLICIES:
+        raise ValueError(f"Unknown point policy: {reason_code}")
+    amount = int(POINT_POLICIES[reason_code])
+    if amount > 0:
+        transaction_type = PointHistory.TRANSACTION_EARN
+    elif amount < 0:
+        transaction_type = PointHistory.TRANSACTION_USE
+    else:
+        raise ValueError("Point policy amount cannot be zero.")
+    return {
+        "reason_code": reason_code,
+        "amount": amount,
+        "transaction_type": transaction_type,
+        "daily_limit": None,
+        "monthly_limit": None,
+        "account_once": reason_code in {
+            "AUTH.EMAIL_VERIFIED",
+            "PROFILE.COMPLETED",
+            "PROFILE.DESIRED_JOB_SET",
+            "JD.FIRST_CREATED",
+            "RESUME.FIRST_CREATED",
+            "COVER_LETTER.FIRST_CREATED",
+            "PROJECT.FIRST_CREATED",
+        },
+        "per_reference_once": reason_code in {
+            "INTERVIEW.COMPLETED",
+            "REPORT.FIRST_VIEWED",
+            "ACTION_PLAN.CREATED",
+            "QUESTION_PACK.CUSTOM",
+            "REPORT.GROWTH_COMPARE",
+            "PRACTICE.WEAKNESS_FOCUS",
+            "GITHUB.DEEP_ANALYSIS",
+        },
+        "policy_version": POLICY_VERSION,
+        "is_active": True,
+    }
+
+
+def resolve_point_policy(reason_code: str) -> dict:
+    now = timezone.now()
+    policy = (
+        PointPolicy.objects
+        .filter(reason_code=reason_code, is_active=True, effective_start_at__lte=now)
+        .filter(models.Q(effective_end_at__isnull=True) | models.Q(effective_end_at__gt=now))
+        .order_by('-effective_start_at', '-id')
+        .first()
+    )
+    if policy is None:
+        return _default_policy_for(reason_code)
+    return {
+        "reason_code": policy.reason_code,
+        "amount": policy.amount,
+        "transaction_type": policy.transaction_type,
+        "daily_limit": policy.daily_limit,
+        "monthly_limit": policy.monthly_limit,
+        "account_once": policy.account_once,
+        "per_reference_once": policy.per_reference_once,
+        "policy_version": policy.policy_version,
+        "is_active": policy.is_active,
+    }
+
+
+def _period_sum(*, user: User, reason_code: str, since, until) -> int:
+    return (
+        PointHistory.objects
+        .filter(user=user, reason_code=reason_code, created_at__gte=since, created_at__lt=until)
+        .aggregate(total=models.Sum('amount'))
+        .get('total')
+        or 0
+    )
+
+
+def _enforce_policy_limits(*, user: User, policy: dict, reference_id: str) -> None:
+    reason_code = policy["reason_code"]
+    amount = int(policy["amount"])
+    if not policy.get("is_active"):
+        raise ValueError(f"Point policy is inactive: {reason_code}")
+
+    if policy.get("account_once") and PointHistory.objects.filter(user=user, reason_code=reason_code).exists():
+        raise ValueError(f"Point policy can be applied only once per account: {reason_code}")
+
+    if (
+        policy.get("per_reference_once")
+        and reference_id
+        and PointHistory.objects.filter(user=user, reason_code=reason_code, reference_id=reference_id).exists()
+    ):
+        raise ValueError(f"Point policy can be applied only once per reference: {reason_code}")
+
+    if amount <= 0:
+        return
+
+    now = timezone.now()
+    day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    day_end = day_start + timezone.timedelta(days=1)
+    month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    if month_start.month == 12:
+        month_end = month_start.replace(year=month_start.year + 1, month=1)
+    else:
+        month_end = month_start.replace(month=month_start.month + 1)
+
+    daily_limit = policy.get("daily_limit")
+    if daily_limit is not None:
+        if _period_sum(user=user, reason_code=reason_code, since=day_start, until=day_end) + amount > daily_limit:
+            raise ValueError(f"Daily point policy limit exceeded: {reason_code}")
+
+    monthly_limit = policy.get("monthly_limit")
+    if monthly_limit is not None:
+        if _period_sum(user=user, reason_code=reason_code, since=month_start, until=month_end) + amount > monthly_limit:
+            raise ValueError(f"Monthly point policy limit exceeded: {reason_code}")
 
 
 def _create_transaction(
@@ -169,6 +282,37 @@ def refund_points(
         reference_id=reference_id,
         idempotency_key=idempotency_key,
         description=description,
+    )
+
+
+def apply_point_policy(
+    *,
+    user: User,
+    reason_code: str,
+    reference_id: str = "",
+    idempotency_key: str | None = None,
+    description: str = "",
+) -> PointTransactionResult:
+    policy = resolve_point_policy(reason_code)
+    reference_id = reference_id or ""
+    normalized_key = _normalize_idempotency_key(idempotency_key)
+    if normalized_key:
+        existing = PointHistory.objects.filter(idempotency_key=normalized_key).first()
+        if existing is not None:
+            if existing.user_id != user.id:
+                raise ValueError("idempotency_key is already used by another user.")
+            return PointTransactionResult(history=existing, created=False)
+
+    _enforce_policy_limits(user=user, policy=policy, reference_id=reference_id)
+    return _create_transaction(
+        user=user,
+        transaction_type=policy["transaction_type"],
+        amount=policy["amount"],
+        reason_code=reason_code,
+        reference_id=reference_id,
+        idempotency_key=normalized_key,
+        description=description,
+        policy_version=policy["policy_version"],
     )
 
 

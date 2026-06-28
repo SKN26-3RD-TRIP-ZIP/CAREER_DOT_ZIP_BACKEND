@@ -225,6 +225,92 @@ class PendingRegistration(models.Model):
         return f'PendingRegistration(email={self.email}, used={self.is_used})'
 
 
+class TermsDocument(models.Model):
+    KIND_TERMS = 'TERMS'
+    KIND_PRIVACY = 'PRIVACY'
+    KIND_MARKETING = 'MARKETING'
+
+    KIND_CHOICES = [
+        (KIND_TERMS, 'Terms'),
+        (KIND_PRIVACY, 'Privacy'),
+        (KIND_MARKETING, 'Marketing'),
+    ]
+
+    id = models.BigAutoField(primary_key=True)
+    kind = models.CharField(max_length=30, choices=KIND_CHOICES)
+    version = models.CharField(max_length=50)
+    title = models.CharField(max_length=150, blank=True, default='')
+    content_hash = models.CharField(max_length=128, blank=True, default='')
+    is_required = models.BooleanField(default=True)
+    is_active = models.BooleanField(default=True)
+    effective_at = models.DateTimeField(default=timezone.now)
+    retired_at = models.DateTimeField(null=True, blank=True, default=None)
+    retention_policy = models.CharField(max_length=200, blank=True, default='')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'terms_documents'
+        ordering = ['kind', '-effective_at', '-id']
+        constraints = [
+            models.UniqueConstraint(fields=['kind', 'version'], name='unique_terms_document_version'),
+        ]
+        indexes = [
+            models.Index(fields=['kind', 'is_active'], name='terms_kind_active_idx'),
+        ]
+
+    def __str__(self):
+        return f'{self.kind} {self.version}'
+
+
+class TermsAgreement(models.Model):
+    SOURCE_SIGNUP = 'SIGNUP'
+    SOURCE_MYPAGE = 'MYPAGE'
+    SOURCE_ADMIN = 'ADMIN'
+
+    SOURCE_CHOICES = [
+        (SOURCE_SIGNUP, 'Signup'),
+        (SOURCE_MYPAGE, 'Mypage'),
+        (SOURCE_ADMIN, 'Admin'),
+    ]
+
+    id = models.BigAutoField(primary_key=True)
+    user = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name='terms_agreements',
+    )
+    document = models.ForeignKey(
+        TermsDocument,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='agreements',
+    )
+    kind = models.CharField(max_length=30, choices=TermsDocument.KIND_CHOICES)
+    version = models.CharField(max_length=50)
+    is_required = models.BooleanField(default=False)
+    agreed = models.BooleanField(default=True)
+    agreed_at = models.DateTimeField(null=True, blank=True, default=None)
+    withdrawn_at = models.DateTimeField(null=True, blank=True, default=None)
+    ip_address = models.GenericIPAddressField(null=True, blank=True)
+    user_agent = models.CharField(max_length=255, blank=True, default='')
+    source = models.CharField(max_length=30, choices=SOURCE_CHOICES, default=SOURCE_SIGNUP)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'terms_agreements'
+        ordering = ['-created_at', '-id']
+        indexes = [
+            models.Index(fields=['user', 'kind'], name='terms_user_kind_idx'),
+            models.Index(fields=['user', 'created_at'], name='terms_user_created_idx'),
+        ]
+
+    def __str__(self):
+        return f'TermsAgreement(user_id={self.user_id}, {self.kind} {self.version}, agreed={self.agreed})'
+
+
 class PointHistory(models.Model):
     TRANSACTION_EARN = 'EARN'
     TRANSACTION_USE = 'USE'
@@ -268,3 +354,103 @@ class PointHistory(models.Model):
 
     def __str__(self):
         return f'PointHistory(user_id={self.user_id}, amount={self.amount})'
+
+
+class PointPolicy(models.Model):
+    id = models.BigAutoField(primary_key=True)
+    reason_code = models.CharField(max_length=80, unique=True)
+    transaction_type = models.CharField(max_length=20, choices=PointHistory.TRANSACTION_TYPE_CHOICES)
+    amount = models.IntegerField()
+    daily_limit = models.PositiveIntegerField(null=True, blank=True, default=None)
+    monthly_limit = models.PositiveIntegerField(null=True, blank=True, default=None)
+    account_once = models.BooleanField(default=False)
+    per_reference_once = models.BooleanField(default=False)
+    is_active = models.BooleanField(default=True)
+    policy_version = models.CharField(max_length=30, default='2026.06')
+    effective_start_at = models.DateTimeField(default=timezone.now)
+    effective_end_at = models.DateTimeField(null=True, blank=True, default=None)
+    description = models.TextField(blank=True, default='')
+    updated_by = models.ForeignKey(
+        User,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name='updated_point_policies',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'point_policies'
+        ordering = ['reason_code']
+        indexes = [
+            models.Index(fields=['reason_code', 'is_active'], name='point_policy_active_idx'),
+            models.Index(fields=['effective_start_at', 'effective_end_at'], name='point_policy_period_idx'),
+        ]
+
+    def __str__(self):
+        return f'{self.reason_code} ({self.amount})'
+
+
+class PointPolicyChangeLog(models.Model):
+    id = models.BigAutoField(primary_key=True)
+    policy = models.ForeignKey(
+        PointPolicy,
+        on_delete=models.CASCADE,
+        related_name='change_logs',
+    )
+    actor = models.ForeignKey(
+        User,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name='point_policy_change_logs',
+    )
+    before_value = models.JSONField(default=dict, blank=True)
+    after_value = models.JSONField(default=dict, blank=True)
+    reason = models.CharField(max_length=500, blank=True, default='')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'point_policy_change_logs'
+        ordering = ['-created_at', '-id']
+
+    def __str__(self):
+        return f'PointPolicyChangeLog(policy_id={self.policy_id})'
+
+
+class SocialAccount(models.Model):
+    PROVIDER_GOOGLE = 'google'
+    PROVIDER_KAKAO = 'kakao'
+
+    PROVIDER_CHOICES = [
+        (PROVIDER_GOOGLE, 'Google'),
+        (PROVIDER_KAKAO, 'Kakao'),
+    ]
+
+    id = models.BigAutoField(primary_key=True)
+    user = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name='social_accounts',
+    )
+    provider = models.CharField(max_length=20, choices=PROVIDER_CHOICES)
+    provider_user_id = models.CharField(max_length=191)
+    provider_email = models.EmailField(blank=True, default='')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    last_login_at = models.DateTimeField(null=True, blank=True, default=None)
+
+    class Meta:
+        db_table = 'social_accounts'
+        ordering = ['provider', 'provider_user_id']
+        constraints = [
+            models.UniqueConstraint(fields=['provider', 'provider_user_id'], name='unique_social_provider_user'),
+            models.UniqueConstraint(fields=['user', 'provider'], name='unique_user_social_provider'),
+        ]
+        indexes = [
+            models.Index(fields=['provider', 'provider_email'], name='social_provider_email_idx'),
+        ]
+
+    def __str__(self):
+        return f'{self.provider}:{self.provider_user_id}'

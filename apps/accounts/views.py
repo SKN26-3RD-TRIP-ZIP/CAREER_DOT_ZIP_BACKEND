@@ -15,6 +15,8 @@ from django.utils import timezone
 
 from .serializers import SignupSerializer, LoginSerializer, SignupResponseSerializer
 from .models import User, EmailVerificationCode, PendingRegistration
+from .services.points import apply_point_policy
+from .services.terms import record_signup_terms
 from .codes import (
     issue_code,
     issue_pending_code,
@@ -404,11 +406,11 @@ class VerifyEmailView(APIView):
 
         pending = PendingRegistration.objects.filter(email=email).first()
         if pending is not None:
-            return self._verify_pending(email=email, code=code)
+            return self._verify_pending(email=email, code=code, request=request)
 
         return self._verify_legacy(email=email, code=code)
 
-    def _verify_pending(self, *, email, code):
+    def _verify_pending(self, *, email, code, request=None):
         user = None
         try:
             with transaction.atomic():
@@ -438,6 +440,17 @@ class VerifyEmailView(APIView):
                         name=pending.name,
                         is_verified=True,
                     )
+                    record_signup_terms(user, pending, request=request)
+                    try:
+                        apply_point_policy(
+                            user=user,
+                            reason_code="AUTH.EMAIL_VERIFIED",
+                            reference_id=str(user.id),
+                            idempotency_key=f"AUTH.EMAIL_VERIFIED:{user.id}",
+                            description="email verification reward",
+                        )
+                    except ValueError:
+                        logger.info("email verification reward skipped user_id=%s", user.id)
                 elif result == VerifyResult.TOO_MANY:
                     return Response(
                         {
@@ -503,6 +516,16 @@ class VerifyEmailView(APIView):
         if result == VerifyResult.OK:
             user.is_verified = True
             user.save(update_fields=['is_verified', 'updated_at'])
+            try:
+                apply_point_policy(
+                    user=user,
+                    reason_code="AUTH.EMAIL_VERIFIED",
+                    reference_id=str(user.id),
+                    idempotency_key=f"AUTH.EMAIL_VERIFIED:{user.id}",
+                    description="legacy email verification reward",
+                )
+            except ValueError:
+                logger.info("legacy email verification reward skipped user_id=%s", user.id)
             logger.info("email verified(code legacy) user_id=%s", user.id)
             return Response({'message': '이메일 인증이 완료되었습니다.'}, status=status.HTTP_200_OK)
         if result == VerifyResult.TOO_MANY:
@@ -728,8 +751,9 @@ class LoginView(APIView):
         if serializer.is_valid():
             user = serializer.validated_data['user']
             update_last_login(None, user)
+            was_dormant = user.status == "dormant"
             update_fields = []
-            if user.status == "dormant":
+            if was_dormant:
                 user.status = "active"
                 update_fields.append("status")
             if user.dormancy_warning_sent_at is not None:
@@ -738,6 +762,28 @@ class LoginView(APIView):
             if update_fields:
                 update_fields.append("updated_at")
                 user.save(update_fields=update_fields)
+            today = timezone.localdate().isoformat()
+            try:
+                apply_point_policy(
+                    user=user,
+                    reason_code="LOGIN.DAILY",
+                    reference_id=today,
+                    idempotency_key=f"LOGIN.DAILY:{user.id}:{today}",
+                    description="daily first login reward",
+                )
+            except ValueError:
+                logger.info("daily login reward skipped user_id=%s", user.id)
+            if was_dormant:
+                try:
+                    apply_point_policy(
+                        user=user,
+                        reason_code="DORMANT.RETURN_LOGIN",
+                        reference_id=str(user.id),
+                        idempotency_key=f"DORMANT.RETURN_LOGIN:{user.id}",
+                        description="dormant account return reward",
+                    )
+                except ValueError:
+                    logger.info("dormant return reward skipped user_id=%s", user.id)
             refresh = RefreshToken.for_user(user)
             access_token = str(refresh.access_token)
 

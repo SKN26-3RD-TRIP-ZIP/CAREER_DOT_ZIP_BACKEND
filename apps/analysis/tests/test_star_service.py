@@ -138,7 +138,7 @@ class TestGenerateStarAnswersStructure:
             cover_letter_text=COVER_LETTER_BACKEND,
         )
         for item in result:
-            _assert_star_structure(item["answer"], item.get("text", ""))
+            _assert_answer_by_type(item)
         print(f"\n첫 번째 STAR: {result[0]['answer']}")
 
     def test_원본_질문_필드_유지(self):
@@ -232,7 +232,7 @@ class TestGenerateStarAnswersTechnical:
         assert len(result) == 4
         for item in result:
             assert "answer" in item
-            _assert_star_structure(item["answer"], item["text"])
+            _assert_technical_structure(item["answer"], item["text"])
 
     def test_기술_질문_summary_두괄식(self):
         """summary는 핵심 결론을 먼저 제시해야 함 (30자 내외)"""
@@ -310,7 +310,7 @@ class TestGenerateStarAnswersEdgeCases:
             cover_letter_text=COVER_LETTER_BACKEND,
         )
         assert len(result) == 1
-        _assert_star_structure(result[0]["answer"])
+        _assert_answer_by_type(result[0])
 
     def test_basis_source_project_형식(self):
         """프로젝트 기반 질문의 basis_source는 'project:프로젝트명' 형식이어야 함"""
@@ -330,3 +330,157 @@ class TestGenerateStarAnswersEdgeCases:
         parts = src.split("|")
         valid = all(p.startswith("project:") or p in VALID for p in parts)
         assert valid, f"basis_source 형식 이상: '{src}'"
+
+
+# ══════════════════════════════════════════════════════════════
+# 결정적 LLM Mock + 견고성 회귀 (외부 OpenAI 호출 없음)
+#   patch target: apps.analysis.services.star_service.get_client
+#   system 프롬프트의 '"concept"' 포함 여부로 기술/STAR 구조 구분,
+#   user 프롬프트의 'N.' 줄 수로 question_index 개수 일치.
+# ══════════════════════════════════════════════════════════════
+import json
+import re
+from unittest.mock import MagicMock, patch
+
+_LONG_SUMMARY = "핵심 역량과 성과를 두괄식으로 압축해 제시하는 요약 문장입니다"
+
+
+def _star_item(idx: int) -> dict:
+    return {
+        "question_index": idx,
+        "summary": _LONG_SUMMARY,
+        "situation": "프로젝트 배경·시기·팀 규모를 구체적으로 서술한 상황입니다",
+        "task": "본인이 맡은 역할과 해결 과제를 설명합니다",
+        "action": "도구와 판단 근거를 포함한 단계별 행동을 구체적으로 서술합니다",
+        "result": "정량·정성 성과와 배운 점을 포함한 결과 서술입니다",
+        "basis_source": "resume",
+    }
+
+
+def _tech_item(idx: int) -> dict:
+    return {
+        "question_index": idx,
+        "summary": _LONG_SUMMARY,
+        "concept": "개념의 원리와 왜 중요한지를 설명하는 내용입니다",
+        "experience": "실제 프로젝트 적용 경험을 구체적으로 서술한 내용입니다",
+        "tradeoff": "이 기술의 한계·대안·선택 기준을 설명합니다",
+        "basis_source": "jd",
+    }
+
+
+def _count_questions(user_content: str) -> int:
+    return len(re.findall(r"(?m)^\s*\d+\.", user_content or ""))
+
+
+def _make_response(content: str):
+    resp = MagicMock()
+    resp.choices = [MagicMock(message=MagicMock(content=content))]
+    resp.model = "mock-model"
+    resp.usage = MagicMock(prompt_tokens=0, completion_tokens=0)
+    return resp
+
+
+def _default_create(**kwargs):
+    messages = kwargs.get("messages", [])
+    system = next((m.get("content", "") for m in messages if m.get("role") == "system"), "")
+    user = next((m.get("content", "") for m in messages if m.get("role") == "user"), "")
+    n = max(_count_questions(user), 1)
+    if '"concept"' in system:
+        items = [_tech_item(i + 1) for i in range(n)]
+    else:
+        items = [_star_item(i + 1) for i in range(n)]
+    return _make_response(json.dumps(items, ensure_ascii=False))
+
+
+@pytest.fixture(autouse=True)
+def fake_llm():
+    """모든 star_service 테스트에서 외부 OpenAI 호출을 결정적 Mock 으로 대체."""
+    fake = MagicMock()
+    fake.chat.completions.create.side_effect = _default_create
+    with patch("apps.analysis.services.star_service.get_client", return_value=fake):
+        yield fake
+
+
+def _assert_technical_structure(answer: dict, question_text: str = ""):
+    """기술 답변 구조 검증 (계약: summary/concept/experience/tradeoff/basis_source)."""
+    required_keys = {"summary", "concept", "experience", "tradeoff", "basis_source"}
+    missing = required_keys - set(answer.keys())
+    assert not missing, f"'{question_text}' - 기술 답변 키 누락: {missing}"
+    for key in ["summary", "concept", "experience", "tradeoff"]:
+        assert isinstance(answer[key], str), f"'{key}'가 str이 아님: {type(answer[key])}"
+        assert len(answer[key]) > 0, f"'{key}'가 빈 문자열"
+    valid_sources = {"project", "coverletter", "resume", "jd"}
+    src = answer.get("basis_source", "")
+    assert any(src.startswith(v) for v in valid_sources), f"basis_source 값이 유효하지 않음: '{src}'"
+
+
+def _assert_answer_by_type(item: dict):
+    """질문 유형에 따라 STAR(인성/경험) 또는 기술형 구조를 선택 검증한다."""
+    answer = item.get("answer", {})
+    if item.get("type") == "technical":
+        _assert_technical_structure(answer, item.get("text", ""))
+    else:
+        _assert_star_structure(answer, item.get("text", ""))
+
+
+class TestGenerateStarAnswersRobustness:
+
+    def test_외부_LLM_미호출_및_호출횟수(self, fake_llm):
+        result = generate_star_answers(
+            questions=SAMPLE_QUESTIONS_MIXED, job_role="백엔드 개발자", company_name="",
+            jd_text=JD_TEXT, resume_text=RESUME_BACKEND, cover_letter_text=COVER_LETTER_BACKEND,
+        )
+        assert len(result) == len(SAMPLE_QUESTIONS_MIXED)
+        assert fake_llm.chat.completions.create.call_count == 2  # 기술1 + 비기술2 → 두 그룹
+        for item in result:
+            _assert_answer_by_type(item)
+
+    def test_기술만_있으면_create_1회(self, fake_llm):
+        generate_star_answers(
+            questions=SAMPLE_QUESTIONS_TECHNICAL_ONLY, job_role="백엔드 개발자", company_name="",
+            jd_text=JD_TEXT, resume_text=RESUME_BACKEND, cover_letter_text=COVER_LETTER_BACKEND,
+        )
+        assert fake_llm.chat.completions.create.call_count == 1
+
+    def test_코드펜스_감싼_JSON_파싱(self, fake_llm):
+        payload = json.dumps([_star_item(1)], ensure_ascii=False)
+        fake_llm.chat.completions.create.side_effect = (
+            lambda **kw: _make_response("다음은 답변입니다.\n```json\n" + payload + "\n```")
+        )
+        questions = [{"type": "experience", "text": "프로젝트 경험을 말해주세요.", "source": "project", "basis": "x"}]
+        result = generate_star_answers(
+            questions=questions, job_role="백엔드", company_name="",
+            jd_text=JD_TEXT, resume_text=RESUME_BACKEND, cover_letter_text=COVER_LETTER_BACKEND,
+        )
+        _assert_star_structure(result[0]["answer"])
+
+    def test_malformed_JSON_은_예외없이_degrade(self, fake_llm):
+        fake_llm.chat.completions.create.side_effect = (
+            lambda **kw: _make_response("죄송합니다. JSON 을 생성하지 못했습니다 [불완전")
+        )
+        questions = [{"type": "experience", "text": "프로젝트 경험을 말해주세요.", "source": "project", "basis": "x"}]
+        result = generate_star_answers(
+            questions=questions, job_role="백엔드", company_name="",
+            jd_text=JD_TEXT, resume_text=RESUME_BACKEND, cover_letter_text=COVER_LETTER_BACKEND,
+        )
+        assert len(result) == 1
+        answer = result[0]["answer"]
+        for key in ("summary", "situation", "task", "action", "result", "basis_source"):
+            assert key in answer
+            assert answer[key] == ""
+
+    def test_question_index_누락시_해당_질문만_빈값(self, fake_llm):
+        fake_llm.chat.completions.create.side_effect = (
+            lambda **kw: _make_response(json.dumps([_star_item(1)], ensure_ascii=False))
+        )
+        questions = [
+            {"type": "experience", "text": "첫 번째 경험", "source": "project", "basis": "a"},
+            {"type": "experience", "text": "두 번째 경험", "source": "project", "basis": "b"},
+        ]
+        result = generate_star_answers(
+            questions=questions, job_role="백엔드", company_name="",
+            jd_text=JD_TEXT, resume_text=RESUME_BACKEND, cover_letter_text=COVER_LETTER_BACKEND,
+        )
+        assert len(result) == 2
+        _assert_star_structure(result[0]["answer"])
+        assert result[1]["answer"]["summary"] == ""

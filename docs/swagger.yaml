@@ -112,6 +112,83 @@ paths:
       responses:
         '200':
           description: Legacy code resent or cooldown notice
+  /auth/me:
+    get:
+      summary: Get current authenticated user and next navigation path
+      tags: [Auth]
+      responses:
+        '200':
+          description: Current user, profile completion, and next_path
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  user_id: { type: integer }
+                  email: { type: string, format: email }
+                  name: { type: string }
+                  is_staff: { type: boolean }
+                  is_profile_completed: { type: boolean }
+                  next_path: { type: string, enum: [/profile, /mypage, /admin/dashboard] }
+        '401':
+          description: Authentication required
+  /auth/oauth/{provider}/start:
+    get:
+      summary: Start Google or Kakao OAuth authorization code flow
+      tags: [Auth, OAuth]
+      security: []
+      parameters:
+        - in: path
+          name: provider
+          required: true
+          schema: { type: string, enum: [google, kakao] }
+        - in: query
+          name: next
+          schema: { type: string, default: /mypage }
+      responses:
+        '200':
+          description: Authorization URL and signed state. No provider token is logged or returned.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OAuthStartResponse'
+        '400':
+          description: Unsupported provider
+        '503':
+          description: LIVE_E2E_ENV_REQUIRED when client id, secret, or redirect uri is missing
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EnvRequiredResponse'
+  /auth/oauth/{provider}/callback:
+    post:
+      summary: Complete OAuth callback and issue JWT
+      tags: [Auth, OAuth]
+      security: []
+      parameters:
+        - in: path
+          name: provider
+          required: true
+          schema: { type: string, enum: [google, kakao] }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OAuthCallbackRequest'
+      responses:
+        '200':
+          description: User authenticated, refresh cookie set, access token returned
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OAuthCallbackResponse'
+        '400':
+          description: Invalid state, provider error, or account linking conflict
+        '403':
+          description: Withdrawn or suspended account
+        '503':
+          description: LIVE_E2E_ENV_REQUIRED when provider credentials are missing
   /external/jobs:
     get:
       summary: List Career.zip synthetic mock jobs
@@ -185,6 +262,104 @@ paths:
           description: JD created
         '404':
           description: Mock job not found
+  /jds/analyze-url:
+    post:
+      summary: Analyze one user-provided public job posting URL and save it as JD
+      tags: [JD]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/JDAnalyzeURLRequest'
+      responses:
+        '201':
+          description: JD created from sanitized HTML extraction
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JDAnalyzeURLResponse'
+        '400':
+          description: Invalid URL or blocked SSRF target
+        '415':
+          description: Content-Type is not HTML
+        '422':
+          description: Extraction failed; user should enter JD manually
+        '504':
+          description: Fetch timeout
+  /jds/ocr:
+    post:
+      summary: Extract JD text from PDF or image upload and save it as JD
+      tags: [JD, OCR]
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+                company_name:
+                  type: string
+                position:
+                  type: string
+      responses:
+        '201':
+          description: JD created from PDF text extraction or OCR provider result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JDOCRResponse'
+        '400':
+          description: Unsupported file, size limit, or secret/PII guardrail violation
+        '413':
+          description: File too large
+        '422':
+          description: No extractable text
+        '503':
+          description: LIVE_E2E_ENV_REQUIRED for image OCR when OCR provider is not configured
+  /jds/{jd_id}:
+    parameters:
+      - name: jd_id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      summary: Get a job description by id (owner only)
+      tags: [JD]
+      responses:
+        '200': { description: JD detail }
+        '401': { description: Authentication required }
+        '404': { description: Not found or not owned by the requester }
+    patch:
+      summary: Partially update editable JD fields (owner only)
+      tags: [JD]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                company_name: { type: string, maxLength: 100 }
+                position: { type: string, maxLength: 100 }
+                job_requirements: { type: string, nullable: true }
+                keywords: { type: string, nullable: true }
+      responses:
+        '200': { description: Updated JD detail }
+        '400': { description: Validation error (e.g., blank company_name/position) }
+        '401': { description: Authentication required }
+        '404': { description: Not found or not owned by the requester }
+    delete:
+      summary: Delete a job description (owner only)
+      tags: [JD]
+      responses:
+        '204': { description: Deleted }
+        '401': { description: Authentication required }
+        '404': { description: Not found or not owned by the requester }
   /users/me/points:
     get:
       summary: Get current user's point balance
@@ -210,6 +385,70 @@ paths:
       responses:
         '200':
           description: Point history
+  /users/me/terms-agreements:
+    get:
+      summary: List current user's versioned terms agreement history
+      tags: [Terms]
+      parameters:
+        - in: query
+          name: page
+          schema: { type: integer, default: 1 }
+        - in: query
+          name: size
+          schema: { type: integer, default: 20, maximum: 100 }
+      responses:
+        '200':
+          description: Paginated append-only agreement history and required re-consent status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  total: { type: integer }
+                  page: { type: integer }
+                  size: { type: integer }
+                  required_reconsent:
+                    type: array
+                    items: { type: string }
+                  results:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/TermsAgreement'
+  /users/me/terms-agreements/marketing:
+    patch:
+      summary: Grant or withdraw marketing consent while preserving history
+      tags: [Terms]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [agreed]
+              properties:
+                agreed: { type: boolean }
+      responses:
+        '200':
+          description: New agreement history row
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TermsAgreement'
+  /mypage/growth:
+    get:
+      summary: Get current user's growth dashboard
+      tags: [Mypage, Growth]
+      parameters:
+        - in: query
+          name: interview_type
+          schema: { type: string }
+      responses:
+        '200':
+          description: Growth dashboard excluding mock, failed, pending, and null-score reports
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GrowthDashboardResponse'
   /admin/members/{member_id}/points/adjust:
     post:
       summary: Admin point adjustment
@@ -311,6 +550,84 @@ paths:
           description: Action plan updated
         '404':
           description: Action plan not found or not owned by user
+  /interviews/question-packs:
+    get:
+      summary: List current user's custom question packs
+      tags: [Interviews, QuestionPacks]
+      responses:
+        '200':
+          description: Question packs
+    post:
+      summary: Create a custom question pack from JD/resume/project metadata
+      tags: [Interviews, QuestionPacks]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/QuestionPackCreate'
+      responses:
+        '201':
+          description: Question pack created after point charge
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QuestionPack'
+        '402':
+          description: Insufficient points
+        '500':
+          description: Server error. Charged points are refunded.
+  /interviews/question-packs/{question_pack_id}:
+    get:
+      summary: Get a user-owned question pack
+      tags: [Interviews, QuestionPacks]
+      parameters:
+        - in: path
+          name: question_pack_id
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Question pack detail
+        '404':
+          description: Not found or not owned by user
+  /interviews/question-packs/{question_pack_id}/apply:
+    post:
+      summary: Apply a question pack to an interview session
+      tags: [Interviews, QuestionPacks]
+      parameters:
+        - in: path
+          name: question_pack_id
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [session_id]
+              properties:
+                session_id: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Pack questions copied to session
+        '409':
+          description: Session already has questions
+  /admin/dashboard:
+    get:
+      summary: Admin operational dashboard statistics
+      tags: [Admin]
+      parameters:
+        - in: query
+          name: start
+          schema: { type: string, format: date-time }
+        - in: query
+          name: end
+          schema: { type: string, format: date-time }
+      responses:
+        '200':
+          description: Members, interviews, reports, points, guardrails, prompt versions, API errors, and LLM costs
   /admin/guardrails/events:
     get:
       summary: List guardrail events without raw user input
@@ -321,7 +638,13 @@ paths:
           schema: { type: string, enum: [G0, G1, G2, G3, G4, G5] }
         - in: query
           name: action
-          schema: { type: string, enum: [ALLOW, GUIDE, WARN, BLOCK_INPUT, END_SESSION] }
+          schema: { type: string, enum: [ALLOW, GUIDE, WARN, BLOCK_INPUT, SKIP_FOLLOWUP, END_SESSION, REQUIRE_ADMIN_REVIEW] }
+        - in: query
+          name: stage
+          schema: { type: string, enum: [SIGNUP, MYPAGE, INTERVIEW, REPORT] }
+        - in: query
+          name: direction
+          schema: { type: string, enum: [USER_TO_AI, AI_TO_USER] }
         - in: query
           name: user_id
           schema: { type: integer }
@@ -408,6 +731,61 @@ components:
           type: string
         code:
           type: string
+    EnvRequiredResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [ENV_REQUIRED]
+        code:
+          type: string
+        required_env:
+          type: array
+          items: { type: string }
+    OAuthStartResponse:
+      type: object
+      properties:
+        provider:
+          type: string
+          enum: [google, kakao]
+        authorization_url:
+          type: string
+          format: uri
+        state:
+          type: string
+        nonce:
+          type: string
+        next_path:
+          type: string
+        status:
+          type: string
+          example: IMPLEMENTATION_DONE
+    OAuthCallbackRequest:
+      type: object
+      required: [code, state]
+      properties:
+        code:
+          type: string
+        state:
+          type: string
+        error:
+          type: string
+    OAuthCallbackResponse:
+      type: object
+      properties:
+        access_token:
+          type: string
+        token_type:
+          type: string
+          example: Bearer
+        user:
+          type: object
+        next_path:
+          type: string
+        is_new_user:
+          type: boolean
+        provider:
+          type: string
     MockJob:
       type: object
       properties:
@@ -451,6 +829,109 @@ components:
         point_balance: { type: integer }
         point_last_updated_at: { type: string, format: date-time, nullable: true }
         policy_version: { type: string }
+    TermsAgreement:
+      type: object
+      properties:
+        agreement_id: { type: string, format: uuid }
+        kind: { type: string, enum: [TERMS, PRIVACY, MARKETING] }
+        version: { type: string }
+        is_required: { type: boolean }
+        agreed: { type: boolean }
+        agreed_at: { type: string, format: date-time, nullable: true }
+        withdrawn_at: { type: string, format: date-time, nullable: true }
+        source: { type: string }
+    JDAnalyzeURLRequest:
+      type: object
+      required: [url]
+      properties:
+        url:
+          type: string
+          format: uri
+          description: Single user-provided public http/https URL. Localhost, private IP, and metadata IP are blocked.
+    JDAnalyzeURLResponse:
+      type: object
+      properties:
+        jd_id: { type: string, format: uuid }
+        company_name: { type: string }
+        position: { type: string }
+        original_text: { type: string }
+        source_url: { type: string, format: uri }
+        source_fetched_at: { type: string, format: date-time }
+        extraction_confidence: { type: number, format: float }
+        extracted_fields: { type: object }
+        fallback_action: { type: string, example: MANUAL_INPUT }
+    JDOCRResponse:
+      type: object
+      properties:
+        jd_id: { type: string, format: uuid }
+        company_name: { type: string }
+        position: { type: string }
+        original_text: { type: string }
+        analysis_status: { type: string }
+        extracted_fields: { type: object }
+        fallback_action: { type: string, example: MANUAL_INPUT }
+    GrowthDashboardResponse:
+      type: object
+      properties:
+        summary:
+          type: object
+          properties:
+            profile_completion_rate: { type: integer }
+            point_balance: { type: integer }
+            completed_interviews: { type: integer }
+            average_score: { type: number, nullable: true }
+            recent_login: { type: string, format: date-time, nullable: true }
+            recent_activity_at: { type: string, format: date-time, nullable: true }
+            next_action: { type: object }
+        growth_comparison:
+          type: object
+          properties:
+            points:
+              type: array
+              maxItems: 5
+              items: { type: object }
+            data_status: { type: string, enum: [OK, INSUFFICIENT_DATA] }
+            comparison_warning: { type: string, nullable: true }
+        weakness_trend:
+          type: array
+          items: { type: object }
+        action_plans:
+          type: array
+          maxItems: 3
+          items: { type: object }
+        recent_activity:
+          type: array
+          items: { type: object }
+        interview_history:
+          type: array
+          items: { type: object }
+    QuestionPackCreate:
+      type: object
+      properties:
+        title: { type: string }
+        interview_type: { type: string }
+        jd_id: { type: string, format: uuid }
+        resume_id: { type: string, format: uuid }
+        project_ids:
+          type: array
+          items: { type: string, format: uuid }
+        mix:
+          type: object
+          example: { technical: 4, behavioral: 2, project: 2, job_fit: 2 }
+    QuestionPack:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        title: { type: string }
+        interview_type: { type: string }
+        mix: { type: object }
+        questions:
+          type: array
+          items: { type: object }
+        prompt_version_snapshot: { type: object }
+        generation_model: { type: string }
+        generation_status: { type: string }
+        is_fallback: { type: boolean }
     ActionPlanCreate:
       type: object
       required: [title]

@@ -16,6 +16,10 @@ class AdminGuardrailEventListView(AdminAPIView):
             events = events.filter(category=params['category'])
         if params.get('action'):
             events = events.filter(action=params['action'])
+        if params.get('stage'):
+            events = events.filter(stage=params['stage'])
+        if params.get('direction'):
+            events = events.filter(direction=params['direction'])
         if params.get('user_id'):
             events = events.filter(user_id=params['user_id'])
 

@@ -17,6 +17,14 @@ _PROMPT_INJECTION_PATTERN = re.compile(
 )
 _XSS_PATTERN = re.compile(r'(<\s*script\b|javascript\s*:|onerror\s*=|onload\s*=)', re.I)
 _SQLI_PATTERN = re.compile(r"(\bunion\s+select\b|\bdrop\s+table\b|--\s|/\*|\bor\s+1\s*=\s*1\b)", re.I)
+_HARMFUL_PATTERN = re.compile(
+    r'(kill|bomb|terror|폭탄|살해|테러|협박|불법\s*제조|마약\s*제조)',
+    re.I,
+)
+_AUTOMATION_ABUSE_PATTERN = re.compile(
+    r'(bypass\s+(?:auth|permission)|privilege\s+escalation|brute\s*force|권한\s*우회|자동화\s*공격)',
+    re.I,
+)
 
 
 @dataclass(frozen=True)
@@ -66,15 +74,19 @@ def scan_user_input(text, *, previous_answers=None, min_answer_length=15):
     normalized = _normalize_answer(value)
 
     if _first_match(_SECRET_PATTERNS, value):
-        return GuardrailResult('G4', 'BLOCK_INPUT', 'SECRET_PATTERN', mask_sensitive_text(value))
+        return GuardrailResult('G3', 'BLOCK_INPUT', 'SECRET_PATTERN', mask_sensitive_text(value))
     if _RRN_PATTERN.search(value):
-        return GuardrailResult('G4', 'BLOCK_INPUT', 'RRN_PATTERN', mask_sensitive_text(value))
+        return GuardrailResult('G3', 'BLOCK_INPUT', 'RRN_PATTERN', mask_sensitive_text(value))
     if _XSS_PATTERN.search(value):
-        return GuardrailResult('G4', 'BLOCK_INPUT', 'XSS_PATTERN', mask_sensitive_text(value))
+        return GuardrailResult('G3', 'BLOCK_INPUT', 'XSS_PATTERN', mask_sensitive_text(value))
     if _SQLI_PATTERN.search(value):
-        return GuardrailResult('G4', 'BLOCK_INPUT', 'SQL_INJECTION_PATTERN', mask_sensitive_text(value))
+        return GuardrailResult('G3', 'BLOCK_INPUT', 'SQL_INJECTION_PATTERN', mask_sensitive_text(value))
     if _PROMPT_INJECTION_PATTERN.search(value):
         return GuardrailResult('G3', 'BLOCK_INPUT', 'PROMPT_INJECTION_PATTERN', mask_sensitive_text(value))
+    if _AUTOMATION_ABUSE_PATTERN.search(value):
+        return GuardrailResult('G5', 'REQUIRE_ADMIN_REVIEW', 'AUTOMATION_OR_PRIVILEGE_ABUSE', mask_sensitive_text(value))
+    if _HARMFUL_PATTERN.search(value):
+        return GuardrailResult('G4', 'BLOCK_INPUT', 'HARMFUL_OR_ILLEGAL_REQUEST', mask_sensitive_text(value))
 
     if len(normalized) < min_answer_length:
         return GuardrailResult('G1', 'GUIDE', 'ANSWER_TOO_SHORT', mask_sensitive_text(value))

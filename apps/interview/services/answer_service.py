@@ -1,7 +1,8 @@
 from django.db import IntegrityError, transaction
 from rest_framework.exceptions import NotFound, PermissionDenied, ValidationError
 
-from apps.interview.models import InterviewAnswer, InterviewQuestion, InterviewSession
+from apps.interview.models import GuardrailEvent, InterviewAnswer, InterviewQuestion, InterviewSession
+from apps.interview.services.guardrails import scan_user_input
 
 
 class AnswerService:
@@ -20,17 +21,42 @@ class AnswerService:
             raise ValidationError({'question_id': 'An answer already exists for this question.'})
         if answer_source not in {'text', 'stt'}:
             raise ValidationError({'answer_source': 'Answer source must be text or stt.'})
+        previous_answers = (
+            InterviewAnswer.objects
+            .filter(session=session)
+            .exclude(question=question)
+            .values_list('answer_text', flat=True)
+        )
+        guardrail = scan_user_input(normalized_text, previous_answers=previous_answers)
+        guardrail_event = GuardrailEvent.objects.create(
+            user=user,
+            session=session,
+            question=question,
+            category=guardrail.category,
+            action=guardrail.action,
+            stage='INTERVIEW',
+            direction='USER_TO_AI',
+            rule_source='RULE',
+            reason_code=guardrail.reason_code,
+            masked_excerpt=guardrail.masked_excerpt,
+            endpoint='mvp_answer_create',
+        )
+        if guardrail.should_block:
+            raise ValidationError({'answer_text': 'Input was blocked by guardrail.', 'guardrail': guardrail.as_response()})
 
         try:
             # 같은 질문에 중복 답변이 생기지 않도록 DB 저장을 트랜잭션으로 묶는다.
             with transaction.atomic():
-                return InterviewAnswer.objects.create(
+                answer = InterviewAnswer.objects.create(
                     session=session,
                     question=question,
                     answer_text=normalized_text,
                     answer_source=answer_source,
                     speech_duration=speech_duration,
                 )
+                guardrail_event.answer = answer
+                guardrail_event.save(update_fields=['answer'])
+                return answer
         except IntegrityError:
             raise ValidationError({'question_id': 'An answer already exists for this question.'})
 

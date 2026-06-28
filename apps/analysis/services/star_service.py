@@ -12,8 +12,7 @@ Pipeline 3 - ⑤ STAR 답변 생성
   generate_star_answers()   STAR 모범 답변 생성 + basis_source 태그 부착
 """
 
-import json
-from .utils import get_client, clean_json, log_llm_usage
+from .utils import get_client, log_llm_usage, parse_json_array
 from .answer_guardrail import check_answer
 
 
@@ -135,8 +134,12 @@ def _generate_star(
     )
     log_llm_usage(response)
 
-    answer_list = json.loads(clean_json(response.choices[0].message.content))
-    answer_map_local = {item["question_index"]: item for item in answer_list}
+    answer_list = parse_json_array(response.choices[0].message.content)
+    answer_map_local = {
+        item["question_index"]: item
+        for item in answer_list
+        if isinstance(item, dict) and "question_index" in item
+    }
 
     # question_index는 이 함수에 넘긴 순서 기준(1-based) → 원래 인덱스로 매핑
     result: dict[int, dict] = {}
@@ -229,8 +232,12 @@ def _generate_technical(
     )
     log_llm_usage(response)
 
-    answer_list = json.loads(clean_json(response.choices[0].message.content))
-    answer_map_local = {item["question_index"]: item for item in answer_list}
+    answer_list = parse_json_array(response.choices[0].message.content)
+    answer_map_local = {
+        item["question_index"]: item
+        for item in answer_list
+        if isinstance(item, dict) and "question_index" in item
+    }
 
     result: dict[int, dict] = {}
     for local_i, (orig_i, _) in enumerate(indexed_questions):

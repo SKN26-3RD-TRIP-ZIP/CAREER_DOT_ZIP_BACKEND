@@ -10,6 +10,7 @@ from django.test import override_settings
 from rest_framework import status
 from rest_framework.test import APITestCase
 
+from apps.accounts.services.points import earn_points
 from apps.common.choices import (
     INTERVIEW_SESSION_STATUS_CANCELLED,
     INTERVIEW_SESSION_STATUS_COMPLETED,
@@ -628,6 +629,13 @@ class MVPPracticeSessionCreateAPITests(APITestCase):
             answer=self.source_answer,
             weakness_tag=weakness,
             reason='Needs a more concrete example.',
+        )
+        earn_points(
+            user=self.user,
+            amount=2000,
+            reason_code='TEST.PRACTICE_BALANCE',
+            idempotency_key=f'test-practice-balance:{self.user.id}',
+            description='practice session point fixture',
         )
         self.client.force_authenticate(self.user)
 

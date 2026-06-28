@@ -65,6 +65,18 @@ class PromptTemplate(models.Model):
 
 
 class PromptVersion(models.Model):
+    STATUS_DRAFT = 'DRAFT'
+    STATUS_ACTIVE = 'ACTIVE'
+    STATUS_INACTIVE = 'INACTIVE'
+    STATUS_ROLLED_BACK = 'ROLLED_BACK'
+
+    STATUS_CHOICES = [
+        (STATUS_DRAFT, 'Draft'),
+        (STATUS_ACTIVE, 'Active'),
+        (STATUS_INACTIVE, 'Inactive'),
+        (STATUS_ROLLED_BACK, 'Rolled Back'),
+    ]
+
     template = models.ForeignKey(
         PromptTemplate,
         on_delete=models.CASCADE,
@@ -73,6 +85,20 @@ class PromptVersion(models.Model):
     version_number = models.PositiveIntegerField()
     content = models.TextField()
     change_note = models.TextField(blank=True)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default=STATUS_DRAFT)
+    interview_type = models.CharField(max_length=30, blank=True, default='')
+    feature_key = models.CharField(max_length=50, blank=True, default='')
+    model_name = models.CharField(max_length=80, blank=True, default='')
+    activated_at = models.DateTimeField(null=True, blank=True, default=None)
+    deactivated_at = models.DateTimeField(null=True, blank=True, default=None)
+    rollback_from = models.ForeignKey(
+        'self',
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name='rollback_versions',
+    )
+    test_result = models.JSONField(default=dict, blank=True)
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         null=True,

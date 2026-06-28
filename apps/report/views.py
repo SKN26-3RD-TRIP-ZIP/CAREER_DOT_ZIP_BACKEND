@@ -8,6 +8,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from django.db import transaction
 
+from apps.accounts.services.points import apply_point_policy
 from apps.interview.models import InterviewSession
 from apps.evaluation.models import AnswerWeaknessTag
 from .models import ActionPlan, FinalReport, ReportShareToken
@@ -152,6 +153,16 @@ class FinalReportDetailView(APIView):
         report = self.get_report(session_id)
         if not report:
             return Response({"detail": "Report not found."}, status=status.HTTP_404_NOT_FOUND)
+        try:
+            apply_point_policy(
+                user=request.user,
+                reason_code="REPORT.FIRST_VIEWED",
+                reference_id=str(report.id),
+                idempotency_key=f"REPORT.FIRST_VIEWED:{report.id}",
+                description="report first viewed",
+            )
+        except ValueError:
+            pass
         serializer = FinalReportSerializer(report)
         return Response(serializer.data, status=status.HTTP_200_OK)
 
@@ -213,6 +224,16 @@ class ReportActionPlanCreateView(APIView):
         serializer = ActionPlanCreateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         action_plan = serializer.save(report=report)
+        try:
+            apply_point_policy(
+                user=request.user,
+                reason_code="ACTION_PLAN.CREATED",
+                reference_id=str(action_plan.id),
+                idempotency_key=f"ACTION_PLAN.CREATED:{action_plan.id}",
+                description="action plan created",
+            )
+        except ValueError:
+            pass
         return Response(ActionPlanSerializer(action_plan).data, status=status.HTTP_201_CREATED)
 
 

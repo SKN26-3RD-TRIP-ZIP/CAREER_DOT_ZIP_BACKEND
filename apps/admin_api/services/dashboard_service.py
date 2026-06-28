@@ -3,10 +3,12 @@ from datetime import timedelta
 from django.contrib.auth import get_user_model
 from django.db.models import Count, Q, Sum
 from django.utils import timezone
+from django.utils.dateparse import parse_datetime
 
 from apps.accounts.models import PointHistory
 from apps.interview.models import GuardrailEvent
 from apps.interview.models import InterviewSession
+from apps.prompt.models import AdminPromptTestRun
 from apps.report.models import FinalReport
 from ..models import ApiErrorLog, LlmUsageLog
 
@@ -100,7 +102,28 @@ def build_member_stats():
     }
 
 
-def build_dashboard_stats():
+def _parse_period(start=None, end=None):
+    return parse_datetime(start) if start else None, parse_datetime(end) if end else None
+
+
+def _apply_created_period(queryset, start_dt, end_dt):
+    if start_dt:
+        queryset = queryset.filter(created_at__gte=start_dt)
+    if end_dt:
+        queryset = queryset.filter(created_at__lt=end_dt)
+    return queryset
+
+
+def _apply_report_period(queryset, start_dt, end_dt):
+    if start_dt:
+        queryset = queryset.filter(generated_at__gte=start_dt)
+    if end_dt:
+        queryset = queryset.filter(generated_at__lt=end_dt)
+    return queryset
+
+
+def build_dashboard_stats(start=None, end=None):
+    start_dt, end_dt = _parse_period(start, end)
     """관리자 대시보드 요약 통계."""
     today = timezone.now().date()
     week_ago = today - timedelta(days=6)
@@ -119,36 +142,83 @@ def build_dashboard_stats():
 
     # 최근 24시간 시스템 에러 수 (API 5xx/미처리 예외, ApiErrorLog 기반 실제 수치)
     since_24h = timezone.now() - timedelta(hours=24)
-    error_count = ApiErrorLog.objects.filter(created_at__gte=since_24h).count()
+    error_queryset = _apply_created_period(ApiErrorLog.objects.all(), start_dt, end_dt)
+    error_count = error_queryset.count() if (start_dt or end_dt) else error_queryset.filter(created_at__gte=since_24h).count()
 
     # LLM 호출량 (LlmUsageLog 기반 실제 수치)
-    ai_calls = LlmUsageLog.objects.count()
+    llm_queryset = _apply_created_period(LlmUsageLog.objects.all(), start_dt, end_dt)
+    ai_calls = llm_queryset.count()
 
     # 이번 달 LLM 비용 추정 (USD)
     month_start = timezone.now().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     monthly_cost = _monthly_llm_cost_usd(month_start)
-    point_summary = PointHistory.objects.aggregate(
+    point_queryset = _apply_created_period(PointHistory.objects.all(), start_dt, end_dt)
+    report_queryset = _apply_report_period(FinalReport.objects.all(), start_dt, end_dt)
+    session_queryset = _apply_created_period(InterviewSession.objects.all(), start_dt, end_dt)
+    guardrail_queryset = _apply_created_period(GuardrailEvent.objects.all(), start_dt, end_dt)
+    member_queryset = _apply_created_period(User.objects.all(), start_dt, end_dt)
+    point_summary = point_queryset.aggregate(
         earned=Sum('amount', filter=Q(transaction_type=PointHistory.TRANSACTION_EARN)),
         used=Sum('amount', filter=Q(transaction_type=PointHistory.TRANSACTION_USE)),
         refunded=Sum('amount', filter=Q(transaction_type=PointHistory.TRANSACTION_REFUND)),
     )
     guardrail_by_category = {
         row['category']: row['count']
-        for row in GuardrailEvent.objects.values('category').annotate(count=Count('id'))
+        for row in guardrail_queryset.values('category').annotate(count=Count('id'))
     }
     guardrail_by_action = {
         row['action']: row['count']
-        for row in GuardrailEvent.objects.values('action').annotate(count=Count('id'))
+        for row in guardrail_queryset.values('action').annotate(count=Count('id'))
+    }
+    report_by_status = {
+        row['status']: row['count']
+        for row in report_queryset.values('status').annotate(count=Count('id'))
+    }
+    prompt_version_usage = {
+        str(row['prompt_version_id']): row['count']
+        for row in AdminPromptTestRun.objects.values('prompt_version_id').annotate(count=Count('id'))
+        if row['prompt_version_id'] is not None
+    }
+    usage_source = {
+        'mock': report_queryset.filter(
+            Q(summary__evaluation_metadata__is_mock=True)
+            | Q(summary__source__in=['MOCK', 'CAREER_ZIP_MOCK'])
+        ).count(),
+        'fallback': report_queryset.filter(summary__evaluation_metadata__evaluation_status='FALLBACK').count(),
+        'real_llm': report_queryset.exclude(
+            Q(summary__evaluation_metadata__is_mock=True)
+            | Q(summary__source__in=['MOCK', 'CAREER_ZIP_MOCK'])
+            | Q(summary__evaluation_metadata__evaluation_status='FALLBACK')
+        ).count(),
     }
 
     return {
+        'period': {
+            'start': start_dt.isoformat() if start_dt else None,
+            'end': end_dt.isoformat() if end_dt else None,
+        },
         'total_members': User.objects.count(),
         'active_members': User.objects.filter(status='active').count(),
         'suspended_members': User.objects.filter(status='dormant').count(),
         'banned_members': User.objects.filter(status='banned').count(),
-        'total_sessions': InterviewSession.objects.count(),
-        'active_users': InterviewSession.objects.values('user_id').distinct().count(),
-        'total_reports': FinalReport.objects.count(),
+        'withdrawn_members': User.objects.filter(status='withdrawn').count(),
+        'new_members': member_queryset.count() if (start_dt or end_dt) else User.objects.filter(created_at__date=today).count(),
+        'verified_members': User.objects.filter(is_verified=True).count(),
+        'total_sessions': session_queryset.count(),
+        'completed_sessions': session_queryset.filter(status='completed').count(),
+        'active_users': session_queryset.values('user_id').distinct().count(),
+        'total_reports': report_queryset.count(),
+        'reports': {
+            'by_status': report_by_status,
+            'success': report_queryset.filter(status=FinalReport.STATUS_DONE).count(),
+            'failed': report_queryset.filter(status=FinalReport.STATUS_FAILED).count(),
+        },
+        'evaluations': {
+            'completed': report_queryset.filter(summary__evaluation_metadata__evaluation_status='COMPLETED').count(),
+            'failed': report_queryset.filter(status=FinalReport.STATUS_FAILED).count(),
+        },
+        'usage_source': usage_source,
+        'prompt_versions': prompt_version_usage,
         'error_count': error_count,
         'ai_calls': ai_calls,
         # 이번 달 LLM 비용 추정치 (USD). 표에 있는 모델만 합산.
@@ -158,12 +228,12 @@ def build_dashboard_stats():
             'earned': point_summary['earned'] or 0,
             'used': point_summary['used'] or 0,
             'refunded': point_summary['refunded'] or 0,
-            'transaction_count': PointHistory.objects.count(),
+            'transaction_count': point_queryset.count(),
         },
         'guardrails': {
             'by_category': guardrail_by_category,
             'by_action': guardrail_by_action,
-            'event_count': GuardrailEvent.objects.count(),
+            'event_count': guardrail_queryset.count(),
         },
         'weekly_sessions': weekly_sessions,
     }
