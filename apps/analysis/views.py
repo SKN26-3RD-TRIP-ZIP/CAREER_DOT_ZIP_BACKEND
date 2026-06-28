@@ -27,6 +27,7 @@ from .services.result_service          import build_match_result
 from .services.gap_service             import calculate_gap, build_gap_message
 from .services.question_service        import generate_all_questions
 from .services.question_output_service import to_db_records
+from .services.utils.guardrails        import InputGuardrail, OutputGuardrail
 
 logger = logging.getLogger(__name__)
 
@@ -318,6 +319,19 @@ class AnalysisStartView(APIView):
             except CoverLetter.DoesNotExist:
                 pass
 
+        jd_text = jd.original_text or ""
+        guardrail = InputGuardrail()
+        guard_result = guardrail.validate(jd=jd_text, cover_letter=cover_letter_text)
+        if not guard_result["valid"]:
+            return Response(
+                {
+                    "error_code": "INVALID_INPUT",
+                    "field":      guard_result.get("field"),
+                    "message":    guard_result["error"],
+                },
+                status=400,
+            )
+
         session = AnalysisSession.objects.create(
             user=request.user,
             jd_id=jd_id,
@@ -325,7 +339,7 @@ class AnalysisStartView(APIView):
             cover_letter_id=cover_letter_id,
             job_role=jd.position,
             company_name=jd.company_name,
-            jd_text=jd.original_text or "",
+            jd_text=jd_text,
             resume_text=resume.original_text or "",
             cover_letter_text=cover_letter_text,
             career_level=career_level,
@@ -418,7 +432,6 @@ class AnalysisMatchView(APIView):
             "strengths":           jd_analysis.strengths,
             "weaknesses":          jd_analysis.weaknesses,
             "cl_points":           jd_analysis.cl_points,
-            "questions":           _serialize_generated_questions(jd_analysis),
         })
 
 
@@ -500,6 +513,61 @@ class AnalysisQuestionsView(APIView):
             )
 
         try:
+            # ── GitHub URL 수집 (우선순위 순서: 세션 저장값 > 이력서 > 프로젝트 경험) ──
+            github_url = None
+            if session.github_url:
+                github_url = session.github_url
+            elif session.resume and session.resume.github_url:
+                github_url = session.resume.github_url
+            else:
+                from apps.input.models import ProjectExperience
+                pe = ProjectExperience.objects.filter(
+                    user=session.user, github_url__isnull=False
+                ).first()
+                if pe:
+                    github_url = pe.github_url
+
+            # ── GitHub 분석 실행 (이미 캐시된 결과 있으면 재사용) ──
+            github_summary = session.github_summary
+            if github_url and not github_summary:
+                try:
+                    from apps.analysis.services.github_service import extract_interview_context
+                    gh_result = extract_interview_context(github_url)
+                    if gh_result["ok"]:
+                        github_summary = gh_result["data"]
+                        session.github_url     = github_url
+                        session.github_summary = github_summary
+                        session.save(update_fields=["github_url", "github_summary"])
+                    else:
+                        logger.warning("[Analysis] GitHub 분석 실패: %s", gh_result["error_code"])
+                except Exception as e:
+                    logger.warning("[Analysis] GitHub 분석 중 예외 발생: %s", e)
+                # 실패해도 질문 생성은 계속 진행
+
+            # ── GitHub 컨텍스트 문자열 조립 ──
+            github_context = ""
+            if github_summary:
+                lines = ["=== GitHub 프로젝트 기반 추가 컨텍스트 ==="]
+                if github_summary.get("project_name"):
+                    lines.append(f"프로젝트명: {github_summary['project_name']}")
+                if github_summary.get("project_overview"):
+                    lines.append(f"개요: {github_summary['project_overview']}")
+                if github_summary.get("tech_stack"):
+                    lines.append(f"기술 스택: {', '.join(github_summary['tech_stack'])}")
+                if github_summary.get("key_features"):
+                    lines.append("핵심 기능:")
+                    lines.extend([f"  - {f}" for f in github_summary["key_features"]])
+                if github_summary.get("technical_challenges"):
+                    lines.append("기술적 도전:")
+                    lines.extend([f"  - {c}" for c in github_summary["technical_challenges"]])
+                if github_summary.get("architecture"):
+                    lines.append(f"아키텍처: {github_summary['architecture']}")
+                if github_summary.get("interview_points"):
+                    lines.append("면접 포인트:")
+                    lines.extend([f"  - {p}" for p in github_summary["interview_points"]])
+                lines.append("==========================================")
+                github_context = "\n".join(lines)
+
             # 재생성 시 직전 질문을 프롬프트에 넘겨 "다르게" 생성하도록 유도할 수 있음 (추후)
             questions = generate_all_questions(
                 job_role=session.job_role,
@@ -509,7 +577,15 @@ class AnalysisQuestionsView(APIView):
                 jd_text=session.jd_text,
                 resume_text=session.resume_text,
                 cover_letter_text=session.cover_letter_text,
-                # projects=...: GitHub 검증 질문은 merge_with_github 연동 후 주입 (현재 미연동)
+                github_context=github_context,
+            )
+            existing_texts = list(
+                jd_analysis.questions.values_list("question_text", flat=True)
+            )
+            output_guard = OutputGuardrail()
+            questions = output_guard.filter(
+                questions=questions,
+                existing_questions=existing_texts,
             )
             db_records = to_db_records(questions, str(jd_analysis.id))
             with transaction.atomic():

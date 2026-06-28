@@ -39,12 +39,16 @@ class AnalysisSession(models.Model):
     )
 
     STATUS_CHOICES = [
-        ("pending",   "분석 대기"),
         ("analyzing", "분석 중"),
         ("ready",     "완료"),
         ("failed",    "실패"),
     ]
-    status     = models.CharField(max_length=20, choices=STATUS_CHOICES, default="pending")
+    status     = models.CharField(max_length=20, choices=STATUS_CHOICES, default="analyzing")
+
+    # GitHub 연동 — 면접 질문 생성 시 컨텍스트로 활용
+    github_url     = models.URLField(null=True, blank=True)
+    github_summary = models.JSONField(null=True, blank=True)
+
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
