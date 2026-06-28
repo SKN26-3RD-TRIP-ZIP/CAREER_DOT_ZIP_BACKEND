@@ -89,6 +89,54 @@ def record_signup_terms(user: User, pending: PendingRegistration, request=None) 
     return agreements
 
 
+def record_social_signup_terms(
+    *,
+    user: User,
+    terms_agreed: bool,
+    privacy_agreed: bool,
+    marketing_agreed: bool,
+    request=None,
+) -> list[TermsAgreement]:
+    """소셜 간편가입 사용자의 약관 동의 이력을 기록한다.
+
+    기존 TermsDocument/TermsAgreement 구조를 재사용하며, 활성 문서의 버전을 사용한다.
+    """
+
+    def _version(kind: str) -> str:
+        document = get_active_terms_document(kind)
+        return document.version if document else 'v1'
+
+    return [
+        record_terms_agreement(
+            user=user,
+            kind=TermsDocument.KIND_TERMS,
+            version=_version(TermsDocument.KIND_TERMS),
+            agreed=terms_agreed,
+            is_required=True,
+            source=TermsAgreement.SOURCE_SIGNUP,
+            request=request,
+        ),
+        record_terms_agreement(
+            user=user,
+            kind=TermsDocument.KIND_PRIVACY,
+            version=_version(TermsDocument.KIND_PRIVACY),
+            agreed=privacy_agreed,
+            is_required=True,
+            source=TermsAgreement.SOURCE_SIGNUP,
+            request=request,
+        ),
+        record_terms_agreement(
+            user=user,
+            kind=TermsDocument.KIND_MARKETING,
+            version=_version(TermsDocument.KIND_MARKETING),
+            agreed=marketing_agreed,
+            is_required=False,
+            source=TermsAgreement.SOURCE_SIGNUP,
+            request=request,
+        ),
+    ]
+
+
 def set_marketing_consent(
     *,
     user: User,

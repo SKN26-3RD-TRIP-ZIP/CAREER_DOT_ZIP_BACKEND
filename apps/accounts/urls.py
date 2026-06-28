@@ -9,7 +9,12 @@ from .views import (
     ResendVerificationView,
 )
 from .views_me import MeView
-from .views_oauth import OAuthCallbackView, OAuthStartView
+from .views_oauth import (
+    OAuthCallbackView,
+    OAuthExchangeView,
+    OAuthSocialTermsView,
+    OAuthStartView,
+)
 from .views_terms import MarketingConsentView, MyTermsAgreementListView
 
 urlpatterns = [
@@ -22,6 +27,8 @@ urlpatterns = [
     path("logout", LogoutView.as_view()),
     path("token/refresh", CookieTokenRefreshView.as_view()),
     path("me", MeView.as_view()),
+    path("oauth/exchange", OAuthExchangeView.as_view(), name="oauth-exchange"),
+    path("oauth/social/terms", OAuthSocialTermsView.as_view(), name="oauth-social-terms"),
     path("oauth/<str:provider>/start", OAuthStartView.as_view(), name="oauth-start"),
     path("oauth/<str:provider>/callback", OAuthCallbackView.as_view(), name="oauth-callback"),
     path("users/me/terms-agreements", MyTermsAgreementListView.as_view(), name="my-terms-agreements"),
@@ -36,6 +43,8 @@ urlpatterns = [
     path("logout/", LogoutView.as_view(), name="logout"),
     path("token/refresh/", CookieTokenRefreshView.as_view(), name="token_refresh"),
     path("me/", MeView.as_view(), name="me"),
+    path("oauth/exchange/", OAuthExchangeView.as_view()),
+    path("oauth/social/terms/", OAuthSocialTermsView.as_view()),
     path("oauth/<str:provider>/start/", OAuthStartView.as_view()),
     path("oauth/<str:provider>/callback/", OAuthCallbackView.as_view()),
     path("users/me/terms-agreements/", MyTermsAgreementListView.as_view()),

@@ -161,8 +161,14 @@ paths:
               schema:
                 $ref: '#/components/schemas/EnvRequiredResponse'
   /auth/oauth/{provider}/callback:
-    post:
-      summary: Complete OAuth callback and issue JWT
+    get:
+      summary: Provider redirect target. Always 302-redirects to the frontend callback.
+      description: >
+        Browser OAuth landing endpoint (provider redirect_uri). Validates state, exchanges the
+        provider code, resolves or creates the user, then 302-redirects to
+        {FRONTEND_BASE_URL}{FRONTEND_OAUTH_CALLBACK_PATH}.
+        Success: ?code=<one-time-code>. Failure: ?error=<CODE>.
+        Never returns JWT/JSON and never puts tokens, provider tokens, or error detail in the URL.
       tags: [Auth, OAuth]
       security: []
       parameters:
@@ -170,25 +176,85 @@ paths:
           name: provider
           required: true
           schema: { type: string, enum: [google, kakao] }
+        - in: query
+          name: code
+          schema: { type: string }
+        - in: query
+          name: state
+          schema: { type: string }
+        - in: query
+          name: error
+          schema: { type: string }
+      responses:
+        '302':
+          description: >
+            Redirect to frontend callback. Location is
+            {FRONTEND_BASE_URL}{FRONTEND_OAUTH_CALLBACK_PATH}?code=... on success, or ?error=CODE on failure.
+            error codes: OAUTH_PROVIDER_NOT_CONFIGURED, OAUTH_STATE_INVALID, OAUTH_CALLBACK_INVALID,
+            OAUTH_PROVIDER_ERROR, OAUTH_EMAIL_REQUIRED, OAUTH_ACCOUNT_BLOCKED, OAUTH_ACCOUNT_CONFLICT.
+          headers:
+            Location:
+              schema: { type: string }
+  /auth/oauth/exchange:
+    post:
+      summary: Exchange a one-time code for Career.zip access token + refresh cookie
+      description: >
+        Single-use, short-lived code issued by the callback redirect. Reuses the standard login
+        success response (access_token + HttpOnly refresh cookie). Tokens are never placed in URLs or logs.
+      tags: [Auth, OAuth]
+      security: []
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/OAuthCallbackRequest'
+              type: object
+              required: [code]
+              properties:
+                code: { type: string, description: One-time exchange code from the callback redirect }
       responses:
         '200':
-          description: User authenticated, refresh cookie set, access token returned
+          description: Authenticated. Refresh cookie set; access token + next_path returned.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/OAuthCallbackResponse'
+                type: object
+                properties:
+                  access_token: { type: string }
+                  token_type: { type: string, example: Bearer }
+                  provider: { type: string, enum: [google, kakao] }
+                  created: { type: boolean }
+                  needs_terms: { type: boolean }
+                  next_path: { type: string, example: /mypage }
         '400':
-          description: Invalid state, provider error, or account linking conflict
+          description: OAUTH_EXCHANGE_CODE_INVALID or OAUTH_EXCHANGE_CODE_EXPIRED
+        '409':
+          description: OAUTH_EXCHANGE_CODE_USED (code already consumed)
         '403':
-          description: Withdrawn or suspended account
-        '503':
-          description: LIVE_E2E_ENV_REQUIRED when provider credentials are missing
+          description: OAUTH_ACCOUNT_BLOCKED (withdrawn or suspended account)
+  /auth/oauth/social/terms:
+    post:
+      summary: Submit required terms for social signup completion
+      description: Authenticated. Records TERMS/PRIVACY (required) and MARKETING (optional) agreements.
+      tags: [Auth, OAuth, Terms]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [terms_agreed, privacy_agreed]
+              properties:
+                terms_agreed: { type: boolean }
+                privacy_agreed: { type: boolean }
+                marketing_agreed: { type: boolean, default: false }
+      responses:
+        '200':
+          description: Terms recorded; next_path = /mypage
+        '400':
+          description: TERMS_REQUIRED when a required agreement is missing
+        '401':
+          description: Authentication required
   /external/jobs:
     get:
       summary: List Career.zip synthetic mock jobs

@@ -56,6 +56,14 @@ class TermsAgreementSignupTests(APITestCase):
 
 
 class OAuthContractTests(APITestCase):
+    @override_settings(
+        GOOGLE_OAUTH_CLIENT_ID="",
+        GOOGLE_OAUTH_CLIENT_SECRET="",
+        GOOGLE_OAUTH_REDIRECT_URI="",
+        KAKAO_OAUTH_CLIENT_ID="",
+        KAKAO_OAUTH_CLIENT_SECRET="",
+        KAKAO_OAUTH_REDIRECT_URI="",
+    )
     def test_start_returns_env_required_when_provider_is_not_configured(self):
         response = self.client.get('/api/v1/auth/oauth/google/start')
 
