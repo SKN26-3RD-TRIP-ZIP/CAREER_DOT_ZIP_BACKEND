@@ -71,6 +71,7 @@ class FinalReportSerializer(serializers.ModelSerializer):
     score_status = serializers.SerializerMethodField()
     evaluation_status = serializers.SerializerMethodField()
     is_mock = serializers.SerializerMethodField()
+    prompt_versions = serializers.SerializerMethodField()
 
     class Meta:
         model = FinalReport
@@ -85,6 +86,7 @@ class FinalReportSerializer(serializers.ModelSerializer):
             'score_status',
             'evaluation_status',
             'is_mock',
+            'prompt_versions',
             'summary',
             'generated_at',
         )
@@ -116,6 +118,9 @@ class FinalReportSerializer(serializers.ModelSerializer):
     def get_is_mock(self, obj):
         return obj.is_mock
 
+    def get_prompt_versions(self, obj):
+        return obj.session.prompt_version_snapshot or {}
+
 
 class FinalReportListSerializer(serializers.ModelSerializer):
     report_id = serializers.SerializerMethodField()
@@ -129,6 +134,7 @@ class FinalReportListSerializer(serializers.ModelSerializer):
     evaluation_status = serializers.SerializerMethodField()
     is_mock = serializers.SerializerMethodField()
     summary_text = serializers.SerializerMethodField()
+    prompt_versions = serializers.SerializerMethodField()
 
     class Meta:
         model = FinalReport
@@ -143,6 +149,7 @@ class FinalReportListSerializer(serializers.ModelSerializer):
             'score_status',
             'evaluation_status',
             'is_mock',
+            'prompt_versions',
             'summary_text',
             'generated_at',
         )
@@ -178,6 +185,9 @@ class FinalReportListSerializer(serializers.ModelSerializer):
         metadata = (obj.summary or {}).get('evaluation_metadata', {})
         return metadata.get('summary_text', '')
 
+    def get_prompt_versions(self, obj):
+        return obj.session.prompt_version_snapshot or {}
+
 
 class FinalReportSessionSerializer(serializers.ModelSerializer):
     report_id = serializers.SerializerMethodField()
@@ -188,6 +198,7 @@ class FinalReportSessionSerializer(serializers.ModelSerializer):
     score_status = serializers.SerializerMethodField()
     evaluation_status = serializers.SerializerMethodField()
     is_mock = serializers.SerializerMethodField()
+    prompt_versions = serializers.SerializerMethodField()
 
     class Meta:
         model = FinalReport
@@ -200,6 +211,7 @@ class FinalReportSessionSerializer(serializers.ModelSerializer):
             'score_status',
             'evaluation_status',
             'is_mock',
+            'prompt_versions',
             'summary',
             'generated_at',
         )
@@ -224,6 +236,9 @@ class FinalReportSessionSerializer(serializers.ModelSerializer):
 
     def get_is_mock(self, obj):
         return obj.is_mock
+
+    def get_prompt_versions(self, obj):
+        return obj.session.prompt_version_snapshot or {}
 
 
 class ActionPlanSerializer(serializers.ModelSerializer):

@@ -129,7 +129,6 @@ if find_spec('django_apscheduler') is not None:
 MIDDLEWARE = [
     'corsheaders.middleware.CorsMiddleware',
     'django.middleware.security.SecurityMiddleware',
-    'whitenoise.middleware.WhiteNoiseMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
@@ -137,6 +136,9 @@ MIDDLEWARE = [
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]
+
+if find_spec('whitenoise') is not None:
+    MIDDLEWARE.insert(2, 'whitenoise.middleware.WhiteNoiseMiddleware')
 
 ROOT_URLCONF = 'config.urls'
 
@@ -339,6 +341,18 @@ ADMIN_NOTIFICATION_EMAIL = os.getenv("ADMIN_NOTIFICATION_EMAIL", "")
 
 # 이메일 인증 링크 구성용 FE base URL
 FRONTEND_BASE_URL = os.getenv("FRONTEND_BASE_URL", "http://localhost:5173")
+
+# ===== OAuth providers =====
+GOOGLE_OAUTH_CLIENT_ID = os.getenv("GOOGLE_OAUTH_CLIENT_ID", "")
+GOOGLE_OAUTH_CLIENT_SECRET = os.getenv("GOOGLE_OAUTH_CLIENT_SECRET", "")
+GOOGLE_OAUTH_REDIRECT_URI = os.getenv("GOOGLE_OAUTH_REDIRECT_URI", "")
+KAKAO_OAUTH_CLIENT_ID = os.getenv("KAKAO_OAUTH_CLIENT_ID", "")
+KAKAO_OAUTH_CLIENT_SECRET = os.getenv("KAKAO_OAUTH_CLIENT_SECRET", "")
+KAKAO_OAUTH_REDIRECT_URI = os.getenv("KAKAO_OAUTH_REDIRECT_URI", "")
+
+# ===== OCR provider =====
+OCR_PROVIDER = os.getenv("OCR_PROVIDER", "")
+OCR_API_KEY = os.getenv("OCR_API_KEY", "")
 
 # 이메일 인증 토큰 만료 (초) — 기본 24시간
 EMAIL_VERIFICATION_TOKEN_MAX_AGE = int(

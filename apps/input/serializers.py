@@ -163,7 +163,7 @@ class JobDescriptionListSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = JobDescription
-        fields = ('jd_id', 'company_name', 'position', 'input_method', 'created_at')
+        fields = ('jd_id', 'company_name', 'position', 'input_method', 'analysis_status', 'source_url', 'is_mock_source', 'created_at')
 
     def get_jd_id(self, obj):
         return str(obj.id)
@@ -184,11 +184,30 @@ class JobDescriptionDetailSerializer(serializers.ModelSerializer):
             'job_requirements',
             'keywords',
             'analysis_status',
+            'source_url',
+            'source_fetched_at',
+            'extraction_confidence',
+            'extracted_fields',
+            'is_mock_source',
             'created_at',
         )
 
     def get_jd_id(self, obj):
         return str(obj.id)
+
+
+class JobDescriptionUpdateSerializer(serializers.ModelSerializer):
+    """JD 부분 수정(PATCH). 사용자가 수정 가능한 기존 필드만 허용한다.
+    source_url/추출 시각/extraction_confidence/extracted_fields 등 출처·분석 메타는 읽기 전용으로 변경하지 않는다.
+    """
+    company_name = serializers.CharField(max_length=100, required=False, allow_blank=False)
+    position = serializers.CharField(max_length=100, required=False, allow_blank=False)
+    job_requirements = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    keywords = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+
+    class Meta:
+        model = JobDescription
+        fields = ('company_name', 'position', 'job_requirements', 'keywords')
 
 
 class ProjectExperienceCreateSerializer(serializers.ModelSerializer):

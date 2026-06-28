@@ -61,3 +61,45 @@ def cosine_similarity(a: list[float], b: list[float]) -> float:
     if norm_a == 0 or norm_b == 0:
         return 0.0
     return dot / (norm_a * norm_b)
+
+
+import re as _re_json
+import json as _json_safe
+import logging as _logging_safe
+
+_pja_logger = _logging_safe.getLogger(__name__)
+
+
+def parse_json_array(text: str) -> list:
+    """LLM 응답 문자열에서 JSON 배열을 안전하게 파싱한다.
+
+    실제 LLM은 가끔 마크다운 코드펜스나 앞뒤 설명을 덧붙이거나, 드물게 잘못된
+    JSON을 반환한다. 이때 전체 요청을 JSONDecodeError 로 중단시키지 않고 안전하게
+    빈 리스트로 degrade 한다(상위에서 빈 답변 필드로 처리).
+
+    처리 순서:
+      1) 코드펜스 제거(clean_json) 후 json.loads
+      2) 실패 시 첫 '[' ~ 마지막 ']' 구간만 추출해 재시도
+      3) 그래도 실패하면 경고 로그 후 [] 반환 (예외 전파/성공 위장/허위 생성 없음)
+
+    반환은 항상 list. list 가 아닌 JSON(객체 등)도 [] 로 처리한다.
+    """
+    cleaned = clean_json(text or "")
+    if not cleaned:
+        return []
+    try:
+        data = _json_safe.loads(cleaned)
+        return data if isinstance(data, list) else []
+    except (_json_safe.JSONDecodeError, TypeError):
+        pass
+
+    match = _re_json.search(r"\[.*\]", cleaned, _re_json.S)
+    if match:
+        try:
+            data = _json_safe.loads(match.group(0))
+            return data if isinstance(data, list) else []
+        except _json_safe.JSONDecodeError:
+            pass
+
+    _pja_logger.warning("parse_json_array: LLM 응답을 JSON 배열로 파싱하지 못해 빈 결과로 degrade 합니다.")
+    return []

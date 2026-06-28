@@ -6,6 +6,8 @@ MVP API in mvp_views.py is also active; neither surface should be removed or
 merged until consumers agree on a canonical contract.
 """
 
+import hashlib
+
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from rest_framework import generics, permissions, status
@@ -26,8 +28,8 @@ from .serializers import (
     InterviewSessionDetailSerializer,
     InterviewSessionStatusSerializer,
 )
-from .models import GuardrailEvent, InterviewQuestion, QuestionSourceTag
-from .serializers import InterviewQuestionSerializer
+from .models import GuardrailEvent, InterviewQuestion, QuestionPack, QuestionSourceTag
+from .serializers import InterviewQuestionSerializer, QuestionPackCreateSerializer, QuestionPackSerializer
 from .services.question_generator import generate_interview_questions
 from .services.follow_up_generator import FollowupGenerator
 from .services.ai_chain_openai_engine import AIChainOpenAIError
@@ -36,6 +38,7 @@ from .serializers import FollowUpQuestionSerializer
 from django.db import models
 from django.db.models import Prefetch
 from apps.analysis.models import AnalysisSession, JdAnalysis
+from apps.accounts.services.points import InsufficientPointsError, apply_point_policy, refund_points
 from .models import InterviewAnswer
 from .serializers import (
     InterviewAnswerCreateSerializer,
@@ -107,6 +110,161 @@ class InterviewSessionDetailView(generics.RetrieveAPIView):
         return Response(serializer.data)
 
 
+def _build_question_pack_questions(interview_type, question_count, mix):
+    templates = {
+        'technical': [
+            'Explain a recent technical decision and the trade-offs you considered.',
+            'Describe how you diagnosed and fixed a production-like issue.',
+            'How would you design a scalable API for this role?',
+            'Tell me about a performance bottleneck you improved.',
+            'Which testing strategy would you use for a risky change?',
+        ],
+        'personality': [
+            'Describe a conflict you resolved with a teammate.',
+            'Tell me about feedback that changed how you work.',
+            'How do you prioritize when deadlines conflict?',
+            'Describe a time you owned a mistake and recovered.',
+            'What motivates you in this role?',
+        ],
+        'comprehensive': [
+            'Connect your project experience to this job requirement.',
+            'Describe a problem, your action, and the measurable result.',
+            'What would you learn first after joining this team?',
+            'How do you balance speed, quality, and collaboration?',
+            'What weakness are you actively improving?',
+        ],
+    }
+    source = templates.get(interview_type, templates['comprehensive'])
+    questions = []
+    seen = set()
+    index = 0
+    while len(questions) < question_count:
+        text = source[index % len(source)]
+        index += 1
+        if text in seen:
+            text = f'{text} (variant {index})'
+        seen.add(text)
+        questions.append(
+            {
+                'order_index': len(questions) + 1,
+                'question_text': text,
+                'question_type': 'main',
+                'question_category': 'technical' if interview_type == 'technical' else 'personality' if interview_type == 'personality' else 'general',
+                'difficulty': 'medium',
+                'source_type': 'question_pack',
+                'source_reference': mix,
+            }
+        )
+    return questions
+
+
+class QuestionPackListCreateView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        packs = QuestionPack.objects.filter(user=request.user).order_by('-created_at')
+        return Response(
+            {
+                'total': packs.count(),
+                'results': QuestionPackSerializer(packs[:50], many=True).data,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+    def post(self, request):
+        serializer = QuestionPackCreateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        question_count = data['question_count']
+        interview_type = data['interview_type']
+        mix = data.get('mix') or {}
+        mix_digest = hashlib.sha256(str(sorted(mix.items())).encode('utf-8')).hexdigest()[:16]
+        idempotency_key = f"QUESTION_PACK.CUSTOM:{request.user.id}:{interview_type}:{question_count}:{mix_digest}"
+
+        try:
+            charge = apply_point_policy(
+                user=request.user,
+                reason_code='QUESTION_PACK.CUSTOM',
+                reference_id=idempotency_key,
+                idempotency_key=idempotency_key,
+                description='custom question pack',
+            )
+        except InsufficientPointsError:
+            return Response({'detail': 'Point balance is insufficient.', 'code': 'POINTS_INSUFFICIENT'}, status=402)
+        except ValueError as exc:
+            return Response({'detail': str(exc), 'code': 'POINT_POLICY_BLOCKED'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            questions = _build_question_pack_questions(interview_type, question_count, mix)
+            pack = QuestionPack.objects.create(
+                user=request.user,
+                title=data.get('title') or f'{interview_type} question pack',
+                interview_type=interview_type,
+                mix=mix,
+                questions=questions,
+                prompt_version_snapshot={},
+                generation_model='rule-based-mvp',
+                is_fallback=False,
+            )
+        except Exception:
+            if charge.created:
+                refund_points(
+                    user=request.user,
+                    amount=abs(charge.history.amount),
+                    reason_code='QUESTION_PACK.CUSTOM.REFUND',
+                    reference_id=charge.history.reference_id,
+                    idempotency_key=f'{charge.history.idempotency_key}:REFUND',
+                    description='question pack generation failed',
+                )
+            raise
+        return Response(QuestionPackSerializer(pack).data, status=status.HTTP_201_CREATED)
+
+
+class QuestionPackDetailView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request, question_pack_id):
+        pack = get_object_or_404(QuestionPack, id=question_pack_id, user=request.user)
+        return Response(QuestionPackSerializer(pack).data, status=status.HTTP_200_OK)
+
+
+class QuestionPackApplyView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, question_pack_id):
+        pack = get_object_or_404(QuestionPack, id=question_pack_id, user=request.user)
+        session_id = request.data.get('session_id')
+        session = get_object_or_404(InterviewSession, id=session_id, user=request.user)
+        if session.questions.exists():
+            return Response({'detail': 'Session already has questions.', 'code': 'SESSION_QUESTIONS_EXIST'}, status=status.HTTP_409_CONFLICT)
+
+        created = []
+        for item in pack.questions:
+            created.append(
+                InterviewQuestion.objects.create(
+                    session=session,
+                    order_index=item.get('order_index') or len(created) + 1,
+                    question_type=item.get('question_type') or 'main',
+                    question_category=item.get('question_category') or 'general',
+                    question_text=item.get('question_text') or '',
+                    difficulty=item.get('difficulty') or 'medium',
+                    source_type='prepared_question',
+                    source_reference=str(pack.id),
+                )
+            )
+        session.total_question_count = len(created)
+        session.save(update_fields=('total_question_count', 'updated_at'))
+        return Response(
+            {
+                'question_pack_id': str(pack.id),
+                'session_id': str(session.id),
+                'applied_count': len(created),
+                'questions': InterviewQuestionSerializer(created, many=True).data,
+            },
+            status=status.HTTP_201_CREATED,
+        )
+
+
 class InterviewSessionStatusUpdateView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
@@ -159,6 +317,16 @@ class InterviewSessionCompleteView(APIView):
             if session.ended_at is None:
                 session.ended_at = timezone.now()
             session.save(update_fields=('status', 'ended_at', 'updated_at'))
+            try:
+                apply_point_policy(
+                    user=request.user,
+                    reason_code='INTERVIEW.COMPLETED',
+                    reference_id=str(session.id),
+                    idempotency_key=f'INTERVIEW.COMPLETED:{session.id}',
+                    description='interview completed',
+                )
+            except ValueError:
+                pass
 
         serializer = InterviewSessionCompleteSerializer(session)
         return Response(serializer.data, status=status.HTTP_200_OK)
@@ -416,6 +584,18 @@ class InterviewQuestionGenerateView(APIView):
             session._jd_analysis_id = jd_analysis.id
 
         try:
+            from apps.interview.mvp_views import get_prompt_version_id
+
+            prompt_version_id = get_prompt_version_id(session)
+        except Exception:
+            prompt_version_id = None
+        if prompt_version_id:
+            snapshot = dict(session.prompt_version_snapshot or {})
+            snapshot['question_generation'] = str(prompt_version_id)
+            session.prompt_version_snapshot = snapshot
+            session.save(update_fields=('prompt_version_snapshot', 'updated_at'))
+
+        try:
             generated = generate_interview_questions(session)
         except AIChainOpenAIError as exc:
             return Response(
@@ -498,6 +678,9 @@ class InterviewAnswerSaveView(APIView):
             question=question,
             category=guardrail.category,
             action=guardrail.action,
+            stage='INTERVIEW',
+            direction='USER_TO_AI',
+            rule_source='RULE',
             reason_code=guardrail.reason_code,
             masked_excerpt=guardrail.masked_excerpt,
             endpoint='interview_answer_save',

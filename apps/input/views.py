@@ -5,8 +5,12 @@ from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.views import APIView
 from rest_framework.parsers import MultiPartParser, FormParser
+from django.utils import timezone
 
 from apps.document.services.document_parser import extract_text_from_file
+from apps.accounts.services.points import apply_point_policy
+from .services.jd_url_analyzer import JDURLAnalysisError, analyze_job_url
+from .services.ocr_service import OCRProviderNotConfigured, extract_job_text_from_upload
 
 from .models import (
     JobDescription,
@@ -23,6 +27,7 @@ from .serializers import (
     JobDescriptionCreateSerializer,
     JobDescriptionListSerializer,
     JobDescriptionDetailSerializer,
+    JobDescriptionUpdateSerializer,
     ProjectExperienceCreateSerializer,
     ProjectExperienceListSerializer,
     CoverLetterCreateSerializer,
@@ -46,6 +51,20 @@ from .serializers import (
 
 UPLOAD_MAX_SIZE = 10 * 1024 * 1024  # 10MB
 UPLOAD_ALLOWED_TYPES = {'pdf', 'docx'}
+
+
+def _reward_first_saved_item(*, user, reason_code, reference_id):
+    try:
+        apply_point_policy(
+            user=user,
+            reason_code=reason_code,
+            reference_id=reference_id,
+            idempotency_key=f'{reason_code}:{user.id}',
+            description=f'{reason_code} reward',
+        )
+    except ValueError:
+        return None
+    return True
 
 
 def _existing_order_fields(model, *field_names):
@@ -119,7 +138,101 @@ class JDUploadView(APIView):
             input_method='PDF',
             analysis_status='PENDING',
         )
+        _reward_first_saved_item(user=request.user, reason_code='JD.FIRST_CREATED', reference_id=str(jd.id))
         return Response(JobDescriptionListSerializer(jd).data, status=status.HTTP_201_CREATED)
+
+
+class JDURLAnalyzeView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        url = (request.data.get('url') or '').strip()
+        if not url:
+            return Response({'detail': 'url is required.', 'code': 'URL_REQUIRED'}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            result = analyze_job_url(url)
+        except JDURLAnalysisError as exc:
+            return Response(
+                {
+                    'detail': str(exc),
+                    'code': exc.code,
+                    'fallback_action': 'DIRECT_INPUT',
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        fields = result.extracted_fields
+        jd = JobDescription.objects.create(
+            user=request.user,
+            company_name=(request.data.get('company_name') or fields.get('company_name') or 'Unspecified company')[:100],
+            position=(request.data.get('position') or fields.get('position') or 'Unspecified position')[:100],
+            original_text=result.raw_text,
+            input_method='URL',
+            analysis_status='COMPLETED',
+            job_requirements=fields.get('requirements') or '',
+            keywords=', '.join(fields.get('tech_stacks') or []),
+            source_url=result.source_url,
+            source_fetched_at=timezone.now(),
+            extraction_confidence=result.confidence,
+            extracted_fields=fields,
+            is_mock_source=False,
+        )
+        data = JobDescriptionDetailSerializer(jd).data
+        data['fallback_action'] = None
+        _reward_first_saved_item(user=request.user, reason_code='JD.FIRST_CREATED', reference_id=str(jd.id))
+        return Response(data, status=status.HTTP_201_CREATED)
+
+
+class JDOCRUploadView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+    parser_classes = [MultiPartParser, FormParser]
+
+    def post(self, request):
+        file_obj = request.FILES.get('file')
+        try:
+            result = extract_job_text_from_upload(file_obj)
+        except OCRProviderNotConfigured as exc:
+            return Response(
+                {
+                    'detail': str(exc.detail),
+                    'code': str(exc.default_code).upper(),
+                    'status': 'ENV_REQUIRED',
+                    'required_env': ['OCR_PROVIDER', 'OCR_API_KEY'],
+                },
+                status=exc.status_code,
+            )
+
+        text = result['raw_text']
+        if result.get('guardrail', {}).get('action') == 'BLOCK_INPUT':
+            return Response(
+                {
+                    'detail': 'Uploaded job posting appears to contain sensitive or unsafe content.',
+                    'code': 'OCR_GUARDRAIL_BLOCKED',
+                    'guardrail': result['guardrail'],
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        jd = JobDescription.objects.create(
+            user=request.user,
+            company_name=(request.data.get('company_name') or 'Unspecified company')[:100],
+            position=(request.data.get('position') or Path(result['filename']).stem or 'Unspecified position')[:100],
+            original_text=text,
+            input_method='OCR',
+            analysis_status='PENDING',
+            extracted_fields={
+                'filename': result['filename'],
+                'ocr_provider': result['provider'],
+                'requires_user_confirmation': True,
+            },
+            extraction_confidence=0.5 if result['provider'] == 'pdf_text' else 0.35,
+            is_mock_source=False,
+        )
+        data = JobDescriptionDetailSerializer(jd).data
+        data['requires_user_confirmation'] = True
+        data['ocr_provider'] = result['provider']
+        _reward_first_saved_item(user=request.user, reason_code='JD.FIRST_CREATED', reference_id=str(jd.id))
+        return Response(data, status=status.HTTP_201_CREATED)
 
 
 class ResumeUploadView(APIView):
@@ -144,6 +257,7 @@ class ResumeUploadView(APIView):
             email=request.user.email,
             original_text=text,
         )
+        _reward_first_saved_item(user=request.user, reason_code='RESUME.FIRST_CREATED', reference_id=str(resume.id))
         return Response(
             {
                 'resume_id': str(resume.id),
@@ -250,7 +364,12 @@ class JDListCreateView(generics.ListCreateAPIView):
         return JobDescriptionListSerializer
 
     def perform_create(self, serializer):
-        serializer.save(user=self.request.user)
+        jd = serializer.save(user=self.request.user)
+        _reward_first_saved_item(
+            user=self.request.user,
+            reason_code='JD.FIRST_CREATED',
+            reference_id=str(jd.id),
+        )
 
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
@@ -287,6 +406,14 @@ class JDDetailView(generics.RetrieveDestroyAPIView):
         self.perform_destroy(instance)
         return Response(status=status.HTTP_204_NO_CONTENT)
 
+    def patch(self, request, *args, **kwargs):
+        # 본인 JD만(get_queryset user 필터) — 없거나 타 사용자면 404. 허용 필드만 부분 수정.
+        instance = self.get_object()
+        serializer = JobDescriptionUpdateSerializer(instance, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(JobDescriptionDetailSerializer(instance).data, status=status.HTTP_200_OK)
+
 
 class ResumeMasterCreateView(APIView):
     permission_classes = [permissions.IsAuthenticated]
@@ -311,6 +438,7 @@ class ResumeMasterCreateView(APIView):
         serializer = ResumeMasterCreateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         resume = serializer.save(user=request.user)
+        _reward_first_saved_item(user=request.user, reason_code='RESUME.FIRST_CREATED', reference_id=str(resume.id))
         return Response(
             {
                 'resume_id': str(resume.id),
@@ -357,6 +485,7 @@ class UserProfileView(APIView):
         serializer = UserProfileCreateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         profile = serializer.save(user=request.user)
+        _reward_first_saved_item(user=request.user, reason_code='PROFILE.COMPLETED', reference_id=str(profile.id))
 
         return Response(
             {
@@ -388,6 +517,8 @@ class UserProfileView(APIView):
         serializer = UserProfilePatchSerializer(profile, data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
         profile = serializer.save()
+        if serializer.validated_data.get('desired_job'):
+            _reward_first_saved_item(user=request.user, reason_code='PROFILE.DESIRED_JOB_SET', reference_id=str(profile.id))
 
         return Response(
             {
@@ -498,6 +629,7 @@ class ProjectExperienceListCreateView(generics.ListCreateAPIView):
         serializer.is_valid(raise_exception=True)
         self.perform_create(serializer)
         project = serializer.instance
+        _reward_first_saved_item(user=request.user, reason_code='PROJECT.FIRST_CREATED', reference_id=str(project.id))
         return Response(
             {
                 'project_id': str(project.id),
@@ -575,6 +707,7 @@ class CoverLetterListCreateView(generics.ListCreateAPIView):
         serializer.is_valid(raise_exception=True)
         self.perform_create(serializer)
         cover_letter = serializer.instance
+        _reward_first_saved_item(user=request.user, reason_code='COVER_LETTER.FIRST_CREATED', reference_id=str(cover_letter.id))
         return Response(
             {
                 'cover_letter_id': str(cover_letter.id),

@@ -5,7 +5,7 @@ from django.utils import timezone
 from rest_framework import status
 from rest_framework.response import Response
 
-from apps.accounts.models import PointHistory
+from apps.accounts.models import PointHistory, TermsAgreement
 from apps.report.models import FinalReport
 from ..serializers import (
     MemberInviteSerializer,
@@ -71,6 +71,8 @@ class MemberDetailView(AdminAPIView):
         latest = sessions.order_by('-created_at').first()
         report_count = FinalReport.objects.filter(session__user=member).count()
         recent_points = PointHistory.objects.filter(user=member).order_by('-created_at', '-id')[:10]
+        recent_terms = TermsAgreement.objects.filter(user=member).order_by('-created_at', '-id')[:10]
+        social_accounts = member.social_accounts.all().order_by('provider')
 
         return Response({
             'user_id': member.id,
@@ -98,6 +100,29 @@ class MemberDetailView(AdminAPIView):
                     'created_at': history.created_at,
                 }
                 for history in recent_points
+            ],
+            'terms_agreements': [
+                {
+                    'terms_agreement_id': agreement.id,
+                    'kind': agreement.kind,
+                    'version': agreement.version,
+                    'is_required': agreement.is_required,
+                    'agreed': agreement.agreed,
+                    'agreed_at': agreement.agreed_at,
+                    'withdrawn_at': agreement.withdrawn_at,
+                    'source': agreement.source,
+                    'created_at': agreement.created_at,
+                }
+                for agreement in recent_terms
+            ],
+            'social_accounts': [
+                {
+                    'provider': account.provider,
+                    'provider_email': account.provider_email,
+                    'last_login_at': account.last_login_at,
+                    'created_at': account.created_at,
+                }
+                for account in social_accounts
             ],
             'latest_interview_at': latest.created_at if latest else None,
         })

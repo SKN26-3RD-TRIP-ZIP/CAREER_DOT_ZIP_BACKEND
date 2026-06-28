@@ -213,3 +213,59 @@ class TestGenerateAllQuestionsEdgeCases:
         for item in result:
             assert "question" in item, "'question' 키가 없음 (포맷 변환 실패)"
             assert "text" not in item, "내부 'text' 키가 그대로 노출됨"
+
+
+# ══════════════════════════════════════════════════════════════
+# 결정적 파이프라인 Mock (외부 LLM/임베딩 미호출)
+#   generate_all_questions 내부 LLM 단계(질문 생성/GitHub/통합/STAR)를 결정적
+#   함수로 대체. 출력 포맷 변환(build_question_output)은 실제 코드가 실행되어
+#   'text' → 'question' 변환 계약을 그대로 검증한다.
+#   RAG(search_similar_questions)는 각 테스트가 개별 patch 한다.
+# ══════════════════════════════════════════════════════════════
+
+_FAKE_PIPELINE_QUESTIONS = [
+    {"type": "technical",   "text": "Redis 캐싱 전략을 설명하고 적용 경험을 말해주세요.", "source": "jd",          "basis": "Redis"},
+    {"type": "personality", "text": "협업 중 갈등을 해결한 경험을 말해주세요.",          "source": "coverletter", "basis": "팀워크"},
+    {"type": "experience",  "text": "성능 개선 경험을 구체적으로 말해주세요.",           "source": "project",     "basis": "성능"},
+]
+
+
+def _fake_generate_questions(**kwargs):
+    return [dict(q) for q in _FAKE_PIPELINE_QUESTIONS]
+
+
+def _fake_github(*args, **kwargs):
+    return []
+
+
+def _fake_merge(rag, llm, github_questions=None):
+    base = llm if llm else [dict(q) for q in _FAKE_PIPELINE_QUESTIONS]
+    return [dict(q) for q in base]
+
+
+def _fake_star(questions, **kwargs):
+    out = []
+    for q in questions:
+        if q.get("type") == "technical":
+            answer = {
+                "summary": "핵심 결론 요약입니다.", "concept": "개념 설명입니다.",
+                "experience": "적용 경험입니다.", "tradeoff": "한계와 대안입니다.",
+                "basis_source": "jd",
+            }
+        else:
+            answer = {
+                "summary": "핵심 결론 요약입니다.", "situation": "상황 설명입니다.",
+                "task": "과제 설명입니다.", "action": "행동 설명입니다.",
+                "result": "정량·정성 성과 결과입니다.", "basis_source": "resume",
+            }
+        out.append({**q, "answer": answer})
+    return out
+
+
+@pytest.fixture(autouse=True)
+def _mock_pipeline_llm():
+    with patch("apps.analysis.services.question_service.generate_questions", side_effect=_fake_generate_questions), \
+         patch("apps.analysis.services.question_service.generate_github_questions_for_projects", side_effect=_fake_github), \
+         patch("apps.analysis.services.question_service.merge_and_deduplicate", side_effect=_fake_merge), \
+         patch("apps.analysis.services.question_service.generate_star_answers", side_effect=_fake_star):
+        yield

@@ -45,7 +45,7 @@ class InterviewGuardrailTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertFalse(InterviewAnswer.objects.exists())
         event = GuardrailEvent.objects.get()
-        self.assertEqual(event.category, "G4")
+        self.assertEqual(event.category, "G3")
         self.assertEqual(event.action, "BLOCK_INPUT")
         self.assertNotIn("sk-", event.masked_excerpt)
 

@@ -16,6 +16,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.prompt.models import AdminPromptTestRun, PersonaConfig, PromptVersion
+from apps.accounts.services.points import InsufficientPointsError, apply_point_policy, refund_points
 from .models import InterviewAnswer, InterviewQuestion, InterviewSession, QuestionSourceTag
 from .mvp_serializers import (
     MVPQuestionGenerateSerializer,
@@ -106,6 +107,20 @@ class MVPPracticeSessionCreateView(APIView):
         )
         serializer = PracticeSessionCreateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
+        idempotency_key = f'PRACTICE.WEAKNESS_FOCUS:{request.user.id}:{source_session.id}'
+
+        try:
+            charge = apply_point_policy(
+                user=request.user,
+                reason_code='PRACTICE.WEAKNESS_FOCUS',
+                reference_id=str(source_session.id),
+                idempotency_key=idempotency_key,
+                description='weakness focus practice',
+            )
+        except InsufficientPointsError:
+            return Response({'detail': 'Point balance is insufficient.', 'code': 'POINTS_INSUFFICIENT'}, status=402)
+        except ValueError as exc:
+            return Response({'detail': str(exc), 'code': 'POINT_POLICY_BLOCKED'}, status=status.HTTP_400_BAD_REQUEST)
 
         try:
             result = create_practice_session(
@@ -115,6 +130,15 @@ class MVPPracticeSessionCreateView(APIView):
                 interview_mode=serializer.validated_data.get("interview_mode"),
             )
         except PracticeSessionCreationError as exc:
+            if charge.created:
+                refund_points(
+                    user=request.user,
+                    amount=abs(charge.history.amount),
+                    reason_code='PRACTICE.WEAKNESS_FOCUS.REFUND',
+                    reference_id=str(source_session.id),
+                    idempotency_key=f'{idempotency_key}:REFUND',
+                    description='weakness focus practice failed',
+                )
             return Response(
                 {
                     "detail": exc.detail,
@@ -149,12 +173,24 @@ class MVPSessionStatusView(APIView):
         serializer = MVPSessionStatusSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         requested_status = serializer.validated_data['status']
+        was_completed = session.status == 'completed'
         session.status = STATUS_INPUT_MAP[requested_status]
         if requested_status == 'in_progress' and session.started_at is None:
             session.started_at = timezone.now()
         if requested_status in {'completed', 'canceled', 'failed'} and session.ended_at is None:
             session.ended_at = timezone.now()
         session.save(update_fields=('status', 'started_at', 'ended_at', 'updated_at'))
+        if requested_status == 'completed' and not was_completed:
+            try:
+                apply_point_policy(
+                    user=request.user,
+                    reason_code='INTERVIEW.COMPLETED',
+                    reference_id=str(session.id),
+                    idempotency_key=f'INTERVIEW.COMPLETED:{session.id}',
+                    description='interview completed',
+                )
+            except ValueError:
+                pass
         return Response(
             {
                 'session_id': str(session.id),
@@ -226,6 +262,12 @@ class MVPQuestionGenerateView(APIView):
             session._jd_analysis_id = jd_analysis.id
 
         prompt_version_id = serializer.validated_data.get('prompt_version_id')
+        resolved_prompt_version_id = prompt_version_id or get_prompt_version_id(session)
+        if resolved_prompt_version_id:
+            snapshot = dict(session.prompt_version_snapshot or {})
+            snapshot['question_generation'] = str(resolved_prompt_version_id)
+            session.prompt_version_snapshot = snapshot
+            session.save(update_fields=('prompt_version_snapshot', 'updated_at'))
         if prompt_version_id:
             AdminPromptTestRun.objects.get_or_create(
                 session=session,

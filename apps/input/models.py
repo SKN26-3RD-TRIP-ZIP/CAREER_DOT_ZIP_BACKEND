@@ -29,6 +29,11 @@ class JobDescription(models.Model):
     job_requirements = models.TextField(blank=True, null=True)
     keywords = models.TextField(blank=True, null=True)
     analysis_status = models.CharField(max_length=20, choices=ANALYSIS_STATUS_CHOICES, default='PENDING')
+    source_url = models.URLField(blank=True, null=True)
+    source_fetched_at = models.DateTimeField(blank=True, null=True)
+    extraction_confidence = models.FloatField(default=0)
+    extracted_fields = models.JSONField(default=dict, blank=True)
+    is_mock_source = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

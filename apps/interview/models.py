@@ -36,6 +36,7 @@ class InterviewSession(models.Model):
     )
     total_question_count = models.PositiveIntegerField(default=3)
     current_question_index = models.PositiveIntegerField(default=0)
+    prompt_version_snapshot = models.JSONField(default=dict, blank=True)
     started_at = models.DateTimeField(null=True, blank=True)
     ended_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -116,6 +117,36 @@ class QuestionSourceTag(models.Model):
         return f'{self.source_type} for question {self.question_id}'
 
 
+class QuestionPack(models.Model):
+    STATUS_READY = 'READY'
+    STATUS_FAILED = 'FAILED'
+
+    STATUS_CHOICES = [
+        (STATUS_READY, 'Ready'),
+        (STATUS_FAILED, 'Failed'),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='question_packs')
+    title = models.CharField(max_length=150)
+    interview_type = models.CharField(max_length=20, choices=INTERVIEW_TYPE_CHOICES, default='technical')
+    mix = models.JSONField(default=dict, blank=True)
+    questions = models.JSONField(default=list, blank=True)
+    prompt_version_snapshot = models.JSONField(default=dict, blank=True)
+    generation_model = models.CharField(max_length=80, blank=True, default='')
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default=STATUS_READY)
+    is_fallback = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'interview_question_packs'
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f'QuestionPack {self.id} ({self.user_id})'
+
+
 class InterviewAnswer(models.Model):
     ANSWER_SOURCE_CHOICES = ANSWER_SOURCE_CHOICES
 
@@ -142,19 +173,31 @@ class InterviewAnswer(models.Model):
 
 class GuardrailEvent(models.Model):
     CATEGORY_CHOICES = [
-        ('G0', 'Allow'),
-        ('G1', 'Guide'),
-        ('G2', 'Warn'),
-        ('G3', 'Block Input'),
-        ('G4', 'Sensitive Or Unsafe'),
-        ('G5', 'End Session'),
+        ('G0', 'Normal'),
+        ('G1', 'Low Quality'),
+        ('G2', 'Repeated Or Irrelevant'),
+        ('G3', 'Sensitive Or Injection'),
+        ('G4', 'Harmful Or Illegal'),
+        ('G5', 'Automation Or Privilege Abuse'),
     ]
     ACTION_CHOICES = [
         ('ALLOW', 'Allow'),
         ('GUIDE', 'Guide'),
         ('WARN', 'Warn'),
         ('BLOCK_INPUT', 'Block Input'),
+        ('SKIP_FOLLOWUP', 'Skip Follow-up'),
         ('END_SESSION', 'End Session'),
+        ('REQUIRE_ADMIN_REVIEW', 'Require Admin Review'),
+    ]
+    STAGE_CHOICES = [
+        ('SIGNUP', 'Signup'),
+        ('MYPAGE', 'Mypage'),
+        ('INTERVIEW', 'Interview'),
+        ('REPORT', 'Report'),
+    ]
+    DIRECTION_CHOICES = [
+        ('USER_TO_AI', 'User To AI'),
+        ('AI_TO_USER', 'AI To User'),
     ]
 
     id = models.BigAutoField(primary_key=True)
@@ -164,9 +207,13 @@ class GuardrailEvent(models.Model):
     answer = models.ForeignKey(InterviewAnswer, on_delete=models.SET_NULL, related_name='guardrail_events', null=True, blank=True)
     category = models.CharField(max_length=2, choices=CATEGORY_CHOICES)
     action = models.CharField(max_length=20, choices=ACTION_CHOICES)
+    stage = models.CharField(max_length=20, choices=STAGE_CHOICES, default='INTERVIEW')
+    direction = models.CharField(max_length=20, choices=DIRECTION_CHOICES, default='USER_TO_AI')
+    rule_source = models.CharField(max_length=20, default='RULE')
     reason_code = models.CharField(max_length=80)
     masked_excerpt = models.CharField(max_length=240, blank=True, default='')
     endpoint = models.CharField(max_length=120, blank=True, default='')
+    retention_until = models.DateTimeField(null=True, blank=True, default=None)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -175,6 +222,7 @@ class GuardrailEvent(models.Model):
         indexes = [
             models.Index(fields=['category', 'created_at'], name='guardrail_cat_created_idx'),
             models.Index(fields=['user', 'created_at'], name='guardrail_user_created_idx'),
+            models.Index(fields=['stage', 'direction', 'created_at'], name='guardrail_stage_dir_idx'),
         ]
 
     def __str__(self):

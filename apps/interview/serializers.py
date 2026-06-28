@@ -10,7 +10,7 @@ from apps.analysis.models import AnalysisSession, JdAnalysis
 from apps.common.choices import ANSWER_SOURCE_CHOICES
 from apps.evaluation.models import Evaluation
 from apps.input.models import JobDescription, ResumeMaster, CoverLetter
-from .models import InterviewSession, InterviewQuestion, InterviewAnswer, QuestionSourceTag
+from .models import InterviewSession, InterviewQuestion, InterviewAnswer, QuestionPack, QuestionSourceTag
 from .services.ai_chain_persona_prompts import get_persona_options, normalize_persona_type
 
 
@@ -22,6 +22,33 @@ class QuestionSourceTagSerializer(serializers.ModelSerializer):
             'source_label',
             'source_text_excerpt',
             'source_reference',
+        )
+
+
+class QuestionPackCreateSerializer(serializers.Serializer):
+    title = serializers.CharField(required=False, allow_blank=True, max_length=150)
+    interview_type = serializers.ChoiceField(choices=('technical', 'personality', 'comprehensive'), default='technical')
+    question_count = serializers.IntegerField(required=False, default=5, min_value=1, max_value=20)
+    mix = serializers.DictField(required=False, default=dict)
+
+
+class QuestionPackSerializer(serializers.ModelSerializer):
+    question_pack_id = serializers.UUIDField(source='id', read_only=True)
+
+    class Meta:
+        model = QuestionPack
+        fields = (
+            'question_pack_id',
+            'title',
+            'interview_type',
+            'mix',
+            'questions',
+            'prompt_version_snapshot',
+            'generation_model',
+            'status',
+            'is_fallback',
+            'created_at',
+            'updated_at',
         )
 
 

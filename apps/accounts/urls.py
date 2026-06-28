@@ -9,6 +9,8 @@ from .views import (
     ResendVerificationView,
 )
 from .views_me import MeView
+from .views_oauth import OAuthCallbackView, OAuthStartView
+from .views_terms import MarketingConsentView, MyTermsAgreementListView
 
 urlpatterns = [
     # no-slash alias (프론트/명세 호환)
@@ -20,6 +22,10 @@ urlpatterns = [
     path("logout", LogoutView.as_view()),
     path("token/refresh", CookieTokenRefreshView.as_view()),
     path("me", MeView.as_view()),
+    path("oauth/<str:provider>/start", OAuthStartView.as_view(), name="oauth-start"),
+    path("oauth/<str:provider>/callback", OAuthCallbackView.as_view(), name="oauth-callback"),
+    path("users/me/terms-agreements", MyTermsAgreementListView.as_view(), name="my-terms-agreements"),
+    path("users/me/terms-agreements/marketing", MarketingConsentView.as_view(), name="my-marketing-consent"),
 
     # trailing-slash route
     path("signup/", SignupView.as_view(), name="signup"),
@@ -30,4 +36,8 @@ urlpatterns = [
     path("logout/", LogoutView.as_view(), name="logout"),
     path("token/refresh/", CookieTokenRefreshView.as_view(), name="token_refresh"),
     path("me/", MeView.as_view(), name="me"),
+    path("oauth/<str:provider>/start/", OAuthStartView.as_view()),
+    path("oauth/<str:provider>/callback/", OAuthCallbackView.as_view()),
+    path("users/me/terms-agreements/", MyTermsAgreementListView.as_view()),
+    path("users/me/terms-agreements/marketing/", MarketingConsentView.as_view()),
 ]

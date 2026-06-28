@@ -118,6 +118,8 @@ class AdminPointHistorySerializer(serializers.ModelSerializer):
 class AdminGuardrailEventQuerySerializer(PageQuerySerializer):
     category = serializers.ChoiceField(choices=GuardrailEvent.CATEGORY_CHOICES, required=False)
     action = serializers.ChoiceField(choices=GuardrailEvent.ACTION_CHOICES, required=False)
+    stage = serializers.ChoiceField(choices=GuardrailEvent.STAGE_CHOICES, required=False)
+    direction = serializers.ChoiceField(choices=GuardrailEvent.DIRECTION_CHOICES, required=False)
     user_id = serializers.IntegerField(required=False, min_value=1)
 
 
@@ -140,8 +142,12 @@ class AdminGuardrailEventSerializer(serializers.ModelSerializer):
             'answer_id',
             'category',
             'action',
+            'stage',
+            'direction',
+            'rule_source',
             'reason_code',
             'masked_excerpt',
             'endpoint',
+            'retention_until',
             'created_at',
         )
