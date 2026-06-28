@@ -8,6 +8,7 @@ import requests
 from django.conf import settings
 from django.contrib.auth.hashers import make_password
 from django.core import signing
+from django.core.cache import cache
 from django.db import transaction
 from django.utils import timezone
 
@@ -16,6 +17,15 @@ from apps.accounts.models import SocialAccount, User
 
 OAUTH_STATE_SALT = 'accounts.oauth.state'
 OAUTH_STATE_MAX_AGE = 10 * 60
+
+# 일회용 교환 코드(서명 토큰) 설정. 토큰 본문에는 user/jwt 가 들어가지 않고,
+# 캐시 key(jti)만 들어간다. 실제 사용자 정보는 서버측 캐시에만 보관한다.
+OAUTH_EXCHANGE_SALT = 'accounts.oauth.exchange'
+OAUTH_EXCHANGE_CACHE_PREFIX = 'oauth:exchange:'
+
+# 회원가입 직후 필수 약관 미동의 시 이동할 프론트 경로(소셜 전용 약관 화면).
+SOCIAL_TERMS_PATH = '/signup/social/terms'
+DEFAULT_NEXT_PATH = '/mypage'
 
 
 class OAuthError(ValueError):
@@ -30,12 +40,62 @@ class OAuthStateInvalid(OAuthError):
     code = 'OAUTH_STATE_INVALID'
 
 
+class OAuthCallbackInvalid(OAuthError):
+    code = 'OAUTH_CALLBACK_INVALID'
+
+
+class OAuthProviderResponseError(OAuthError):
+    """Provider(token/userinfo) 호출이 실패했거나 Provider 가 error 를 반환한 경우."""
+
+    code = 'OAUTH_PROVIDER_ERROR'
+
+
 class OAuthAccountBlocked(OAuthError):
     code = 'OAUTH_ACCOUNT_BLOCKED'
 
 
+class OAuthAccountConflict(OAuthError):
+    """동일 이메일의 기존(로컬/타 Provider) 계정이 있으나 자동 연결하지 않는다."""
+
+    code = 'OAUTH_ACCOUNT_CONFLICT'
+
+
 class OAuthEmailRequired(OAuthError):
     code = 'OAUTH_EMAIL_REQUIRED'
+
+
+class OAuthExchangeCodeInvalid(OAuthError):
+    code = 'OAUTH_EXCHANGE_CODE_INVALID'
+
+
+class OAuthExchangeCodeExpired(OAuthError):
+    code = 'OAUTH_EXCHANGE_CODE_EXPIRED'
+
+
+class OAuthExchangeCodeUsed(OAuthError):
+    code = 'OAUTH_EXCHANGE_CODE_USED'
+
+
+def _exchange_ttl_seconds() -> int:
+    return int(getattr(settings, 'OAUTH_EXCHANGE_CODE_TTL_SECONDS', 120))
+
+
+def sanitize_next_path(next_path: str | None, default: str = DEFAULT_NEXT_PATH) -> str:
+    """Open Redirect 방지: 허용된 내부 경로(단일 '/' 시작)만 통과시킨다.
+
+    - 반드시 '/' 로 시작, '//'(protocol-relative)·역슬래시·scheme(':') 금지
+    - 위반 시 안전한 기본 경로(default)로 대체
+    """
+    if not next_path or not isinstance(next_path, str):
+        return default
+    path = next_path.strip()
+    if not path.startswith('/'):
+        return default
+    if path.startswith('//') or path.startswith('/\\'):
+        return default
+    if '\\' in path or '://' in path:
+        return default
+    return path
 
 
 @dataclass(frozen=True)
@@ -90,17 +150,19 @@ def get_provider_config(provider: str) -> OAuthProviderConfig:
     raise OAuthError('Unsupported OAuth provider.')
 
 
-def build_authorization_url(provider: str, *, next_path: str = '/') -> dict:
+def build_authorization_url(provider: str, *, next_path: str = DEFAULT_NEXT_PATH, flow: str | None = None) -> dict:
     config = get_provider_config(provider)
     if not config.is_configured:
         raise OAuthProviderNotConfigured('OAuth provider credentials are not configured.')
 
+    safe_next = sanitize_next_path(next_path, DEFAULT_NEXT_PATH)
     nonce = secrets.token_urlsafe(24)
     state = signing.dumps(
         {
             'provider': config.provider,
             'nonce': nonce,
-            'next_path': next_path or '/',
+            'next_path': safe_next,
+            'flow': flow if flow in {'login', 'signup'} else None,
             'issued_at': timezone.now().isoformat(),
         },
         salt=OAUTH_STATE_SALT,
@@ -123,7 +185,7 @@ def build_authorization_url(provider: str, *, next_path: str = '/') -> dict:
         'auth_url': f'{config.auth_url}?{urlencode(query)}',
         'state': state,
         'nonce': nonce,
-        'next_path': next_path or '/',
+        'next_path': safe_next,
     }
 
 
@@ -142,30 +204,35 @@ def exchange_code_for_profile(provider: str, *, code: str) -> dict:
     if not config.is_configured:
         raise OAuthProviderNotConfigured('OAuth provider credentials are not configured.')
 
-    token_response = requests.post(
-        config.token_url,
-        data={
-            'grant_type': 'authorization_code',
-            'client_id': config.client_id,
-            'client_secret': config.client_secret,
-            'redirect_uri': config.redirect_uri,
-            'code': code,
-        },
-        timeout=10,
-    )
-    token_response.raise_for_status()
-    token_json = token_response.json()
-    access_token = token_json.get('access_token')
-    if not access_token:
-        raise OAuthError('OAuth provider did not return an access token.')
+    try:
+        token_response = requests.post(
+            config.token_url,
+            data={
+                'grant_type': 'authorization_code',
+                'client_id': config.client_id,
+                'client_secret': config.client_secret,
+                'redirect_uri': config.redirect_uri,
+                'code': code,
+            },
+            timeout=10,
+        )
+        token_response.raise_for_status()
+        token_json = token_response.json()
+        access_token = token_json.get('access_token')
+        if not access_token:
+            raise OAuthProviderResponseError('OAuth provider did not return an access token.')
 
-    profile_response = requests.get(
-        config.userinfo_url,
-        headers={'Authorization': f'Bearer {access_token}'},
-        timeout=10,
-    )
-    profile_response.raise_for_status()
-    raw_profile = profile_response.json()
+        profile_response = requests.get(
+            config.userinfo_url,
+            headers={'Authorization': f'Bearer {access_token}'},
+            timeout=10,
+        )
+        profile_response.raise_for_status()
+        raw_profile = profile_response.json()
+    except requests.RequestException as exc:
+        # 네트워크/HTTP 오류는 Provider 오류로 일반화한다.
+        # (원문 메시지/Provider 토큰을 사용자에게 노출하지 않는다.)
+        raise OAuthProviderResponseError('OAuth provider request failed.') from exc
     return normalize_provider_profile(config.provider, raw_profile)
 
 
@@ -216,23 +283,25 @@ def get_or_create_social_user(provider: str, profile: dict) -> tuple[User, Socia
             social.save(update_fields=['provider_email', 'last_login_at', 'updated_at'])
             return user, social, False
 
-        user = User.objects.select_for_update().filter(email=provider_email).first()
-        created_user = False
-        if user is None:
-            user = User.objects.create(
-                email=provider_email,
-                name=name[:255],
-                password=make_password(None),
-                is_verified=True,
-                status='active',
+        # 이 Provider 의 SocialAccount 가 없는 상태에서 동일 이메일의 기존 계정이 있으면
+        # 보안 검토 없이 자동 연결하지 않는다(계정 탈취/하이재킹 방지). 명시적 충돌로 처리한다.
+        existing = User.objects.filter(email=provider_email).first()
+        if existing is not None:
+            if existing.status in {'withdrawn', 'banned'} or not existing.is_active:
+                raise OAuthAccountBlocked('This account cannot sign in with OAuth.')
+            raise OAuthAccountConflict(
+                'An account with this email already exists. '
+                'Please sign in with your existing method first, then link social login.'
             )
-            created_user = True
-        elif user.status in {'withdrawn', 'banned'} or not user.is_active:
-            raise OAuthAccountBlocked('This account cannot sign in with OAuth.')
-        elif not user.is_verified:
-            user.is_verified = True
-            user.save(update_fields=['is_verified', 'updated_at'])
 
+        # 신규 사용자: User + SocialAccount 생성. 비밀번호는 직접 저장하지 않는다(usable password 없음).
+        user = User.objects.create(
+            email=provider_email,
+            name=name[:255],
+            password=make_password(None),
+            is_verified=True,
+            status='active',
+        )
         social = SocialAccount.objects.create(
             user=user,
             provider=provider,
@@ -240,4 +309,64 @@ def get_or_create_social_user(provider: str, profile: dict) -> tuple[User, Socia
             provider_email=provider_email,
             last_login_at=now,
         )
-        return user, social, created_user
+        return user, social, True
+
+
+# ===== 일회용 교환 코드 (Backend → Frontend 안전 토큰 전달) =====
+# Access/Refresh 토큰을 URL/로그/state 에 노출하지 않기 위해, 짧은 수명의 일회용
+# 교환 코드만 Frontend 로 전달하고, 실제 토큰은 별도 exchange API 에서 발급한다.
+#
+# 저장소: Django 캐시 프레임워크(현재 LocMemCache 기본값). DB 모델/마이그레이션을
+# 추가하지 않는다. 단일 사용 보장은 캐시 key 의 atomic delete 결과로 판정한다.
+# (운영에서 다중 서버 사용 시 LocMemCache 는 프로세스 로컬이라 공유되지 않으므로
+#  Redis 등 공유 캐시로 전환해야 한다 — 보고서에 한계 명시.)
+
+
+def _exchange_cache_key(jti: str) -> str:
+    return f'{OAUTH_EXCHANGE_CACHE_PREFIX}{jti}'
+
+
+def issue_exchange_code(*, user_id: int, provider: str, next_path: str, created: bool, needs_terms: bool) -> str:
+    """일회용 교환 코드(서명 토큰)를 발급한다. 토큰 본문에는 jti 만 담는다."""
+    jti = secrets.token_urlsafe(24)
+    ttl = _exchange_ttl_seconds()
+    cache.set(
+        _exchange_cache_key(jti),
+        {
+            'user_id': int(user_id),
+            'provider': provider,
+            'next_path': sanitize_next_path(next_path, DEFAULT_NEXT_PATH),
+            'created': bool(created),
+            'needs_terms': bool(needs_terms),
+        },
+        # 서명 만료가 먼저 트리거되도록 캐시 TTL 에 약간의 버퍼를 둔다.
+        timeout=ttl + 30,
+    )
+    return signing.dumps({'jti': jti}, salt=OAUTH_EXCHANGE_SALT)
+
+
+def consume_exchange_code(code: str) -> dict:
+    """교환 코드를 1회만 소비한다. 만료/위조/재사용을 구분해 예외로 던진다."""
+    if not code or not isinstance(code, str):
+        raise OAuthExchangeCodeInvalid('Exchange code is required.')
+    ttl = _exchange_ttl_seconds()
+    try:
+        payload = signing.loads(code, salt=OAUTH_EXCHANGE_SALT, max_age=ttl)
+    except signing.SignatureExpired as exc:
+        raise OAuthExchangeCodeExpired('Exchange code has expired.') from exc
+    except signing.BadSignature as exc:
+        raise OAuthExchangeCodeInvalid('Exchange code is invalid.') from exc
+
+    jti = payload.get('jti')
+    if not jti:
+        raise OAuthExchangeCodeInvalid('Exchange code is malformed.')
+
+    key = _exchange_cache_key(jti)
+    data = cache.get(key)
+    if data is None:
+        # 서명은 유효/미만료인데 캐시에 없으면 이미 소비된 것으로 본다.
+        raise OAuthExchangeCodeUsed('Exchange code has already been used.')
+    # 단일 사용 보장: delete 가 True 를 반환한 요청만 성공(동시성 경합 시 1명만 통과).
+    if not cache.delete(key):
+        raise OAuthExchangeCodeUsed('Exchange code has already been used.')
+    return data

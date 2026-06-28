@@ -339,8 +339,16 @@ DEFAULT_FROM_EMAIL = os.getenv("DEFAULT_FROM_EMAIL", "Career.zip <no-reply@caree
 # 관리자 신규가입 알림 수신 주소. 미설정 시 알림 생략.
 ADMIN_NOTIFICATION_EMAIL = os.getenv("ADMIN_NOTIFICATION_EMAIL", "")
 
-# 이메일 인증 링크 구성용 FE base URL
+# 이메일 인증 링크 / OAuth 성공·실패 Redirect 구성용 FE base URL (기존 키 재사용)
 FRONTEND_BASE_URL = os.getenv("FRONTEND_BASE_URL", "http://localhost:5173")
+
+# 소셜 로그인 완료 후 Backend 가 302 로 돌려보낼 Frontend callback 경로.
+# 성공: {FRONTEND_BASE_URL}{PATH}?code=<일회용코드> / 실패: ?error=<CODE>
+FRONTEND_OAUTH_CALLBACK_PATH = os.getenv("FRONTEND_OAUTH_CALLBACK_PATH", "/oauth/callback")
+
+# 일회용 OAuth 교환 코드 TTL(초). 실제 토큰은 코드가 아닌 exchange API 에서만 발급한다.
+# 저장소는 Django 캐시(기본 LocMemCache) — DB 모델/마이그레이션을 추가하지 않는다.
+OAUTH_EXCHANGE_CODE_TTL_SECONDS = int(os.getenv("OAUTH_EXCHANGE_CODE_TTL_SECONDS", "120"))
 
 # ===== OAuth providers =====
 GOOGLE_OAUTH_CLIENT_ID = os.getenv("GOOGLE_OAUTH_CLIENT_ID", "")
