@@ -22,8 +22,13 @@ import re
 import json
 import base64
 import tomllib
+import logging
 
 import requests
+
+from .analysis_prompt import build_interview_context_prompt
+
+logger = logging.getLogger(__name__)
 
 
 # ══════════════════════════════════════════════════════════════
@@ -634,3 +639,167 @@ def fetch_code_snippets(url: str, limit: int = 4, max_chars: int = 1500) -> dict
         return snippets
     except Exception:
         return {}
+
+
+# ══════════════════════════════════════════════════════════════
+# 면접 컨텍스트 추출 — README + LLM으로 면접 관련 정보 구조화
+# ══════════════════════════════════════════════════════════════
+
+_README_CLEANUP_PATTERNS = [
+    re.compile(r"!\[.*?\]\(.*?\)"),                              # 마크다운 이미지
+    re.compile(r"https?://[^\s]*shields\.io[^\s]*"),             # shields.io 배지 URL
+]
+
+_SKIP_SECTION_HEADERS = re.compile(
+    r"^#{1,3}\s*(license|contributing|installation|install|getting started|setup|usage|how to run)",
+    re.IGNORECASE,
+)
+
+_INSTALL_COMMANDS = re.compile(
+    r"npm\s+install|pip\s+install|docker|git\s+clone",
+    re.IGNORECASE,
+)
+
+
+def _deep_clean_readme(text: str, max_chars: int = 8000) -> str:
+    """
+    preprocess_readme가 처리하지 않는 패턴을 추가로 제거하고,
+    ## License / ## Contributing / ## Installation 섹션 이하를 잘라낸다.
+    최종 결과를 max_chars자로 제한한다.
+    """
+    # 마크다운 이미지·배지 URL 제거
+    for pat in _README_CLEANUP_PATTERNS:
+        text = pat.sub("", text)
+
+    # 설치 명령어가 포함된 코드블록 제거
+    lines = text.splitlines()
+    result: list[str] = []
+    skip_section = False
+    in_code_block = False
+    code_block_lines: list[str] = []
+
+    for line in lines:
+        # 코드블록 토글
+        if line.strip().startswith("```"):
+            if not in_code_block:
+                in_code_block = True
+                code_block_lines = []
+            else:
+                # 코드블록 종료 — 설치 명령어 없는 경우만 포함
+                in_code_block = False
+                block_text = "\n".join(code_block_lines)
+                if not _INSTALL_COMMANDS.search(block_text):
+                    result.append(block_text)
+            continue
+        if in_code_block:
+            code_block_lines.append(line)
+            continue
+
+        # 스킵 섹션 감지 (## License 등)
+        if re.match(r"^#{1,3}\s+", line) and _SKIP_SECTION_HEADERS.match(line):
+            skip_section = True
+            continue
+        # 같은 레벨의 새 섹션이 나오면 스킵 해제
+        if skip_section and re.match(r"^#{1,3}\s+", line) and not _SKIP_SECTION_HEADERS.match(line):
+            skip_section = False
+
+        if not skip_section:
+            result.append(line)
+
+    cleaned = "\n".join(result).strip()
+    return cleaned[:max_chars]
+
+
+def extract_interview_context(repo_url: str) -> dict:
+    """
+    GitHub 레포 URL을 받아 면접 질문 생성에 필요한 구조화된 정보를 추출한다.
+    analyze_repo()와 preprocess_readme()를 활용하고,
+    LLM으로 면접 관련 정보만 선별해서 반환한다.
+    절대 예외를 외부로 전파하지 않는다.
+
+    반환:
+        성공: {
+            "ok": True,
+            "data": {
+                "project_name": str | None,
+                "project_overview": str | None,
+                "tech_stack": list[str],
+                "my_role": str | None,
+                "key_features": list[str],
+                "technical_challenges": list[str],
+                "architecture": str | None,
+                "interview_points": list[str]
+            }
+        }
+        실패: {"ok": False, "error_code": str}
+    """
+    from .utils import get_client, clean_json
+
+    # 1) repo 분석
+    try:
+        repo_result = analyze_repo(repo_url)
+    except Exception as e:
+        logger.warning("[extract_interview_context] analyze_repo 예외: %s", e)
+        return {"ok": False, "error_code": "GITHUB_FETCH_FAILED"}
+
+    if not repo_result.get("ok"):
+        logger.warning("[extract_interview_context] analyze_repo 실패: %s", repo_result.get("error"))
+        return {"ok": False, "error_code": "GITHUB_FETCH_FAILED"}
+
+    # 2) README 확인
+    raw_readme = repo_result.get("readme", "") or ""
+    if len(raw_readme) < 100:
+        logger.warning("[extract_interview_context] README 없거나 너무 짧음 (%d자)", len(raw_readme))
+        return {"ok": False, "error_code": "GITHUB_README_NOT_FOUND"}
+
+    # 3) README 노이즈 제거
+    cleaned_readme = preprocess_readme(raw_readme)
+    cleaned_readme = _deep_clean_readme(cleaned_readme, max_chars=8000)
+
+    # 4) LLM으로 면접 컨텍스트 추출
+    client = get_client()
+    prompt_content = build_interview_context_prompt(cleaned_readme)
+
+    def _call_llm():
+        resp = client.chat.completions.create(
+            model="gpt-4o-mini",
+            temperature=0.3,
+            messages=[{"role": "user", "content": prompt_content}],
+        )
+        return resp.choices[0].message.content
+
+    # JSON 파싱 실패 시 1회 재시도
+    try:
+        raw = _call_llm()
+        data = json.loads(clean_json(raw))
+    except (json.JSONDecodeError, ValueError):
+        try:
+            raw = _call_llm()
+            data = json.loads(clean_json(raw))
+        except (json.JSONDecodeError, ValueError):
+            logger.warning("[extract_interview_context] JSON 파싱 최종 실패")
+            return {"ok": False, "error_code": "GITHUB_PARSE_FAILED"}
+    except Exception as e:
+        logger.warning("[extract_interview_context] LLM 호출 예외: %s", e)
+        return {"ok": False, "error_code": "GITHUB_FETCH_FAILED"}
+
+    # 5) analyze_repo tech_stack과 합집합 병합
+    repo_frameworks: list[str] = repo_result.get("frameworks", [])
+    llm_tech: list[str] = data.get("tech_stack") or []
+    merged_tech = sorted(set(repo_frameworks) | set(llm_tech))
+    data["tech_stack"] = merged_tech
+
+    # 6) 성공 반환
+    return {
+        "ok": True,
+        "data": {
+            "project_name":          data.get("project_name"),
+            "project_overview":      data.get("project_overview"),
+            "tech_stack":            data.get("tech_stack", []),
+            "my_role":               data.get("my_role"),
+            "key_features":          data.get("key_features") or [],
+            "technical_challenges":  data.get("technical_challenges") or [],
+            "architecture":          data.get("architecture"),
+            "interview_points":      data.get("interview_points") or [],
+        },
+    }
