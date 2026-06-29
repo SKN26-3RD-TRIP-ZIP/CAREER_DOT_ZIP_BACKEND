@@ -290,6 +290,129 @@ class InterviewQuestionGeneratorRealInputTest(TestCase):
             self.prepared_question.question_text,
         )
 
+    def test_selected_project_ids_limit_project_input_sources(self):
+        other_project = ProjectExperience.objects.create(
+            user=self.user,
+            project_name='Unselected Project',
+            description='선택하지 않은 프로젝트',
+            contribution='프론트엔드 구현',
+            tech_stack=['React'],
+            github_url='https://github.com/example/unselected',
+        )
+        selected_project = ProjectExperience.objects.get(
+            user=self.user,
+            project_name='AI Mock Interview',
+        )
+        self.session._project_ids = [str(selected_project.id)]
+
+        payload = _build_ai_generation_payload(self.session, 3)
+
+        project_sources = payload['input_sources']['project_experiences']
+        self.assertEqual(len(project_sources), 1)
+        self.assertEqual(project_sources[0]['project_id'], str(selected_project.id))
+        self.assertEqual(project_sources[0]['project_name'], 'AI Mock Interview')
+        self.assertEqual(project_sources[0]['github_url'], 'https://github.com/example/ai-interview')
+        self.assertIn('period', project_sources[0])
+        self.assertEqual(
+            payload['generation_options']['selected_project_ids'],
+            [str(selected_project.id)],
+        )
+        self.assertNotEqual(project_sources[0]['project_id'], str(other_project.id))
+
+    def test_without_selected_project_ids_keeps_all_project_sources(self):
+        ProjectExperience.objects.create(
+            user=self.user,
+            project_name='Second Project',
+            description='두 번째 프로젝트',
+            contribution='API 구현',
+            tech_stack=['FastAPI'],
+            github_url='https://github.com/example/second',
+        )
+
+        payload = _build_ai_generation_payload(self.session, 3)
+
+        project_names = {
+            project['project_name']
+            for project in payload['input_sources']['project_experiences']
+        }
+        self.assertIn('AI Mock Interview', project_names)
+        self.assertIn('Second Project', project_names)
+        self.assertEqual(payload['generation_options']['selected_project_ids'], [])
+
+    def test_github_summary_is_added_to_payload_and_generation_metadata(self):
+        AnalysisSession.objects.create(
+            user=self.user,
+            jd=self.jd,
+            resume=self.resume,
+            cover_letter=self.cover_letter,
+            jd_analysis=self.analysis,
+            job_role=self.jd.position,
+            company_name=self.jd.company_name,
+            jd_text=self.jd.original_text,
+            resume_text=self.resume.original_text,
+            cover_letter_text='AI 모의면접 프로젝트 자소서',
+            status='ready',
+            github_url='https://github.com/example/ai-interview',
+            github_summary={
+                'project_name': 'AI Mock Interview',
+                'project_overview': 'README 기반 AI 모의면접 서비스',
+                'tech_stack': ['Django', 'OpenAI'],
+                'key_features': ['질문 생성', '꼬리질문 생성'],
+                'technical_challenges': ['LLM 응답 안정화'],
+                'architecture': 'Django API + OpenAI',
+                'interview_points': ['프롬프트 메타데이터 설계'],
+            },
+        )
+        ai_result = {
+            'session_id': str(self.session.id),
+            'generation_source': 'openai',
+            'questions': [
+                {
+                    'client_question_key': 'q_github',
+                    'question_text': 'README에 적힌 꼬리질문 생성 기능을 실제로 어떻게 구현했나요?',
+                    'question_type': 'main',
+                    'question_category': 'technical',
+                    'order_index': 1,
+                    'source_tags': [
+                        {
+                            'source_type': 'project_experience',
+                            'source_label': 'github_readme_context',
+                            'source_text_excerpt': '꼬리질문 생성',
+                            'source_reference': 'https://github.com/example/ai-interview',
+                        }
+                    ],
+                }
+            ],
+        }
+
+        with patch('apps.interview.services.question_generator.InterviewAIChainService') as service_class, \
+                patch('apps.interview.services.question_generator.select_questions_for_session') as selector:
+            service = service_class.return_value
+            service.generate_questions.return_value = ai_result
+            selector.return_value = []
+
+            questions = generate_interview_questions(self.session)
+
+        payload = service.generate_questions.call_args.args[0]
+        github_context = payload['input_sources']['github_readme_context']
+        self.assertEqual(github_context['github_url'], 'https://github.com/example/ai-interview')
+        self.assertEqual(github_context['project_name'], 'AI Mock Interview')
+        self.assertTrue(payload['generation_options']['github_readme_context_included'])
+
+        readme_tag = next(
+            tag for tag in questions[0]['source_tags']
+            if tag['source_label'] == 'github_readme_context'
+        )
+        self.assertEqual(readme_tag['source_type'], 'project_experience')
+
+        metadata_tag = next(
+            tag for tag in questions[0]['source_tags']
+            if tag['source_label'] == 'generation_metadata'
+        )
+        metadata = json.loads(metadata_tag['source_text_excerpt'])
+        self.assertTrue(metadata['github_readme_context_included'])
+        self.assertTrue(metadata['project_deepdive_enabled'])
+
     def test_ai_question_prompt_metadata_is_added_to_source_tags(self):
         ai_result = {
             'session_id': str(self.session.id),
@@ -459,6 +582,57 @@ class InterviewQuestionGenerateSourceTagsAPITest(APITestCase):
         self.assertEqual(QuestionSourceTag.objects.filter(question=question).count(), 1)
         self.assertEqual(response.data['questions'][0]['question_category'], 'technical')
         self.assertEqual(response.data['questions'][0]['source_tags'][0]['source_type'], 'jd')
+
+    def test_mvp_question_generate_passes_selected_project_ids_at_runtime(self):
+        project = ProjectExperience.objects.create(
+            user=self.user,
+            project_name='Selected Deep Dive Project',
+            description='README 기반 딥다이브 대상 프로젝트',
+            tech_stack=['Django'],
+            github_url='https://github.com/example/deep-dive',
+        )
+        generated = [
+            {
+                'question_text': '선택한 프로젝트의 README 기능을 어떻게 구현했나요?',
+                'question_type': 'main',
+                'question_category': 'technical',
+                'order_index': 1,
+                'difficulty': 'medium',
+                'source_type': 'project_experience',
+                'source_reference': 'ai_chain:q_001:project_experience',
+                'source_tags': [
+                    {
+                        'source_type': 'project_experience',
+                        'source_label': 'github_readme_context',
+                        'source_text_excerpt': 'README 기반 딥다이브 대상 프로젝트',
+                    }
+                ],
+            }
+        ]
+
+        def _generate(session, **kwargs):
+            self.assertEqual(getattr(session, '_project_ids'), [str(project.id)])
+            return generated
+
+        with patch('apps.interview.mvp_views.generate_interview_questions', side_effect=_generate):
+            response = self.client.post(
+                reverse(
+                    'mvp-question-generate',
+                    kwargs={'session_id': self.session.id},
+                ),
+                {
+                    'question_count': 1,
+                    'project_ids': [str(project.id)],
+                },
+                format='json',
+            )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['generated_count'], 1)
+        self.assertEqual(
+            response.data['questions'][0]['source_tags'][0]['source_label'],
+            'github_readme_context',
+        )
 
     def test_question_generate_saves_expected_technical_keywords_source_tag_once(self):
         generated = [
