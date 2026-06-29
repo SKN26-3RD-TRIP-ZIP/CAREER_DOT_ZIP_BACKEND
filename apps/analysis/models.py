@@ -45,10 +45,6 @@ class AnalysisSession(models.Model):
     ]
     status     = models.CharField(max_length=20, choices=STATUS_CHOICES, default="analyzing")
 
-    # GitHub 연동 — 면접 질문 생성 시 컨텍스트로 활용
-    github_url     = models.URLField(null=True, blank=True)
-    github_summary = models.JSONField(null=True, blank=True)
-
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -82,6 +78,10 @@ class JdAnalysis(models.Model):
     strengths           = models.JSONField(default=list)    # 강점 리스트
     weaknesses          = models.JSONField(default=list)    # 약점 리스트
     cl_points           = models.JSONField(default=list)    # 자소서 반영 포인트
+
+    # GitHub 연동 — 면접 질문 생성 시 컨텍스트로 활용
+    github_url     = models.URLField(null=True, blank=True)
+    github_summary = models.JSONField(null=True, blank=True)
 
     # 예상 질문 생성 횟수 (최초 생성 + 재생성 누적). 무료 상한 관리에 사용.
     generation_count    = models.IntegerField(default=0)

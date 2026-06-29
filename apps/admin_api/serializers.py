@@ -2,7 +2,7 @@ from django.contrib.auth import get_user_model
 from rest_framework import serializers
 
 from .models import AuditLog
-from apps.accounts.models import PointHistory
+from apps.accounts.models import PointHistory, PointPolicy
 from apps.interview.models import GuardrailEvent
 
 
@@ -91,11 +91,13 @@ class AdminPointAdjustSerializer(serializers.Serializer):
 class AdminPointHistoryQuerySerializer(PageQuerySerializer):
     user_id = serializers.IntegerField(required=False, min_value=1)
     transaction_type = serializers.ChoiceField(choices=PointHistory.TRANSACTION_TYPE_CHOICES, required=False)
+    search = serializers.CharField(required=False, max_length=255, allow_blank=True)
 
 
 class AdminPointHistorySerializer(serializers.ModelSerializer):
     point_history_id = serializers.IntegerField(source='id', read_only=True)
     user_id = serializers.IntegerField(read_only=True)
+    user_name = serializers.CharField(source='user.name', read_only=True)
     user_email = serializers.EmailField(source='user.email', read_only=True)
 
     class Meta:
@@ -103,6 +105,7 @@ class AdminPointHistorySerializer(serializers.ModelSerializer):
         fields = (
             'point_history_id',
             'user_id',
+            'user_name',
             'user_email',
             'transaction_type',
             'amount',
@@ -113,6 +116,36 @@ class AdminPointHistorySerializer(serializers.ModelSerializer):
             'description',
             'created_at',
         )
+
+
+class AdminPointPolicySerializer(serializers.ModelSerializer):
+    policy_id = serializers.IntegerField(source='id', read_only=True)
+
+    class Meta:
+        model = PointPolicy
+        fields = (
+            'policy_id',
+            'reason_code',
+            'transaction_type',
+            'amount',
+            'daily_limit',
+            'monthly_limit',
+            'is_active',
+            'policy_version',
+            'description',
+            'updated_at',
+        )
+
+
+class AdminPointPolicyUpdateSerializer(serializers.Serializer):
+    amount = serializers.IntegerField(required=False)
+    is_active = serializers.BooleanField(required=False)
+    reason = serializers.CharField(required=False, allow_blank=True, max_length=500)
+
+    def validate(self, attrs):
+        if 'amount' not in attrs and 'is_active' not in attrs:
+            raise serializers.ValidationError('수정할 항목(amount 또는 is_active)이 없습니다.')
+        return attrs
 
 
 class AdminGuardrailEventQuerySerializer(PageQuerySerializer):

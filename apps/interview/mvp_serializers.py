@@ -12,6 +12,7 @@ from apps.input.models import CoverLetter, JobDescription, ProjectExperience, Re
 from apps.prompt.models import PromptVersion
 from apps.prompt.services import normalize_prompt_persona_type
 from apps.question_bank.models import QuestionBankItem
+from .services.whisper_stt_service import validate_stt_answer_quality
 from .models import InterviewAnswer, InterviewQuestion, InterviewSession, QuestionSourceTag
 
 
@@ -344,6 +345,13 @@ class MVPAnswerCreateSerializer(serializers.Serializer):
     answer_text = serializers.CharField(allow_blank=False, trim_whitespace=True)
     speech_duration = serializers.FloatField(required=False, min_value=0)
 
+    def validate(self, attrs):
+        validate_stt_answer_quality(
+            attrs.get('answer_text'),
+            speech_duration=attrs.get('speech_duration'),
+        )
+        return attrs
+
 
 class MVPSTTResultUpdateSerializer(serializers.ModelSerializer):
     # STT 후처리 patch는 텍스트와 음성 분석 지표만 답변 레코드에 덧붙인다.
@@ -362,6 +370,13 @@ class MVPSTTResultUpdateSerializer(serializers.ModelSerializer):
             'total_pause_duration',
             'long_pause_count',
         )
+
+    def validate(self, attrs):
+        validate_stt_answer_quality(
+            attrs.get('stt_text'),
+            speech_duration=attrs.get('speech_duration'),
+        )
+        return attrs
 
 
 class MVPFollowupQuestionSerializer(serializers.ModelSerializer):

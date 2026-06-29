@@ -3,6 +3,7 @@ from apps.interview.services.ai_chain_persona_prompts import (
     get_persona_policy,
     normalize_persona_type,
 )
+from apps.interview.services.guardrails import mask_text_for_llm
 
 
 EXPECTED_TECHNICAL_KEYWORDS_LABEL = "expected_technical_keywords"
@@ -10,8 +11,8 @@ EXPECTED_TECHNICAL_KEYWORDS_LABEL = "expected_technical_keywords"
 
 def get_sufficiency_answer_text(answer):
     if answer.session.interview_mode == "voice" and answer.stt_text:
-        return answer.stt_text
-    return answer.answer_text
+        return mask_text_for_llm(answer.stt_text)
+    return mask_text_for_llm(answer.answer_text)
 
 
 def get_question_category(question):

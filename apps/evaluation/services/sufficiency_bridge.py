@@ -5,6 +5,7 @@ import logging
 from django.conf import settings
 
 from apps.interview.services.ai_chain_service import InterviewAIChainService
+from apps.interview.services.guardrails import mask_text_for_llm
 
 logger = logging.getLogger("feedback_ai.sufficiency_bridge")
 
@@ -12,8 +13,8 @@ logger = logging.getLogger("feedback_ai.sufficiency_bridge")
 def get_answer_text_for_evaluation(answer):
   """Use STT text for voice interviews, otherwise the typed answer."""
   if answer.session.interview_mode == 'voice' and answer.stt_text:
-    return answer.stt_text
-  return answer.answer_text or ''
+    return mask_text_for_llm(answer.stt_text)
+  return mask_text_for_llm(answer.answer_text or '')
 
 
 def resolve_answer_sufficiency(answer, request_sufficiency=None):

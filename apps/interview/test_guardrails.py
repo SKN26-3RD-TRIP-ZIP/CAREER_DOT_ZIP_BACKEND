@@ -3,6 +3,7 @@ from rest_framework.test import APITestCase
 
 from apps.accounts.models import User
 from apps.interview.models import GuardrailEvent, InterviewAnswer, InterviewQuestion, InterviewSession
+from apps.interview.services.guardrails import mask_text_for_llm
 
 
 class InterviewGuardrailTests(APITestCase):
@@ -56,6 +57,44 @@ class InterviewGuardrailTests(APITestCase):
         self.assertEqual(response.data["guardrail"]["category"], "G1")
         self.assertEqual(InterviewAnswer.objects.count(), 1)
         self.assertEqual(GuardrailEvent.objects.get().answer_id, InterviewAnswer.objects.get().id)
+
+    def test_pii_pattern_warns_and_saves_masked_event(self):
+        answer_text = (
+            "프로젝트에서는 Django API를 담당했고 제 이메일은 test@example.com, "
+            "연락처는 010-1234-5678입니다."
+        )
+
+        response = self.client.post(self.url, {"answer_text": answer_text}, format="json")
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data["guardrail"]["category"], "G3")
+        self.assertEqual(response.data["guardrail"]["action"], "WARN")
+        self.assertEqual(response.data["guardrail"]["reason_code"], "PII_PATTERN")
+
+        answer = InterviewAnswer.objects.get()
+        self.assertIn("test@example.com", answer.answer_text)
+        self.assertIn("010-1234-5678", answer.answer_text)
+
+        event = GuardrailEvent.objects.get()
+        self.assertIn("[EMAIL_MASKED]", event.masked_excerpt)
+        self.assertIn("[PHONE_MASKED]", event.masked_excerpt)
+        self.assertNotIn("test@example.com", event.masked_excerpt)
+        self.assertNotIn("010-1234-5678", event.masked_excerpt)
+
+    def test_mask_text_for_llm_masks_pii_and_secrets(self):
+        masked = mask_text_for_llm(
+            "email=user@example.com phone=010-1111-2222 "
+            "계좌는 국민은행 123-456-789012 입니다. "
+            "db_password=supersecret123 aws_secret_access_key=abcdefghijklmnopqrstuvwxyz1234567890"
+        )
+
+        self.assertIn("[EMAIL_MASKED]", masked)
+        self.assertIn("[PHONE_MASKED]", masked)
+        self.assertIn("[ACCOUNT_MASKED]", masked)
+        self.assertIn("[SECRET_MASKED]", masked)
+        self.assertNotIn("user@example.com", masked)
+        self.assertNotIn("010-1111-2222", masked)
+        self.assertNotIn("supersecret123", masked)
 
     def test_admin_can_list_guardrail_events(self):
         GuardrailEvent.objects.create(

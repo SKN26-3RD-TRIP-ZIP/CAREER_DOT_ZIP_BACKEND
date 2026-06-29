@@ -287,6 +287,15 @@ def _prompt_metadata_from_result(result):
     }
 
 
+def _generation_context_metadata(payload):
+    generation_options = payload.get('generation_options') or {}
+    return {
+        'selected_project_ids': generation_options.get('selected_project_ids'),
+        'project_deepdive_enabled': generation_options.get('project_deepdive_enabled'),
+        'github_readme_context_included': generation_options.get('github_readme_context_included'),
+    }
+
+
 def _attach_generation_metadata(question, generation_source, *, prompt_metadata=None):
     source_reference = question.get('source_reference') or ''
     return {
@@ -498,7 +507,27 @@ def _build_cover_letter_source(session):
     }
 
 
+def _selected_project_ids(session):
+    project_ids = getattr(session, '_project_ids', None)
+    if not project_ids:
+        return None
+    return {str(project_id) for project_id in project_ids}
+
+
+def _project_period(project):
+    start = project.start_date or ''
+    end = project.end_date or ''
+    if start and end:
+        return f'{start} ~ {end}'
+    return start or end or ''
+
+
 def _build_project_experience_sources(session):
+    projects = session.user.projects.all()
+    selected_project_ids = _selected_project_ids(session)
+    if selected_project_ids:
+        projects = projects.filter(id__in=selected_project_ids)
+
     return [
         {
             'source_table': 'project_experiences',
@@ -510,8 +539,9 @@ def _build_project_experience_sources(session):
             'github_url': project.github_url,
             'start_date': project.start_date,
             'end_date': project.end_date,
+            'period': _project_period(project),
         }
-        for project in session.user.projects.all()
+        for project in projects
     ]
 
 
@@ -601,6 +631,38 @@ def _build_jd_analysis_source(session):
     }
 
 
+def _get_github_jd_analysis(session):
+    jd_analysis = _get_latest_jd_analysis(session)
+    if jd_analysis and getattr(jd_analysis, 'github_summary', None):
+        return jd_analysis
+    return None
+
+
+def _build_github_readme_context_source(session):
+    jd_analysis = _get_github_jd_analysis(session)
+    if not jd_analysis:
+        return None
+
+    summary = jd_analysis.github_summary or {}
+    if not isinstance(summary, dict):
+        return None
+
+    return {
+        'source_table': 'jd_analysis',
+        'jd_analysis_id': str(jd_analysis.id),
+        'github_url': jd_analysis.github_url,
+        'github_summary': summary,
+        'project_name': summary.get('project_name'),
+        'project_overview': summary.get('project_overview'),
+        'tech_stack': summary.get('tech_stack') or [],
+        'my_role': summary.get('my_role'),
+        'key_features': summary.get('key_features') or [],
+        'technical_challenges': summary.get('technical_challenges') or [],
+        'architecture': summary.get('architecture'),
+        'interview_points': summary.get('interview_points') or [],
+    }
+
+
 def _build_ai_input_sources(session):
     input_sources = {}
 
@@ -620,6 +682,10 @@ def _build_ai_input_sources(session):
     if project_experiences:
         input_sources['project_experiences'] = project_experiences
 
+    github_readme_context = _build_github_readme_context_source(session)
+    if github_readme_context:
+        input_sources['github_readme_context'] = github_readme_context
+
     jd_analysis = _build_jd_analysis_source(session)
     if jd_analysis:
         input_sources['jd_analysis'] = jd_analysis
@@ -633,6 +699,7 @@ def _build_ai_input_sources(session):
 
 def _build_ai_generation_payload(session, question_count, prompt_version_id=None):
     input_sources = _build_ai_input_sources(session)
+    selected_project_ids = sorted(_selected_project_ids(session) or [])
 
     return {
         'session_id': str(session.id),
@@ -661,6 +728,9 @@ def _build_ai_generation_payload(session, question_count, prompt_version_id=None
             'include_source_text_excerpt': True,
             'prefer_input_sources': bool(input_sources),
             'use_prepared_questions_as_reference': bool(input_sources.get('prepared_questions')),
+            'selected_project_ids': selected_project_ids,
+            'project_deepdive_enabled': bool(input_sources.get('project_experiences')),
+            'github_readme_context_included': bool(input_sources.get('github_readme_context')),
         },
     }
 
@@ -732,6 +802,7 @@ def _ai_chain_questions(session, count, excluded_texts=None, prompt_version_id=N
     result_metadata = {
         **_prompt_metadata_from_result(result),
         'persona': payload.get('persona', {}).get('persona_type'),
+        **_generation_context_metadata(payload),
     }
 
     return _convert_ai_questions(

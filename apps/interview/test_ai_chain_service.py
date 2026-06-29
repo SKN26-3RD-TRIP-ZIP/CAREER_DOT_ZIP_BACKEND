@@ -381,6 +381,22 @@ class EvaluateAnswerSufficiencyPublicInterfaceTest(TestCase):
 
         self.assertEqual(engine.payload["answer"]["answer_text"], "Voice STT answer")
 
+    def test_evaluate_answer_sufficiency_masks_pii_in_llm_payload(self):
+        self.session.interview_mode = "voice"
+        self.session.save(update_fields=("interview_mode", "updated_at"))
+        self.answer.stt_text = "제 이메일은 test@example.com 이고 연락처는 010-1234-5678 입니다."
+        self.answer.save(update_fields=("stt_text", "updated_at"))
+        engine = RecordingSufficiencyEngine({})
+        service = InterviewAIChainService(engine=engine)
+
+        service.evaluate_answer_sufficiency(self.answer)
+
+        answer_text = engine.payload["answer"]["answer_text"]
+        self.assertIn("[EMAIL_MASKED]", answer_text)
+        self.assertIn("[PHONE_MASKED]", answer_text)
+        self.assertNotIn("test@example.com", answer_text)
+        self.assertNotIn("010-1234-5678", answer_text)
+
     def test_evaluate_answer_sufficiency_uses_answer_text_without_stt_text(self):
         self.session.interview_mode = "voice"
         self.session.save(update_fields=("interview_mode", "updated_at"))

@@ -261,6 +261,10 @@ class MVPQuestionGenerateView(APIView):
         if jd_analysis:
             session._jd_analysis_id = jd_analysis.id
 
+        project_ids = serializer.validated_data.get('project_ids') or []
+        if project_ids:
+            session._project_ids = [str(project_id) for project_id in project_ids]
+
         prompt_version_id = serializer.validated_data.get('prompt_version_id')
         resolved_prompt_version_id = prompt_version_id or get_prompt_version_id(session)
         if resolved_prompt_version_id:
