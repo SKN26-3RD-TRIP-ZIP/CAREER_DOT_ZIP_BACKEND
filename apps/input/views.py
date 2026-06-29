@@ -6,6 +6,7 @@ from rest_framework import status
 from rest_framework.views import APIView
 from rest_framework.parsers import MultiPartParser, FormParser
 from django.utils import timezone
+from django.db import transaction
 
 from apps.document.services.document_parser import extract_text_from_file
 from apps.accounts.services.points import apply_point_policy
@@ -14,6 +15,9 @@ from .services.ocr_service import OCRProviderNotConfigured, extract_job_text_fro
 
 from .models import (
     JobDescription,
+    TalentProfileCategory,
+    JDTalentProfile,
+    JDTalentProfileItem,
     ProjectExperience,
     CoverLetter,
     ResumeMaster,
@@ -28,6 +32,9 @@ from .serializers import (
     JobDescriptionListSerializer,
     JobDescriptionDetailSerializer,
     JobDescriptionUpdateSerializer,
+    TalentProfileCategoryCatalogSerializer,
+    JDTalentProfileReadSerializer,
+    JDTalentProfileWriteSerializer,
     ProjectExperienceCreateSerializer,
     ProjectExperienceListSerializer,
     CoverLetterCreateSerializer,
@@ -233,6 +240,97 @@ class JDOCRUploadView(APIView):
         data['ocr_provider'] = result['provider']
         _reward_first_saved_item(user=request.user, reason_code='JD.FIRST_CREATED', reference_id=str(jd.id))
         return Response(data, status=status.HTTP_201_CREATED)
+
+
+class TalentProfileCatalogView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        categories = (
+            TalentProfileCategory.objects
+            .filter(is_active=True, traits__is_active=True)
+            .distinct()
+            .prefetch_related('traits')
+            .order_by('display_order', 'category_id')
+        )
+        serializer = TalentProfileCategoryCatalogSerializer(categories, many=True)
+        return Response({'categories': serializer.data}, status=status.HTTP_200_OK)
+
+
+class JDTalentProfileView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_jd(self, request, jd_id):
+        try:
+            return JobDescription.objects.get(id=jd_id, user=request.user)
+        except JobDescription.DoesNotExist:
+            return None
+
+    def get(self, request, jd_id):
+        jd = self.get_jd(request, jd_id)
+        if jd is None:
+            return Response({'detail': 'Job description not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        profile = (
+            JDTalentProfile.objects
+            .filter(jd=jd)
+            .select_related('jd')
+            .prefetch_related('items__trait__category')
+            .first()
+        )
+        if profile is None:
+            return Response({'jd_id': str(jd.id), 'profile': None}, status=status.HTTP_200_OK)
+
+        return Response(JDTalentProfileReadSerializer(profile).data, status=status.HTTP_200_OK)
+
+    def put(self, request, jd_id):
+        jd = self.get_jd(request, jd_id)
+        if jd is None:
+            return Response({'detail': 'Job description not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        serializer = JDTalentProfileWriteSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+
+        with transaction.atomic():
+            profile, created = JDTalentProfile.objects.select_for_update().get_or_create(
+                jd=jd,
+                defaults={
+                    'source_type': data['source_type'],
+                    'source_text': data.get('source_text'),
+                    'custom_summary': data.get('custom_summary'),
+                    'confirmed_by_user': data['confirmed_by_user'],
+                },
+            )
+            previous_confirmed = False if created else profile.confirmed_by_user
+            profile.source_type = data['source_type']
+            profile.source_text = data.get('source_text')
+            profile.custom_summary = data.get('custom_summary')
+            profile.confirmed_by_user = data['confirmed_by_user']
+            if not previous_confirmed and profile.confirmed_by_user:
+                profile.confirmed_at = timezone.now()
+            elif previous_confirmed and not profile.confirmed_by_user:
+                profile.confirmed_at = None
+            elif not profile.confirmed_by_user:
+                profile.confirmed_at = None
+            profile.save()
+
+            profile.items.all().delete()
+            for item in data['items']:
+                JDTalentProfileItem.objects.create(
+                    jd_talent_profile=profile,
+                    trait=item['trait'],
+                    priority_order=item['priority_order'],
+                    custom_description=item.get('custom_description', ''),
+                )
+
+        profile = (
+            JDTalentProfile.objects
+            .select_related('jd')
+            .prefetch_related('items__trait__category')
+            .get(pk=profile.pk)
+        )
+        return Response(JDTalentProfileReadSerializer(profile).data, status=status.HTTP_200_OK)
 
 
 class ResumeUploadView(APIView):

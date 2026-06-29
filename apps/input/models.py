@@ -45,6 +45,113 @@ class JobDescription(models.Model):
         return f"{self.company_name} - {self.position}"
 
 
+class TalentProfileCategory(models.Model):
+    category_id = models.BigAutoField(primary_key=True)
+    category_code = models.CharField(max_length=50, unique=True)
+    category_name = models.CharField(max_length=50)
+    short_description = models.CharField(max_length=200)
+    detailed_description = models.TextField(blank=True, null=True)
+    display_order = models.PositiveSmallIntegerField(default=0)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'talent_profile_categories'
+        ordering = ['display_order', 'category_id']
+
+    def __str__(self):
+        return self.category_name
+
+
+class TalentProfileTrait(models.Model):
+    trait_id = models.BigAutoField(primary_key=True)
+    category = models.ForeignKey(TalentProfileCategory, on_delete=models.PROTECT, related_name='traits')
+    trait_code = models.CharField(max_length=50, unique=True)
+    trait_name = models.CharField(max_length=50)
+    short_description = models.CharField(max_length=250)
+    detailed_description = models.TextField(blank=True, null=True)
+    positive_signals = models.JSONField(default=list, blank=True)
+    negative_signals = models.JSONField(default=list, blank=True)
+    question_templates = models.JSONField(default=list, blank=True)
+    followup_templates = models.JSONField(default=list, blank=True)
+    evaluation_dimensions = models.JSONField(default=list, blank=True)
+    display_order = models.PositiveSmallIntegerField(default=0)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'talent_profile_traits'
+        ordering = ['category__display_order', 'display_order', 'trait_id']
+
+    def __str__(self):
+        return self.trait_name
+
+
+class JDTalentProfile(models.Model):
+    SOURCE_TYPE_OFFICIAL = 'OFFICIAL'
+    SOURCE_TYPE_AI_EXTRACTED = 'AI_EXTRACTED'
+    SOURCE_TYPE_USER_DEFINED = 'USER_DEFINED'
+    SOURCE_TYPE_JOB_DEFAULT = 'JOB_DEFAULT'
+    SOURCE_TYPE_HYBRID = 'HYBRID'
+    SOURCE_TYPE_CHOICES = [
+        (SOURCE_TYPE_OFFICIAL, 'Official'),
+        (SOURCE_TYPE_AI_EXTRACTED, 'AI Extracted'),
+        (SOURCE_TYPE_USER_DEFINED, 'User Defined'),
+        (SOURCE_TYPE_JOB_DEFAULT, 'Job Default'),
+        (SOURCE_TYPE_HYBRID, 'Hybrid'),
+    ]
+
+    jd_talent_profile_id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    jd = models.OneToOneField(JobDescription, on_delete=models.CASCADE, related_name='custom_talent_profile')
+    source_type = models.CharField(max_length=20, choices=SOURCE_TYPE_CHOICES)
+    source_text = models.TextField(blank=True, null=True)
+    custom_summary = models.TextField(blank=True, null=True)
+    confirmed_by_user = models.BooleanField(default=False)
+    confirmed_at = models.DateTimeField(blank=True, null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'jd_talent_profiles'
+        ordering = ['-updated_at']
+
+    def __str__(self):
+        return f"Talent profile for JD {self.jd_id}"
+
+
+class JDTalentProfileItem(models.Model):
+    item_id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    jd_talent_profile = models.ForeignKey(JDTalentProfile, on_delete=models.CASCADE, related_name='items')
+    trait = models.ForeignKey(TalentProfileTrait, on_delete=models.PROTECT, related_name='selected_items')
+    priority_order = models.PositiveSmallIntegerField()
+    custom_description = models.CharField(max_length=500, blank=True, default='')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'jd_talent_profile_items'
+        ordering = ['priority_order', 'created_at']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['jd_talent_profile', 'trait'],
+                name='unique_jd_talent_profile_trait',
+            ),
+            models.UniqueConstraint(
+                fields=['jd_talent_profile', 'priority_order'],
+                name='unique_jd_talent_profile_priority',
+            ),
+            models.CheckConstraint(
+                check=models.Q(priority_order__gte=1) & models.Q(priority_order__lte=5),
+                name='jd_talent_profile_priority_1_5',
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.jd_talent_profile_id} - {self.trait_id}"
+
+
 class ProjectExperience(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='projects')

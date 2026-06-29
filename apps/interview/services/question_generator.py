@@ -2,6 +2,7 @@ import json
 
 from django.db.models import Q
 
+from apps.input.services.talent_profile_service import resolve_effective_talent_profile
 from apps.interview.services.ai_chain_service import InterviewAIChainService
 from apps.interview.services.ai_chain_persona_prompts import (
     get_persona_policy,
@@ -412,6 +413,7 @@ def _build_job_description_source(session):
     jd = session.jd
     if not jd:
         return None
+    effective_talent_profile = resolve_effective_talent_profile(jd)
 
     return {
         'source_table': 'job_descriptions',
@@ -421,6 +423,8 @@ def _build_job_description_source(session):
         'original_text': jd.original_text,
         'company_summary': jd.company_summary,
         'talent_profile': jd.talent_profile,
+        'effective_talent_profile': effective_talent_profile,
+        'talent_profile_prompt_notice': effective_talent_profile.get('prompt_notice', ''),
         'job_requirements': jd.job_requirements,
         'keywords': jd.keywords,
     }
