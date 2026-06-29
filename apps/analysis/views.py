@@ -515,9 +515,7 @@ class AnalysisQuestionsView(APIView):
         try:
             # ── GitHub URL 수집 (우선순위 순서: 세션 저장값 > 이력서 > 프로젝트 경험) ──
             github_url = None
-            if session.github_url:
-                github_url = session.github_url
-            elif session.resume and session.resume.github_url:
+            if session.resume and session.resume.github_url:
                 github_url = session.resume.github_url
             else:
                 from apps.input.models import ProjectExperience
@@ -528,16 +526,16 @@ class AnalysisQuestionsView(APIView):
                     github_url = pe.github_url
 
             # ── GitHub 분석 실행 (이미 캐시된 결과 있으면 재사용) ──
-            github_summary = session.github_summary
+            github_summary = jd_analysis.github_summary
             if github_url and not github_summary:
                 try:
                     from apps.analysis.services.github_service import extract_interview_context
                     gh_result = extract_interview_context(github_url)
                     if gh_result["ok"]:
                         github_summary = gh_result["data"]
-                        session.github_url     = github_url
-                        session.github_summary = github_summary
-                        session.save(update_fields=["github_url", "github_summary"])
+                        jd_analysis.github_url     = github_url
+                        jd_analysis.github_summary = github_summary
+                        jd_analysis.save(update_fields=["github_url", "github_summary"])
                     else:
                         logger.warning("[Analysis] GitHub 분석 실패: %s", gh_result["error_code"])
                 except Exception as e:
