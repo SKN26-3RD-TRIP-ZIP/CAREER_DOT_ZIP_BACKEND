@@ -4,6 +4,8 @@ from .views import (
     AdminPointAdjustView,
     AdminGuardrailEventListView,
     AdminPointHistoryView,
+    AdminPointPolicyListView,
+    AdminPointPolicyUpdateView,
     AuditLogListView,
     DashboardStatsView,
     MemberDetailView,
@@ -23,6 +25,8 @@ urlpatterns = [
     path('members/<int:member_id>/status', MemberStatusView.as_view(), name='admin-member-status'),
     path('members/<int:member_id>', MemberDetailView.as_view(), name='admin-member-detail'),
     path('points/history', AdminPointHistoryView.as_view(), name='admin-points-history'),
+    path('points/policies', AdminPointPolicyListView.as_view(), name='admin-points-policies'),
+    path('points/policies/<int:policy_id>', AdminPointPolicyUpdateView.as_view(), name='admin-points-policy-update'),
     path('guardrails/events', AdminGuardrailEventListView.as_view(), name='admin-guardrail-events'),
     path('audit-logs', AuditLogListView.as_view(), name='admin-audit-log-list'),
 ]
