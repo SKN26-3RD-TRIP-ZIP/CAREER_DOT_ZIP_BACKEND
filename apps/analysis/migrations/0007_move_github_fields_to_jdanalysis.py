@@ -26,4 +26,13 @@ class Migration(migrations.Migration):
             name='github_summary',
             field=models.JSONField(blank=True, null=True),
         ),
+        migrations.AlterField(
+            model_name='analysissession',
+            name='status',
+            field=models.CharField(
+                choices=[('analyzing', '분석 중'), ('ready', '완료'), ('failed', '실패')],
+                default='analyzing',
+                max_length=20,
+            ),
+        ),
     ]
