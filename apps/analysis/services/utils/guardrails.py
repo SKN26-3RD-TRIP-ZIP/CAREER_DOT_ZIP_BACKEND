@@ -131,13 +131,14 @@ class InputGuardrail:
                 }
 
         # ── 2차: LLM 분류 (1차 전부 통과 후에만 실행) ─────────────────
-        try:
-            llm_result = self._llm_validate(jd=jd, cover_letter=cover_letter)
-            if llm_result and not llm_result["valid"]:
-                return llm_result
-        except Exception as e:
-            # LLM 호출 실패 시 서비스를 막지 않고 통과 처리
-            logger.warning("[InputGuardrail] LLM 2차 검사 실패 — 스킵하고 통과 처리: %s", e)
+        # 너무 엄격하게 막아서 제외.
+        # try:
+        #     llm_result = self._llm_validate(jd=jd, cover_letter=cover_letter)
+        #     if llm_result and not llm_result["valid"]:
+        #         return llm_result
+        # except Exception as e:
+        #     # LLM 호출 실패 시 서비스를 막지 않고 통과 처리
+        #     logger.warning("[InputGuardrail] LLM 2차 검사 실패 — 스킵하고 통과 처리: %s", e)
 
         return {"valid": True}
 

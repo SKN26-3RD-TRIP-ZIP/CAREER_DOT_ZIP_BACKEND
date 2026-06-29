@@ -5,16 +5,22 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from rest_framework.views import APIView
 from rest_framework.response import Response
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework import status
+from django.db.models import Prefetch
+from django.utils import timezone
 from django.db import connection, transaction
 from django.db.models import F
 
-from .models import AnalysisSession, JdAnalysis, GeneratedQuestion, QuestionFeedback
+from .models import (
+    AnalysisSession, JdAnalysis, GeneratedQuestion, QuestionFeedback,
+    TalentProfileCategory, TalentProfileTrait, JDTalentProfile, JDTalentProfileItem,
+)
 from apps.input.models import JobDescription, ResumeMaster, CoverLetter
 from .serializers import (
     JDListSerializer, ResumeListSerializer, CoverLetterListSerializer,
     ResumeFullCreateSerializer,
+    TalentProfileCategorySerializer, JDTalentProfileSerializer,
 )
 from apps.input.serializers import (
     JobDescriptionCreateSerializer,
@@ -298,14 +304,23 @@ class AnalysisStartView(APIView):
         cover_letter_id = request.data.get("cover_letter_id")
         career_level    = request.data.get("career_level", "entry")
 
+        if not jd_id:
+            logger.warning("[AnalysisStart] user=%s — jd_id 누락", request.user.id)
+            return Response({"error": "jd_id는 필수입니다."}, status=400)
+        if not resume_id:
+            logger.warning("[AnalysisStart] user=%s — resume_id 누락", request.user.id)
+            return Response({"error": "resume_id는 필수입니다."}, status=400)
+
         try:
             jd = JobDescription.objects.get(id=jd_id, user=request.user)
         except JobDescription.DoesNotExist:
+            logger.warning("[AnalysisStart] user=%s — JD 없음 jd_id=%s", request.user.id, jd_id)
             return Response({"error": "JD를 찾을 수 없습니다."}, status=400)
 
         try:
             resume = ResumeMaster.objects.get(id=resume_id, user=request.user)
         except ResumeMaster.DoesNotExist:
+            logger.warning("[AnalysisStart] user=%s — 이력서 없음 resume_id=%s", request.user.id, resume_id)
             return Response({"error": "이력서를 찾을 수 없습니다."}, status=400)
 
         cover_letter_text = ""
@@ -317,20 +332,51 @@ class AnalysisStartView(APIView):
                     for item in cl.items.all()
                 )
             except CoverLetter.DoesNotExist:
-                pass
+                logger.warning("[AnalysisStart] user=%s — 자소서 없음 cover_letter_id=%s (무시하고 진행)", request.user.id, cover_letter_id)
 
         jd_text = jd.original_text or ""
-        guardrail = InputGuardrail()
-        guard_result = guardrail.validate(jd=jd_text, cover_letter=cover_letter_text)
-        if not guard_result["valid"]:
-            return Response(
-                {
-                    "error_code": "INVALID_INPUT",
-                    "field":      guard_result.get("field"),
-                    "message":    guard_result["error"],
-                },
-                status=400,
+        logger.info(
+            "[AnalysisStart] user=%s jd_id=%s resume_id=%s cover_letter_id=%s "
+            "jd_text_len=%d cl_text_len=%d",
+            request.user.id, jd_id, resume_id, cover_letter_id,
+            len(jd_text), len(cover_letter_text),
+        )
+        # TODO: 가드레일 기준 재조정 후 다시 활성화
+        # guardrail = InputGuardrail()
+        # guard_result = guardrail.validate(jd=jd_text, cover_letter=cover_letter_text)
+        # if not guard_result["valid"]:
+        #     logger.warning(
+        #         "[AnalysisStart] 가드레일 차단 user=%s field=%s error=%s jd_text_len=%d",
+        #         request.user.id, guard_result.get("field"), guard_result["error"], len(jd_text),
+        #     )
+        #     return Response(
+        #         {
+        #             "error_code": "INVALID_INPUT",
+        #             "field":      guard_result.get("field"),
+        #             "message":    guard_result["error"],
+        #         },
+        #         status=400,
+        #     )
+
+        # 동일 조합(jd + resume + cover_letter)으로 완료된 세션이 있으면 재사용
+        existing_session = (
+            AnalysisSession.objects
+            .filter(
+                user=request.user,
+                jd_id=jd_id,
+                resume_id=resume_id,
+                cover_letter_id=cover_letter_id if cover_letter_id else None,
+                status="ready",
             )
+            .order_by("-created_at")
+            .first()
+        )
+        if existing_session:
+            logger.info(
+                "[AnalysisStart] 기존 세션 재사용 user=%s session_id=%s",
+                request.user.id, existing_session.id,
+            )
+            return Response({"session_id": existing_session.id, "status": "ready"}, status=200)
 
         session = AnalysisSession.objects.create(
             user=request.user,
@@ -566,7 +612,136 @@ class AnalysisQuestionsView(APIView):
                 lines.append("==========================================")
                 github_context = "\n".join(lines)
 
+            # ── 기업 맞춤형 컨텍스트 조립 ──
+            company_context = ""
+            company_name = session.company_name
+            if company_name:
+                try:
+                    from apps.analysis.services.company_service import (
+                        classify_company, get_industry_from_jd, build_company_context,
+                    )
+                    company_type = classify_company(company_name)
+
+                    industry = None
+                    if company_type == "sme":
+                        industry = get_industry_from_jd(session.jd_text or "")
+
+                    # ── 인재상 조회 우선순위 ──────────────────────────────
+                    confirmed_traits = []
+                    talent_source    = None
+                    talent_summary   = ""
+
+                    # 1순위: 사용자 확정 인재상
+                    try:
+                        jd_talent_profile = session.jd.custom_talent_profile
+                        if jd_talent_profile.confirmed_by_user and jd_talent_profile.items.exists():
+                            confirmed_traits = list(
+                                jd_talent_profile.items
+                                .select_related("trait__category")
+                                .order_by("priority_order")
+                            )
+                            talent_source  = jd_talent_profile.source_type
+                            talent_summary = jd_talent_profile.custom_summary or ""
+                    except Exception:
+                        pass
+
+                    # 2순위: JD 텍스트에서 LLM으로 인재상 자동 추출
+                    if not confirmed_traits:
+                        try:
+                            from apps.input.models import TalentProfileTrait as _Trait
+                            from .services.utils import get_client as _get_client
+                            import json as _json
+
+                            trait_catalog = list(
+                                _Trait.objects.filter(is_active=True)
+                                .values_list("trait_code", "trait_name")
+                            )
+                            catalog_str = "\n".join(f"{code}: {name}" for code, name in trait_catalog)
+                            prompt = (
+                                "다음 채용공고에서 이 회사가 중요하게 여기는 인재상이나 핵심 역량을\n"
+                                "아래 세부 인재상 목록 중에서 최대 3개를 골라 trait_code만 JSON 배열로 반환하세요.\n"
+                                "다른 텍스트는 포함하지 마세요.\n\n"
+                                f"세부 인재상 목록:\n{catalog_str}\n\n"
+                                f"채용공고:\n{(session.jd_text or '')[:3000]}"
+                            )
+                            _client = _get_client()
+                            _resp = _client.chat.completions.create(
+                                model="gpt-4o-mini",
+                                temperature=0,
+                                messages=[{"role": "user", "content": prompt}],
+                            )
+                            codes = _json.loads(_resp.choices[0].message.content.strip())
+                            if isinstance(codes, list) and codes:
+                                code_map = {t.trait_code: t for t in _Trait.objects.filter(
+                                    trait_code__in=codes, is_active=True
+                                ).select_related("category")}
+                                extracted = []
+                                for idx, code in enumerate(codes, start=1):
+                                    if code in code_map:
+                                        trait_obj = code_map[code]
+                                        # priority_order를 가진 임시 객체 구성
+                                        extracted.append(type("_Item", (), {
+                                            "trait": trait_obj,
+                                            "priority_order": idx,
+                                            "custom_description": "",
+                                        })())
+                                if extracted:
+                                    confirmed_traits = extracted
+                                    talent_source    = "AI_EXTRACTED"
+                        except Exception as e:
+                            logger.warning("[AnalysisQuestions] LLM 인재상 추출 실패: %s", e)
+
+                    # 3순위: 업종 기반 IndustryTalentProfile fallback
+                    if not confirmed_traits:
+                        try:
+                            from apps.analysis.models import IndustryTalentProfile
+                            from apps.input.models import TalentProfileTrait as _Trait
+                            _industry = get_industry_from_jd(session.jd_text or "")
+                            _itp = IndustryTalentProfile.objects.filter(industry=_industry).first()
+                            if _itp and _itp.talent_keywords:
+                                fallback_traits = list(
+                                    _Trait.objects.filter(
+                                        trait_name__in=_itp.talent_keywords, is_active=True
+                                    ).select_related("category")[:3]
+                                )
+                                if fallback_traits:
+                                    confirmed_traits = [
+                                        type("_Item", (), {
+                                            "trait": t,
+                                            "priority_order": idx,
+                                            "custom_description": "",
+                                        })()
+                                        for idx, t in enumerate(fallback_traits, start=1)
+                                    ]
+                                    talent_source = "JOB_DEFAULT"
+                        except Exception as e:
+                            logger.warning("[AnalysisQuestions] IndustryTalentProfile fallback 실패: %s", e)
+
+                    # 4순위: 빈 상태로 진행 (confirmed_traits=[], talent_source=None)
+                    # ────────────────────────────────────────────────────────
+
+                    company_context = build_company_context(
+                        company_name=company_name,
+                        company_type=company_type,
+                        industry=industry,
+                        confirmed_traits=confirmed_traits,
+                        talent_source=talent_source,
+                        talent_summary=talent_summary,
+                    )
+
+                    session.company_type    = company_type
+                    session.company_context = company_context
+                    session.selected_talent_keywords = [
+                        {"trait_code": item.trait.trait_code, "source": talent_source}
+                        for item in confirmed_traits
+                    ]
+                    session.save(update_fields=["company_type", "company_context", "selected_talent_keywords"])
+
+                except Exception as e:
+                    logger.warning("기업 맞춤형 컨텍스트 생성 실패: %s", e)
+
             # 재생성 시 직전 질문을 프롬프트에 넘겨 "다르게" 생성하도록 유도할 수 있음 (추후)
+            combined_context = "\n\n".join(filter(None, [company_context, github_context]))
             questions = generate_all_questions(
                 job_role=session.job_role,
                 company_name=session.company_name,
@@ -575,7 +750,7 @@ class AnalysisQuestionsView(APIView):
                 jd_text=session.jd_text,
                 resume_text=session.resume_text,
                 cover_letter_text=session.cover_letter_text,
-                github_context=github_context,
+                github_context=combined_context,
             )
             existing_texts = list(
                 jd_analysis.questions.values_list("question_text", flat=True)
@@ -650,3 +825,129 @@ class QuestionFeedbackView(APIView):
             comment=comment[:1000],
         )
         return Response({"ok": True}, status=201)
+
+
+class TalentCatalogView(APIView):
+    """인재상 카탈로그 전체 조회. 인증 불필요."""
+
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        categories = (
+            TalentProfileCategory.objects
+            .filter(is_active=True)
+            .prefetch_related(
+                Prefetch("traits", queryset=TalentProfileTrait.objects.filter(is_active=True))
+            )
+            .order_by("display_order")
+        )
+        serializer = TalentProfileCategorySerializer(categories, many=True)
+        return Response(serializer.data)
+
+
+class JDTalentProfileView(APIView):
+    """JD별 인재상 설정 조회 및 저장."""
+
+    permission_classes = [IsAuthenticated]
+
+    def _get_jd(self, request, jd_id):
+        try:
+            return JobDescription.objects.get(id=jd_id, user=request.user)
+        except JobDescription.DoesNotExist:
+            return None
+
+    def get(self, request, jd_id):
+        jd = self._get_jd(request, jd_id)
+        if jd is None:
+            return Response({"error": "JD를 찾을 수 없습니다."}, status=status.HTTP_404_NOT_FOUND)
+
+        try:
+            profile = jd.custom_talent_profile
+        except JDTalentProfile.DoesNotExist:
+            return Response({"error": "인재상 설정이 없습니다."}, status=status.HTTP_404_NOT_FOUND)
+
+        serializer = JDTalentProfileSerializer(profile)
+        return Response(serializer.data)
+
+    def put(self, request, jd_id):
+        jd = self._get_jd(request, jd_id)
+        if jd is None:
+            return Response({"error": "JD를 찾을 수 없습니다."}, status=status.HTTP_404_NOT_FOUND)
+
+        data        = request.data
+        source_type = data.get("source_type", "USER_DEFINED")
+        items_data  = data.get("items", [])
+
+        # 검증
+        valid_source_types = {"OFFICIAL", "AI_EXTRACTED", "USER_DEFINED", "JOB_DEFAULT", "HYBRID"}
+        if source_type not in valid_source_types:
+            return Response({"error": "유효하지 않은 source_type입니다."}, status=400)
+
+        if not (1 <= len(items_data) <= 5):
+            return Response({"error": "인재상은 1개 이상 5개 이하로 선택해야 합니다."}, status=400)
+
+        trait_codes    = [i.get("trait_code") for i in items_data]
+        priority_orders = [i.get("priority_order") for i in items_data]
+
+        if len(set(trait_codes)) != len(trait_codes):
+            return Response({"error": "trait_code가 중복됩니다."}, status=400)
+
+        if len(set(priority_orders)) != len(priority_orders):
+            return Response({"error": "priority_order가 중복됩니다."}, status=400)
+
+        for po in priority_orders:
+            if not isinstance(po, int) or not (1 <= po <= 5):
+                return Response({"error": "priority_order는 1~5 범위여야 합니다."}, status=400)
+
+        # trait 존재·활성 여부 확인
+        trait_map = {
+            t.trait_code: t
+            for t in TalentProfileTrait.objects.filter(trait_code__in=trait_codes, is_active=True)
+        }
+        for code in trait_codes:
+            if code not in trait_map:
+                return Response({"error": f"유효하지 않거나 비활성 trait_code: {code}"}, status=400)
+
+        for item in items_data:
+            desc = item.get("custom_description", "")
+            if len(desc) > 500:
+                return Response({"error": "custom_description은 500자 이하여야 합니다."}, status=400)
+            weight = item.get("weight")
+            if weight is not None:
+                try:
+                    w = float(weight)
+                    if not (0 <= w <= 100):
+                        raise ValueError
+                except (TypeError, ValueError):
+                    return Response({"error": "weight는 0~100 범위여야 합니다."}, status=400)
+
+        confirmed_by_user = bool(data.get("confirmed_by_user", False))
+        if source_type == "USER_DEFINED" and not confirmed_by_user:
+            return Response({"error": "USER_DEFINED 저장 시 confirmed_by_user가 True여야 합니다."}, status=400)
+
+        # 저장 (전체 교체)
+        with transaction.atomic():
+            profile, _ = JDTalentProfile.objects.get_or_create(
+                jd=jd,
+                defaults={"source_type": source_type},
+            )
+            profile.source_type      = source_type
+            profile.source_text      = data.get("source_text")
+            profile.custom_summary   = data.get("custom_summary")
+            profile.confirmed_by_user = confirmed_by_user
+            if confirmed_by_user:
+                profile.confirmed_at = timezone.now()
+            profile.save()
+
+            profile.items.all().delete()
+            for item in items_data:
+                JDTalentProfileItem.objects.create(
+                    jd_talent_profile=profile,
+                    trait=trait_map[item["trait_code"]],
+                    priority_order=item["priority_order"],
+                    custom_description=item.get("custom_description", ""),
+                    weight=item.get("weight"),
+                )
+
+        serializer = JDTalentProfileSerializer(profile)
+        return Response(serializer.data)

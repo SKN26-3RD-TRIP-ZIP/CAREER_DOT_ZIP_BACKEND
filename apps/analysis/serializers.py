@@ -3,6 +3,65 @@ from apps.input.models import (
     JobDescription, ResumeMaster, CoverLetter,
     ResumeCareer, ResumeEducation, ResumeSkill, ResumeCertificate,
 )
+from .models import TalentProfileCategory, TalentProfileTrait, JDTalentProfile, JDTalentProfileItem
+
+
+class TalentProfileTraitSerializer(serializers.ModelSerializer):
+    """인재상 세부 항목 직렬화."""
+
+    trait_id = serializers.IntegerField(source="id")
+
+    class Meta:
+        model  = TalentProfileTrait
+        fields = ("trait_id", "trait_code", "trait_name", "short_description", "display_order")
+
+
+class TalentProfileCategorySerializer(serializers.ModelSerializer):
+    """인재상 상위 영역 직렬화. traits를 중첩해서 반환한다."""
+
+    category_id = serializers.IntegerField(source="id")
+    traits      = TalentProfileTraitSerializer(many=True, read_only=True)
+
+    class Meta:
+        model  = TalentProfileCategory
+        fields = ("category_id", "category_code", "category_name", "short_description", "display_order", "traits")
+
+
+class JDTalentProfileItemSerializer(serializers.ModelSerializer):
+    """JD 선택 인재상 항목 직렬화."""
+
+    trait_code    = serializers.SerializerMethodField()
+    trait_name    = serializers.SerializerMethodField()
+    category_code = serializers.SerializerMethodField()
+
+    class Meta:
+        model  = JDTalentProfileItem
+        fields = (
+            "item_id", "trait_code", "trait_name", "category_code",
+            "priority_order", "custom_description", "weight",
+        )
+
+    def get_trait_code(self, obj):
+        return obj.trait.trait_code
+
+    def get_trait_name(self, obj):
+        return obj.trait.trait_name
+
+    def get_category_code(self, obj):
+        return obj.trait.category.category_code
+
+
+class JDTalentProfileSerializer(serializers.ModelSerializer):
+    """JD 인재상 설정 직렬화."""
+
+    items = JDTalentProfileItemSerializer(many=True, read_only=True)
+
+    class Meta:
+        model  = JDTalentProfile
+        fields = (
+            "jd_talent_profile_id", "source_type", "source_text",
+            "custom_summary", "confirmed_by_user", "confirmed_at", "items",
+        )
 
 
 class JDListSerializer(serializers.ModelSerializer):

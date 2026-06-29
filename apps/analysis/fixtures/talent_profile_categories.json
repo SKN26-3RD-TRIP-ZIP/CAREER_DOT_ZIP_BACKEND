@@ -1,0 +1,98 @@
+[
+  {
+    "model": "analysis.talentprofilecategory",
+    "pk": 1,
+    "fields": {
+      "category_code": "EXECUTION_RESPONSIBILITY",
+      "category_name": "실행과 책임",
+      "short_description": "목표를 행동과 결과로 연결하고 맡은 일에 끝까지 책임지는 역량",
+      "detailed_description": "",
+      "display_order": 1,
+      "is_active": true
+    }
+  },
+  {
+    "model": "analysis.talentprofilecategory",
+    "pk": 2,
+    "fields": {
+      "category_code": "THINKING_PROBLEM_SOLVING",
+      "category_name": "사고와 문제해결",
+      "short_description": "문제의 원인을 분석하고 근거를 바탕으로 합리적으로 판단하는 역량",
+      "detailed_description": "",
+      "display_order": 2,
+      "is_active": true
+    }
+  },
+  {
+    "model": "analysis.talentprofilecategory",
+    "pk": 3,
+    "fields": {
+      "category_code": "COLLABORATION_COMMUNICATION",
+      "category_name": "협업과 소통",
+      "short_description": "공동 목표를 위해 정보를 공유하고 관계와 의견을 조율하는 역량",
+      "detailed_description": "",
+      "display_order": 3,
+      "is_active": true
+    }
+  },
+  {
+    "model": "analysis.talentprofilecategory",
+    "pk": 4,
+    "fields": {
+      "category_code": "GROWTH_ADAPTABILITY",
+      "category_name": "성장과 변화",
+      "short_description": "새로운 지식을 학습하고 환경과 요구사항 변화에 대응하는 역량",
+      "detailed_description": "",
+      "display_order": 4,
+      "is_active": true
+    }
+  },
+  {
+    "model": "analysis.talentprofilecategory",
+    "pk": 5,
+    "fields": {
+      "category_code": "CUSTOMER_BUSINESS_VALUE",
+      "category_name": "고객과 사업",
+      "short_description": "사용자 문제와 조직의 사업 목표를 이해하고 실질적인 가치를 만드는 역량",
+      "detailed_description": "",
+      "display_order": 5,
+      "is_active": true
+    }
+  },
+  {
+    "model": "analysis.talentprofilecategory",
+    "pk": 6,
+    "fields": {
+      "category_code": "TECHNOLOGY_QUALITY",
+      "category_name": "기술과 품질",
+      "short_description": "직무 기술을 적절히 활용하고 안정성·품질·보안을 높이는 역량",
+      "detailed_description": "",
+      "display_order": 6,
+      "is_active": true
+    }
+  },
+  {
+    "model": "analysis.talentprofilecategory",
+    "pk": 7,
+    "fields": {
+      "category_code": "LEADERSHIP_ORGANIZATION",
+      "category_name": "리더십과 조직",
+      "short_description": "구성원의 성과와 성장 및 조직 전체의 개선을 이끄는 역량",
+      "detailed_description": "",
+      "display_order": 7,
+      "is_active": true
+    }
+  },
+  {
+    "model": "analysis.talentprofilecategory",
+    "pk": 8,
+    "fields": {
+      "category_code": "TRUST_ETHICS",
+      "category_name": "신뢰와 윤리",
+      "short_description": "원칙과 약속을 지키고 위험과 사실을 투명하게 공유하는 태도",
+      "detailed_description": "",
+      "display_order": 8,
+      "is_active": true
+    }
+  }
+]

@@ -11,6 +11,8 @@ from .views import (
     JDCreateView,
     ResumeCreateView,
     CoverLetterCreateView,
+    TalentCatalogView,
+    JDTalentProfileView,
 )
 
 urlpatterns = [
@@ -27,4 +29,7 @@ urlpatterns = [
     path("create/jds/",           JDCreateView.as_view(),              name="analysis-create-jd"),
     path("create/resumes/",       ResumeCreateView.as_view(),          name="analysis-create-resume"),
     path("create/cover-letters/", CoverLetterCreateView.as_view(),     name="analysis-create-cover-letter"),
+    # 인재상
+    path("talent-profiles/catalog/",          TalentCatalogView.as_view(),      name="talent-catalog"),
+    path("jds/<uuid:jd_id>/talent-profile/",  JDTalentProfileView.as_view(),    name="jd-talent-profile"),
 ]

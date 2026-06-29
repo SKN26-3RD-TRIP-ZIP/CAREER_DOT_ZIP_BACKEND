@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import AnalysisSession, JdAnalysis, GeneratedQuestion
+from .models import AnalysisSession, JdAnalysis, GeneratedQuestion, ConglomerateCompany
 
 
 @admin.register(AnalysisSession)
@@ -23,3 +23,10 @@ class GeneratedQuestionAdmin(admin.ModelAdmin):
     list_display  = ["id", "jd_analysis", "question_type", "question_text", "order", "is_used"]
     list_filter   = ["question_type", "is_used"]
     search_fields = ["question_text"]
+
+
+@admin.register(ConglomerateCompany)
+class ConglomerateCompanyAdmin(admin.ModelAdmin):
+    list_display  = ["group_name", "company_name"]
+    list_filter   = ["group_name"]
+    search_fields = ["company_name", "group_name"]
