@@ -289,10 +289,24 @@ def _prompt_metadata_from_result(result):
 
 def _generation_context_metadata(payload):
     generation_options = payload.get('generation_options') or {}
+    input_sources = payload.get('input_sources') or {}
+    job_description = input_sources.get('job_description') or {}
+    talent_profile = job_description.get('effective_talent_profile') or {}
+    talent_profile_items = talent_profile.get('items') or []
+    talent_profile_included = bool(
+        talent_profile_items
+        or talent_profile.get('summary')
+        or job_description.get('talent_profile')
+    )
+    talent_profile_confirmed_by_user = bool(
+        talent_profile.get('confirmed_by_user') and talent_profile_items
+    )
     return {
         'selected_project_ids': generation_options.get('selected_project_ids'),
         'project_deepdive_enabled': generation_options.get('project_deepdive_enabled'),
         'github_readme_context_included': generation_options.get('github_readme_context_included'),
+        'talent_profile_included': talent_profile_included,
+        'talent_profile_confirmed_by_user': talent_profile_confirmed_by_user,
     }
 
 
