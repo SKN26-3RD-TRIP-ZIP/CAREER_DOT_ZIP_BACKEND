@@ -6,7 +6,6 @@ from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 
 from apps.accounts.models import PointHistory
-from apps.interview.models import GuardrailEvent
 from apps.interview.models import InterviewSession
 from apps.prompt.models import AdminPromptTestRun
 from apps.report.models import FinalReport
@@ -155,21 +154,12 @@ def build_dashboard_stats(start=None, end=None):
     point_queryset = _apply_created_period(PointHistory.objects.all(), start_dt, end_dt)
     report_queryset = _apply_report_period(FinalReport.objects.all(), start_dt, end_dt)
     session_queryset = _apply_created_period(InterviewSession.objects.all(), start_dt, end_dt)
-    guardrail_queryset = _apply_created_period(GuardrailEvent.objects.all(), start_dt, end_dt)
     member_queryset = _apply_created_period(User.objects.all(), start_dt, end_dt)
     point_summary = point_queryset.aggregate(
         earned=Sum('amount', filter=Q(transaction_type=PointHistory.TRANSACTION_EARN)),
         used=Sum('amount', filter=Q(transaction_type=PointHistory.TRANSACTION_USE)),
         refunded=Sum('amount', filter=Q(transaction_type=PointHistory.TRANSACTION_REFUND)),
     )
-    guardrail_by_category = {
-        row['category']: row['count']
-        for row in guardrail_queryset.values('category').annotate(count=Count('id'))
-    }
-    guardrail_by_action = {
-        row['action']: row['count']
-        for row in guardrail_queryset.values('action').annotate(count=Count('id'))
-    }
     report_by_status = {
         row['status']: row['count']
         for row in report_queryset.values('status').annotate(count=Count('id'))
@@ -229,11 +219,6 @@ def build_dashboard_stats(start=None, end=None):
             'used': point_summary['used'] or 0,
             'refunded': point_summary['refunded'] or 0,
             'transaction_count': point_queryset.count(),
-        },
-        'guardrails': {
-            'by_category': guardrail_by_category,
-            'by_action': guardrail_by_action,
-            'event_count': guardrail_queryset.count(),
         },
         'weekly_sessions': weekly_sessions,
     }

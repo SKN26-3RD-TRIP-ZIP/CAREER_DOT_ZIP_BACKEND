@@ -1,7 +1,6 @@
 from .audit import AuditLogListView
 from .base import AdminAPIView, paginate
 from .dashboard import DashboardStatsView
-from .guardrails import AdminGuardrailEventListView
 from .members import (
     MemberDetailView,
     MemberInviteView,
@@ -19,7 +18,6 @@ from .points import (
 __all__ = [
     'AdminAPIView',
     'paginate',
-    'AdminGuardrailEventListView',
     'AdminPointAdjustView',
     'AdminPointHistoryView',
     'AdminPointPolicyListView',

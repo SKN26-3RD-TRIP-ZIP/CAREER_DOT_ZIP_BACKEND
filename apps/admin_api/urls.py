@@ -2,7 +2,6 @@ from django.urls import path
 
 from .views import (
     AdminPointAdjustView,
-    AdminGuardrailEventListView,
     AdminPointHistoryView,
     AdminPointPolicyListView,
     AdminPointPolicyUpdateView,
@@ -27,6 +26,5 @@ urlpatterns = [
     path('points/history', AdminPointHistoryView.as_view(), name='admin-points-history'),
     path('points/policies', AdminPointPolicyListView.as_view(), name='admin-points-policies'),
     path('points/policies/<int:policy_id>', AdminPointPolicyUpdateView.as_view(), name='admin-points-policy-update'),
-    path('guardrails/events', AdminGuardrailEventListView.as_view(), name='admin-guardrail-events'),
     path('audit-logs', AuditLogListView.as_view(), name='admin-audit-log-list'),
 ]
