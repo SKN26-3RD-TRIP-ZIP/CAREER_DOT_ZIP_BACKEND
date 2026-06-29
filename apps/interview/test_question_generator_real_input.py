@@ -340,29 +340,19 @@ class InterviewQuestionGeneratorRealInputTest(TestCase):
         self.assertEqual(payload['generation_options']['selected_project_ids'], [])
 
     def test_github_summary_is_added_to_payload_and_generation_metadata(self):
-        AnalysisSession.objects.create(
-            user=self.user,
-            jd=self.jd,
-            resume=self.resume,
-            cover_letter=self.cover_letter,
-            jd_analysis=self.analysis,
-            job_role=self.jd.position,
-            company_name=self.jd.company_name,
-            jd_text=self.jd.original_text,
-            resume_text=self.resume.original_text,
-            cover_letter_text='AI 모의면접 프로젝트 자소서',
-            status='ready',
-            github_url='https://github.com/example/ai-interview',
-            github_summary={
-                'project_name': 'AI Mock Interview',
-                'project_overview': 'README 기반 AI 모의면접 서비스',
-                'tech_stack': ['Django', 'OpenAI'],
-                'key_features': ['질문 생성', '꼬리질문 생성'],
-                'technical_challenges': ['LLM 응답 안정화'],
-                'architecture': 'Django API + OpenAI',
-                'interview_points': ['프롬프트 메타데이터 설계'],
-            },
-        )
+        github_summary = {
+            'project_name': 'AI Mock Interview',
+            'project_overview': 'README 기반 AI 모의면접 서비스',
+            'tech_stack': ['Django', 'OpenAI'],
+            'key_features': ['질문 생성', '꼬리질문 생성'],
+            'technical_challenges': ['LLM 응답 안정화'],
+            'architecture': 'Django API + OpenAI',
+            'interview_points': ['프롬프트 메타데이터 설계'],
+        }
+        self.analysis.github_url = 'https://github.com/example/ai-interview'
+        self.analysis.github_summary = github_summary
+        self.analysis.save(update_fields=['github_url', 'github_summary'])
+
         ai_result = {
             'session_id': str(self.session.id),
             'generation_source': 'openai',
@@ -395,7 +385,10 @@ class InterviewQuestionGeneratorRealInputTest(TestCase):
 
         payload = service.generate_questions.call_args.args[0]
         github_context = payload['input_sources']['github_readme_context']
+        self.assertEqual(github_context['source_table'], 'jd_analysis')
+        self.assertEqual(github_context['jd_analysis_id'], str(self.analysis.id))
         self.assertEqual(github_context['github_url'], 'https://github.com/example/ai-interview')
+        self.assertEqual(github_context['github_summary'], github_summary)
         self.assertEqual(github_context['project_name'], 'AI Mock Interview')
         self.assertTrue(payload['generation_options']['github_readme_context_included'])
 
