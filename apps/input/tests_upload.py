@@ -27,7 +27,7 @@ from apps.report.models import FinalReport
 PASSWORD = "QaTestPw!234"
 
 
-def _pdf_bytes(text="백엔드 개발자 채용 JD 샘플 내용"):
+def _pdf_bytes(text="Job posting backend developer recruitment responsibilities include Django REST API development. Requirements include Python database design. Preferred qualifications include AWS monitoring."):
     import fitz  # PyMuPDF
 
     doc = fitz.open()
@@ -38,7 +38,7 @@ def _pdf_bytes(text="백엔드 개발자 채용 JD 샘플 내용"):
     return data
 
 
-def _docx_bytes(text="이력서 샘플 텍스트 내용"):
+def _docx_bytes(text="Resume email up@example.com github portfolio backend engineer career project Django Python REST API PostgreSQL AWS deployment monitoring education certificate."):
     from docx import Document
 
     document = Document()
@@ -73,7 +73,7 @@ class JDUploadTests(_AuthMixin, APITestCase):
         self.assertIn("created_at", res.data)
         jd = JobDescription.objects.get()
         self.assertEqual(jd.input_method, "PDF")
-        self.assertIn("JD", jd.original_text)
+        self.assertIn("Job posting", jd.original_text)
         self.assertEqual(jd.company_name, "테스트테크")
 
     def test_reject_non_pdf_extension(self):
@@ -82,15 +82,16 @@ class JDUploadTests(_AuthMixin, APITestCase):
         res = self.client.post(self.url, {"file": f}, format="multipart")
         self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)
 
-    def test_reject_docx_for_jd_upload(self):
+    def test_docx_upload_creates_jd_with_text(self):
         self._auth()
         f = SimpleUploadedFile(
             "jd.docx",
-            _docx_bytes("JD docx should be rejected"),
+            _docx_bytes("Job posting backend developer recruitment responsibilities requirements qualifications preferred hiring process working conditions."),
             content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         )
         res = self.client.post(self.url, {"file": f}, format="multipart")
-        self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(res.status_code, status.HTTP_201_CREATED)
+        self.assertIn("jd_id", res.data)
 
     def test_reject_empty_file(self):
         self._auth()
@@ -103,14 +104,16 @@ class JDUploadTests(_AuthMixin, APITestCase):
         big = b"%PDF-1.4\n" + b"0" * (10 * 1024 * 1024 + 1)
         f = SimpleUploadedFile("big.pdf", big, content_type="application/pdf")
         res = self.client.post(self.url, {"file": f}, format="multipart")
-        self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(res.status_code, status.HTTP_413_REQUEST_ENTITY_TOO_LARGE)
+        self.assertEqual(res.data["error_code"], "FILE_TOO_LARGE")
 
     def test_extraction_failure_returns_422(self):
         self._auth()
         # .pdf 확장자지만 내용은 PDF가 아님 → 파서 실패
         f = SimpleUploadedFile("broken.pdf", b"this is not a real pdf", content_type="application/pdf")
         res = self.client.post(self.url, {"file": f}, format="multipart")
-        self.assertEqual(res.status_code, status.HTTP_422_UNPROCESSABLE_ENTITY)
+        self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(res.data["error_code"], "INVALID_FILE_SIGNATURE")
 
     def test_requires_auth(self):
         f = SimpleUploadedFile("jd.pdf", _pdf_bytes(), content_type="application/pdf")
@@ -125,7 +128,7 @@ class ResumeUploadTests(_AuthMixin, APITestCase):
         user = self._auth()
         f = SimpleUploadedFile(
             "resume.docx",
-            _docx_bytes("홍길동 이력서 내용"),
+            _docx_bytes(),
             content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         )
         res = self.client.post(self.url, {"file": f}, format="multipart")
@@ -134,12 +137,12 @@ class ResumeUploadTests(_AuthMixin, APITestCase):
         self.assertIn("created_at", res.data)
         self.assertIn("updated_at", res.data)
         resume = ResumeMaster.objects.get()
-        self.assertIn("이력서", resume.original_text)
+        self.assertIn("Resume", resume.original_text)
         self.assertEqual(resume.email, user.email)
 
     def test_pdf_upload_ok(self):
         self._auth()
-        f = SimpleUploadedFile("resume.pdf", _pdf_bytes("Resume PDF text"), content_type="application/pdf")
+        f = SimpleUploadedFile("resume.pdf", _pdf_bytes("Resume email up@example.com github portfolio backend engineer career project Django Python REST API PostgreSQL AWS deployment monitoring education certificate."), content_type="application/pdf")
         res = self.client.post(self.url, {"file": f}, format="multipart")
         self.assertEqual(res.status_code, status.HTTP_201_CREATED)
         resume = ResumeMaster.objects.get()
@@ -156,7 +159,8 @@ class ResumeUploadTests(_AuthMixin, APITestCase):
         big = b"%PDF-1.4\n" + b"0" * (10 * 1024 * 1024 + 1)
         f = SimpleUploadedFile("resume.pdf", big, content_type="application/pdf")
         res = self.client.post(self.url, {"file": f}, format="multipart")
-        self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(res.status_code, status.HTTP_413_REQUEST_ENTITY_TOO_LARGE)
+        self.assertEqual(res.data["error_code"], "FILE_TOO_LARGE")
 
     def test_list_only_own_resumes(self):
         self._auth("a@example.com")

@@ -272,3 +272,144 @@ Error Code:
 | 실제 Repository 분석/프로젝트 기반 질문 | `input_projectexperience.github_url` 우선 |
 
 현재 `ProjectExperience`는 `User`에만 연결되어 있고 `ResumeMaster`와 직접 연결되어 있지 않다. 복수 이력서에서 프로젝트 포함 관계를 구분하려면 `ProjectExperience -> ResumeMaster` FK 또는 중간 테이블 추가 승인이 필요하다. 승인 전에는 모든 프로젝트를 선택 이력서의 프로젝트로 간주하지 않는다.
+
+## ���� ���ε� ���巹�� API
+
+Base path: `/api/v1`
+
+### `POST /documents/upload`
+
+���� ���� ���ε� API�Դϴ�. JWT ������ �ʿ��ϸ� `multipart/form-data`�� �����մϴ�.
+
+Request fields:
+
+| field | type | required | description |
+| --- | --- | --- | --- |
+| `file` | binary | yes | PDF �Ǵ� DOCX, �ִ� 10MB |
+| `document_type` | string | yes | `resume`, `cover_letter`, `jd`, `portfolio`, `other` |
+
+ó�� ��Ģ: ���� ����, MIME, �ñ״�ó, �ջ�/��ȣȭ/��ũ��, �ؽ�Ʈ ����, �ּ� ����, ���� ����, ������ ������ ��� ����� �ڿ��� DB�� FileField�� �����մϴ�. TXT�� �������� �ʽ��ϴ�. OCR ������ ���� �������� �ʾ�����, �ؽ�Ʈ�� ���� PDF�� `OCR_NOT_SUPPORTED`�� �����մϴ�. DOCX ��ũ�� Ž���� ���� ���� �˻��̸� �Ϲ� �ֿ��� �˻縦 �ǹ����� �ʽ��ϴ�.
+
+Success: `201 Created`
+
+```json
+{
+  "document_id": "uuid",
+  "document_type": "resume",
+  "original_filename": "resume.pdf",
+  "file_type": "pdf",
+  "file_size": 12345,
+  "parse_status": "completed",
+  "extracted_text": "...",
+  "error_message": ""
+}
+```
+
+### `POST /jds/upload`
+
+JD ���� ���ε� API�Դϴ�. JWT ������ �ʿ��ϸ� PDF�� DOCX�� ����մϴ�. ���� ��� �� `JobDescription.original_text`�� ���� �ؽ�Ʈ�� �����մϴ�. ���� �� ������ ȣȯ�� ������ `input_method`�� ���� `PDF` ���� �����մϴ�.
+
+Request fields: `file` required, `company_name` optional, `position` optional.
+
+### `POST /resumes/upload`
+
+�̷¼� ���� ���ε� API�Դϴ�. JWT ������ �ʿ��ϸ� PDF�� DOCX�� ����մϴ�. ���� ��� �� `ResumeMaster.original_text`�� ���� �ؽ�Ʈ�� �����մϴ�.
+
+Request fields: `file` required, `name` optional.
+
+### Error Response
+
+```json
+{
+  "error_code": "DOCUMENT_TOO_SHORT",
+  "message": "�м��ϱ⿡ ���� ������ �ʹ� ª���ϴ�.",
+  "detail": "�м��ϱ⿡ ���� ������ �ʹ� ª���ϴ�.",
+  "code": "DOCUMENT_TOO_SHORT"
+}
+```
+
+| HTTP | error_code | description |
+| ---: | --- | --- |
+| 400 | `INVALID_FILE_TYPE` | PDF �Ǵ� DOCX�� �ƴϰų� MIME�� ������ ���� |
+| 400 | `INVALID_FILE_SIGNATURE` | Ȯ���ڿ� ���� ���� �ñ״�ó/������ ���� ���� |
+| 400 | `FILE_EMPTY` | 0����Ʈ ���� |
+| 413 | `FILE_TOO_LARGE` | 10MB �ʰ� |
+| 422 | `DOCUMENT_CORRUPTED` | �ջ�Ǿ� �� �� ���� |
+| 422 | `DOCUMENT_ENCRYPTED` | ��ȣȭ �Ǵ� ��й�ȣ PDF |
+| 422 | `DOCUMENT_MACRO_DETECTED` | DOCX ���� ��ũ�� Ž�� |
+| 422 | `TEXT_EXTRACTION_FAILED` | �ؽ�Ʈ ���� ���� �Ǵ� DOCX �ؽ�Ʈ ���� |
+| 422 | `DOCUMENT_TOO_SHORT` | �ּ� ���� �� �̴� |
+| 422 | `DOCUMENT_TYPE_MISMATCH` | ������ ���԰� ���� ���� ���� ����ġ |
+| 422 | `DOCUMENT_NOT_RELEVANT` | ���� �غ� ������ ���� ����� |
+| 422 | `UNSAFE_DOCUMENT_CONTENT` | ������Ʈ �����Ǽ� ���� �� ���� ���� |
+| 422 | `OCR_NOT_SUPPORTED` | �̹���/��ĵ PDF�� OCR �ʿ������� ������ |
+## Document Upload Guardrail API
+
+Base path: `/api/v1`
+
+### `POST /documents/upload`
+
+Generic document upload endpoint. JWT authentication is required and the request must be `multipart/form-data`.
+
+Request fields:
+
+| field | type | required | description |
+| --- | --- | --- | --- |
+| `file` | binary | yes | PDF or DOCX, max 10MB |
+| `document_type` | string | yes | `resume`, `cover_letter`, `jd`, `portfolio`, `other` |
+
+Processing rule: the file is saved to DB/FileField only after extension, MIME type, file signature, corruption/encryption/macro checks, text extraction, minimum length, document type, relevance, and safety checks all pass. TXT is not supported. OCR is not integrated yet, so image-only PDFs fail with `OCR_NOT_SUPPORTED`. DOCX macro detection is a static structure check and is not a general malware scan.
+
+Success: `201 Created`
+
+```json
+{
+  "document_id": "uuid",
+  "document_type": "resume",
+  "original_filename": "resume.pdf",
+  "file_type": "pdf",
+  "file_size": 12345,
+  "parse_status": "completed",
+  "extracted_text": "...",
+  "error_message": ""
+}
+```
+
+### `POST /jds/upload`
+
+JD upload endpoint. JWT authentication is required. PDF and DOCX are allowed. After validation succeeds, extracted text is saved to `JobDescription.original_text`. For compatibility with current model choices, `input_method` remains `PDF` for file uploads.
+
+Request fields: `file` required, `company_name` optional, `position` optional.
+
+### `POST /resumes/upload`
+
+Resume upload endpoint. JWT authentication is required. PDF and DOCX are allowed. After validation succeeds, extracted text is saved to `ResumeMaster.original_text`.
+
+Request fields: `file` required, `name` optional.
+
+### Error Response
+
+```json
+{
+  "error_code": "DOCUMENT_TOO_SHORT",
+  "message": "????? ?? ??? ?? ????.",
+  "detail": "????? ?? ??? ?? ????.",
+  "code": "DOCUMENT_TOO_SHORT"
+}
+```
+
+| HTTP | error_code | description |
+| ---: | --- | --- |
+| 400 | `INVALID_FILE_TYPE` | Extension or MIME type is not allowed |
+| 400 | `INVALID_FILE_SIGNATURE` | Extension does not match actual file signature/structure |
+| 400 | `FILE_EMPTY` | Empty file |
+| 413 | `FILE_TOO_LARGE` | File exceeds 10MB |
+| 422 | `DOCUMENT_CORRUPTED` | File cannot be opened or parsed |
+| 422 | `DOCUMENT_ENCRYPTED` | Encrypted or password-protected PDF |
+| 422 | `DOCUMENT_MACRO_DETECTED` | DOCX macro detected |
+| 422 | `TEXT_EXTRACTION_FAILED` | Text extraction failed or DOCX has no text |
+| 422 | `DOCUMENT_TOO_SHORT` | Extracted text is below the minimum length |
+| 422 | `DOCUMENT_TYPE_MISMATCH` | Upload slot and actual document type do not match |
+| 422 | `DOCUMENT_NOT_RELEVANT` | Document is not usable for interview preparation |
+| 422 | `UNSAFE_DOCUMENT_CONTENT` | Prompt-injection-like or unsafe content detected |
+| 422 | `OCR_NOT_SUPPORTED` | OCR is required for image-only PDF but not supported yet |

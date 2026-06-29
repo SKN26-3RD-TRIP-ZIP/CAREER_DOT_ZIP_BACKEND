@@ -1,34 +1,18 @@
-from pathlib import Path
-
 from rest_framework import serializers
 
 from .models import UploadedDocument
-
-
-MAX_UPLOAD_SIZE = 10 * 1024 * 1024
-ALLOWED_FILE_TYPES = {'pdf', 'docx', 'txt'}
+from .services.document_guardrails import validate_upload_file
 
 
 class DocumentUploadSerializer(serializers.ModelSerializer):
-    file = serializers.FileField(write_only=True)
+    file = serializers.FileField(write_only=True, allow_empty_file=True)
 
     class Meta:
         model = UploadedDocument
         fields = ('file', 'document_type')
 
     def validate_file(self, value):
-        original_filename = Path(value.name).name
-        file_type = Path(original_filename).suffix.lower().lstrip('.')
-
-        if file_type not in ALLOWED_FILE_TYPES:
-            raise serializers.ValidationError('Only PDF, DOCX, and TXT files are allowed.')
-        if value.size > MAX_UPLOAD_SIZE:
-            raise serializers.ValidationError('File size must not exceed 10MB.')
-        if len(original_filename) > 255:
-            raise serializers.ValidationError('Filename must not exceed 255 characters.')
-
-        value.original_filename = original_filename
-        value.file_type = file_type
+        validate_upload_file(value)
         return value
 
     def create(self, validated_data):
@@ -40,6 +24,9 @@ class DocumentUploadSerializer(serializers.ModelSerializer):
             original_filename=uploaded_file.original_filename,
             file_type=uploaded_file.file_type,
             file_size=uploaded_file.size,
+            parse_status=validated_data.get('parse_status', 'pending'),
+            extracted_text=validated_data.get('extracted_text'),
+            error_message=validated_data.get('error_message', ''),
         )
 
 

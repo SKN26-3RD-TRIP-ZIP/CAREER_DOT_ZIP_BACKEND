@@ -15,7 +15,6 @@ class UploadedDocument(models.Model):
     FILE_TYPE_CHOICES = [
         ('pdf', 'PDF'),
         ('docx', 'DOCX'),
-        ('txt', 'TXT'),
     ]
     PARSE_STATUS_CHOICES = [
         ('pending', 'Pending'),
