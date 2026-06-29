@@ -134,3 +134,70 @@ Frontend 영향:
 Rollback:
 신규 FK/테이블 제거 전 참조 API 배포 롤백 필요
 ```
+
+## Talent Profile
+
+기존 JD 테이블명은 `input_jobdescription`이며 변경하지 않는다. 기존 `input_jobdescription.talent_profile`은 자유 텍스트 형태의 인재상/역량 요약으로 유지한다.
+
+```text
+talent_profile_categories
+- category_id BIGINT PK
+- category_code varchar(50) unique
+- category_name varchar(50)
+- short_description varchar(200)
+- detailed_description text null
+- display_order positive smallint
+- is_active boolean
+- created_at
+- updated_at
+```
+
+```text
+talent_profile_traits
+- trait_id BIGINT PK
+- category_id FK -> talent_profile_categories.category_id ON DELETE PROTECT
+- trait_code varchar(50) unique
+- trait_name varchar(50)
+- short_description varchar(250)
+- detailed_description text null
+- positive_signals json
+- negative_signals json
+- question_templates json
+- followup_templates json
+- evaluation_dimensions json
+- display_order positive smallint
+- is_active boolean
+- created_at
+- updated_at
+```
+
+```text
+jd_talent_profiles
+- jd_talent_profile_id UUID PK
+- jd_id OneToOne -> input_jobdescription.id ON DELETE CASCADE
+- source_type varchar(20): OFFICIAL, AI_EXTRACTED, USER_DEFINED, JOB_DEFAULT, HYBRID
+- source_text text null
+- custom_summary text null
+- confirmed_by_user boolean
+- confirmed_at datetime null
+- created_at
+- updated_at
+```
+
+```text
+jd_talent_profile_items
+- item_id UUID PK
+- jd_talent_profile_id FK -> jd_talent_profiles.jd_talent_profile_id ON DELETE CASCADE
+- trait_id FK -> talent_profile_traits.trait_id ON DELETE PROTECT
+- priority_order positive smallint
+- custom_description varchar(500)
+- created_at
+- updated_at
+
+constraints:
+- unique (jd_talent_profile_id, trait_id)
+- unique (jd_talent_profile_id, priority_order)
+- priority_order between 1 and 5
+```
+
+마스터 인재상은 실제 삭제 대신 `is_active=false`로 비활성화한다. 질문 생성에서 사용하는 최종 인재상 선택 우선순위는 `confirmed_by_user=true`인 `jd_talent_profiles`, 기존 `input_jobdescription.talent_profile`, 빈 값 순서다.

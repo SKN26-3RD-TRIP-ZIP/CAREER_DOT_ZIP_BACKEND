@@ -1,6 +1,10 @@
 from django.contrib import admin
 from .models import (
     JobDescription,
+    TalentProfileCategory,
+    TalentProfileTrait,
+    JDTalentProfile,
+    JDTalentProfileItem,
     ProjectExperience,
     CoverLetter,
     CoverLetterItem,
@@ -19,6 +23,37 @@ class JobDescriptionAdmin(admin.ModelAdmin):
     list_filter = ('input_method', 'analysis_status', 'created_at')
     search_fields = ('company_name', 'position', 'original_text')
     readonly_fields = ('created_at', 'updated_at')
+
+
+@admin.register(TalentProfileCategory)
+class TalentProfileCategoryAdmin(admin.ModelAdmin):
+    list_display = ('category_id', 'category_code', 'category_name', 'display_order', 'is_active')
+    list_filter = ('is_active',)
+    search_fields = ('category_code', 'category_name', 'short_description')
+    readonly_fields = ('created_at', 'updated_at')
+
+
+@admin.register(TalentProfileTrait)
+class TalentProfileTraitAdmin(admin.ModelAdmin):
+    list_display = ('trait_id', 'trait_code', 'trait_name', 'category', 'display_order', 'is_active')
+    list_filter = ('category', 'is_active')
+    search_fields = ('trait_code', 'trait_name', 'short_description')
+    readonly_fields = ('created_at', 'updated_at')
+
+
+class JDTalentProfileItemInline(admin.TabularInline):
+    model = JDTalentProfileItem
+    extra = 0
+    readonly_fields = ('created_at', 'updated_at')
+
+
+@admin.register(JDTalentProfile)
+class JDTalentProfileAdmin(admin.ModelAdmin):
+    list_display = ('jd_talent_profile_id', 'jd', 'source_type', 'confirmed_by_user', 'confirmed_at', 'updated_at')
+    list_filter = ('source_type', 'confirmed_by_user')
+    search_fields = ('jd__company_name', 'jd__position', 'custom_summary', 'source_text')
+    readonly_fields = ('created_at', 'updated_at')
+    inlines = [JDTalentProfileItemInline]
 
 
 @admin.register(UserProfile)

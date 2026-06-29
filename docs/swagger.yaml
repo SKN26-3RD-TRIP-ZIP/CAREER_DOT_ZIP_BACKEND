@@ -733,6 +733,69 @@ paths:
           description: OK
         '503':
           description: Degraded
+  /talent-profiles/catalog:
+    get:
+      summary: Get active talent profile catalog
+      tags: [TalentProfile]
+      responses:
+        '200':
+          description: Active categories and traits ordered by display_order
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TalentProfileCatalogResponse'
+        '401':
+          description: Authentication required
+  /jds/{jd_id}/talent-profile:
+    get:
+      summary: Get selected talent profile for a JD
+      tags: [TalentProfile, JD]
+      parameters:
+        - in: path
+          name: jd_id
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Selected profile, or profile=null when not configured
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/JDTalentProfileResponse'
+                  - type: object
+                    properties:
+                      jd_id: { type: string, format: uuid }
+                      profile: { nullable: true }
+        '401': { description: Authentication required }
+        '404': { description: JD not found or not owned by user }
+    put:
+      summary: Replace selected talent profile for a JD
+      tags: [TalentProfile, JD]
+      parameters:
+        - in: path
+          name: jd_id
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/JDTalentProfileSaveRequest'
+      responses:
+        '200':
+          description: Saved selected profile
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JDTalentProfileResponse'
+        '400':
+          description: Validation error
+        '401':
+          description: Authentication required
+        '404':
+          description: JD not found or not owned by user
 components:
   schemas:
     SignupRequest:
@@ -1012,3 +1075,76 @@ components:
         description: { type: string }
         status: { type: string, enum: [TODO, IN_PROGRESS, DONE] }
         source_tag: { type: string }
+    TalentProfileTraitCatalog:
+      type: object
+      properties:
+        trait_id: { type: integer }
+        trait_code: { type: string }
+        trait_name: { type: string }
+        short_description: { type: string }
+        display_order: { type: integer }
+    TalentProfileCategoryCatalog:
+      type: object
+      properties:
+        category_id: { type: integer }
+        category_code: { type: string }
+        category_name: { type: string }
+        short_description: { type: string }
+        display_order: { type: integer }
+        traits:
+          type: array
+          items:
+            $ref: '#/components/schemas/TalentProfileTraitCatalog'
+    TalentProfileCatalogResponse:
+      type: object
+      properties:
+        categories:
+          type: array
+          items:
+            $ref: '#/components/schemas/TalentProfileCategoryCatalog'
+    JDTalentProfileItemSave:
+      type: object
+      required: [trait_code, priority_order]
+      properties:
+        trait_code: { type: string }
+        priority_order: { type: integer, minimum: 1, maximum: 5 }
+        custom_description: { type: string, maxLength: 500 }
+    JDTalentProfileSaveRequest:
+      type: object
+      required: [source_type, confirmed_by_user, items]
+      properties:
+        source_type:
+          type: string
+          enum: [OFFICIAL, AI_EXTRACTED, USER_DEFINED, JOB_DEFAULT, HYBRID]
+        source_text: { type: string, nullable: true }
+        custom_summary: { type: string, nullable: true }
+        confirmed_by_user: { type: boolean }
+        items:
+          type: array
+          minItems: 1
+          maxItems: 5
+          items:
+            $ref: '#/components/schemas/JDTalentProfileItemSave'
+    JDTalentProfileItemResponse:
+      type: object
+      properties:
+        trait_id: { type: integer }
+        trait_code: { type: string }
+        trait_name: { type: string }
+        category_code: { type: string }
+        category_name: { type: string }
+        priority_order: { type: integer }
+        custom_description: { type: string }
+    JDTalentProfileResponse:
+      type: object
+      properties:
+        jd_id: { type: string, format: uuid }
+        source_type: { type: string }
+        source_text: { type: string, nullable: true }
+        custom_summary: { type: string, nullable: true }
+        confirmed_by_user: { type: boolean }
+        confirmed_at: { type: string, format: date-time, nullable: true }
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/JDTalentProfileItemResponse'

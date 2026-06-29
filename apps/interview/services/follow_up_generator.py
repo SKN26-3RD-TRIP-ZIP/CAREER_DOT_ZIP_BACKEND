@@ -7,6 +7,7 @@ from django.db import transaction
 from django.db.models import Max, Q
 
 from apps.evaluation.models import AnswerWeaknessTag, WeaknessTag
+from apps.input.services.talent_profile_service import resolve_effective_talent_profile
 from apps.interview.ai_chain_contracts import (
     NextAction,
 )
@@ -273,6 +274,7 @@ def _build_document_context(answer):
 
     jd = session.jd
     if jd is not None:
+        effective_talent_profile = resolve_effective_talent_profile(jd)
         context_parts.extend(
             (
                 jd.company_name,
@@ -280,6 +282,9 @@ def _build_document_context(answer):
                 jd.original_text,
                 jd.company_summary,
                 jd.talent_profile,
+                effective_talent_profile.get("summary"),
+                effective_talent_profile.get("prompt_notice"),
+                effective_talent_profile.get("items"),
                 jd.job_requirements,
                 jd.keywords,
             )
