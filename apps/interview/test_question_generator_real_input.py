@@ -13,10 +13,14 @@ from apps.input.models import (
     CoverLetter,
     CoverLetterItem,
     JobDescription,
+    JDTalentProfile,
+    JDTalentProfileItem,
     ProjectExperience,
     ResumeCareer,
     ResumeMaster,
     ResumeSkill,
+    TalentProfileCategory,
+    TalentProfileTrait,
 )
 from apps.interview.models import InterviewQuestion, InterviewSession, QuestionSourceTag
 from apps.interview.services.question_generator import (
@@ -405,6 +409,94 @@ class InterviewQuestionGeneratorRealInputTest(TestCase):
         metadata = json.loads(metadata_tag['source_text_excerpt'])
         self.assertTrue(metadata['github_readme_context_included'])
         self.assertTrue(metadata['project_deepdive_enabled'])
+
+    def test_confirmed_talent_profile_adds_generation_metadata_flags(self):
+        category = TalentProfileCategory.objects.create(
+            category_code='TEST_WORK_STYLE',
+            category_name='일하는 방식',
+            short_description='업무 수행 방식',
+            display_order=1,
+        )
+        ownership = TalentProfileTrait.objects.create(
+            category=category,
+            trait_code='TEST_OWNERSHIP',
+            trait_name='주도성',
+            short_description='문제를 주도적으로 정의하고 해결합니다.',
+            detailed_description='프로젝트와 기술 선택에서 주도적으로 판단한 근거를 확인합니다.',
+            display_order=1,
+        )
+        collaboration = TalentProfileTrait.objects.create(
+            category=category,
+            trait_code='TEST_COLLABORATION',
+            trait_name='협업',
+            short_description='동료와 효과적으로 협업합니다.',
+            detailed_description='협업 상황에서의 조율과 커뮤니케이션을 확인합니다.',
+            display_order=2,
+        )
+        profile = JDTalentProfile.objects.create(
+            jd=self.jd,
+            source_type=JDTalentProfile.SOURCE_TYPE_USER_DEFINED,
+            custom_summary='사용자가 확정한 JD 인재상',
+            confirmed_by_user=True,
+        )
+        JDTalentProfileItem.objects.create(
+            jd_talent_profile=profile,
+            trait=collaboration,
+            priority_order=2,
+        )
+        JDTalentProfileItem.objects.create(
+            jd_talent_profile=profile,
+            trait=ownership,
+            priority_order=1,
+        )
+        ai_result = {
+            'session_id': str(self.session.id),
+            'generation_source': 'openai',
+            'questions': [
+                {
+                    'client_question_key': 'q_talent',
+                    'question_text': '프로젝트에서 주도성이 드러난 기술 선택 사례를 설명해주세요.',
+                    'question_type': 'main',
+                    'question_category': 'personality',
+                    'order_index': 1,
+                    'source_tags': [
+                        {
+                            'source_type': 'jd',
+                            'source_label': 'effective_talent_profile',
+                            'source_text_excerpt': 'TEST_OWNERSHIP',
+                        }
+                    ],
+                }
+            ],
+        }
+
+        with patch('apps.interview.services.question_generator.InterviewAIChainService') as service_class, \
+                patch('apps.interview.services.question_generator.select_questions_for_session') as selector:
+            service = service_class.return_value
+            service.generate_questions.return_value = ai_result
+            selector.return_value = []
+
+            questions = generate_interview_questions(self.session)
+
+        payload = service.generate_questions.call_args.args[0]
+        talent_profile = payload['input_sources']['job_description']['effective_talent_profile']
+        self.assertTrue(talent_profile['confirmed_by_user'])
+        self.assertEqual(
+            [item['trait_code'] for item in talent_profile['items']],
+            ['TEST_OWNERSHIP', 'TEST_COLLABORATION'],
+        )
+        self.assertIn(
+            '면접 연습',
+            payload['input_sources']['job_description']['talent_profile_prompt_notice'],
+        )
+
+        metadata_tag = next(
+            tag for tag in questions[0]['source_tags']
+            if tag['source_label'] == 'generation_metadata'
+        )
+        metadata = json.loads(metadata_tag['source_text_excerpt'])
+        self.assertTrue(metadata['talent_profile_included'])
+        self.assertTrue(metadata['talent_profile_confirmed_by_user'])
 
     def test_ai_question_prompt_metadata_is_added_to_source_tags(self):
         ai_result = {

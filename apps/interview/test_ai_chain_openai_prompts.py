@@ -92,3 +92,13 @@ class AIChainOpenAIPromptsTest(SimpleTestCase):
         self.assertIn("project_experience", prompt)
         self.assertIn("general", prompt)
         self.assertIn("general만", prompt)
+
+    def test_question_generation_system_prompt_guides_talent_profile_usage(self):
+        prompt = build_question_generation_system_prompt()
+
+        self.assertIn("effective_talent_profile", prompt)
+        self.assertIn("confirmed_by_user", prompt)
+        self.assertIn("priority_order", prompt)
+        self.assertIn("talent_profile_prompt_notice", prompt)
+        self.assertIn("source_label='effective_talent_profile'", prompt)
+        self.assertIn("source_label='talent_profile'", prompt)
