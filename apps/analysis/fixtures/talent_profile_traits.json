@@ -1,0 +1,578 @@
+[
+  {
+    "model": "analysis.talentprofiletrait",
+    "pk": 1,
+    "fields": {
+      "category": 1,
+      "trait_code": "OWNERSHIP",
+      "trait_name": "주도성",
+      "short_description": "지시를 기다리지 않고 필요한 문제를 스스로 발견해 행동하는 역량",
+      "detailed_description": "",
+      "positive_signals": ["문제를 선제적으로 발견함", "자발적으로 해결안을 제안함", "행동 결과를 확인함"],
+      "negative_signals": ["지시받은 업무만 설명함", "본인의 판단 근거가 없음", "결과 확인 없이 행동에서 끝남"],
+      "question_templates": ["요청받지 않았지만 필요하다고 판단해 먼저 행동한 경험을 설명해주세요."],
+      "followup_templates": ["그 행동이 필요하다고 판단한 근거는 무엇이었나요?", "행동하기 전에 어떤 위험을 고려했나요?"],
+      "evaluation_dimensions": ["problem_awareness", "self_initiated_action", "result", "reflection"],
+      "display_order": 1,
+      "is_active": true
+    }
+  },
+  {
+    "model": "analysis.talentprofiletrait",
+    "pk": 2,
+    "fields": {
+      "category": 1,
+      "trait_code": "EXECUTION",
+      "trait_name": "실행력",
+      "short_description": "계획과 아이디어를 실제 행동과 결과로 빠르게 연결하는 역량",
+      "detailed_description": "",
+      "positive_signals": ["구체적인 실행 단계를 설명함", "완수한 결과가 명확함", "속도와 완성도를 균형 있게 조율함"],
+      "negative_signals": ["계획만 언급하고 실행 과정이 없음", "결과가 불분명함"],
+      "question_templates": ["계획한 일을 빠르게 실행에 옮긴 경험을 설명해주세요."],
+      "followup_templates": ["실행 과정에서 가장 어려웠던 점은 무엇이었나요?"],
+      "evaluation_dimensions": ["execution_speed", "completion", "result"],
+      "display_order": 2,
+      "is_active": true
+    }
+  },
+  {
+    "model": "analysis.talentprofiletrait",
+    "pk": 3,
+    "fields": {
+      "category": 1,
+      "trait_code": "RESPONSIBILITY",
+      "trait_name": "책임감",
+      "short_description": "맡은 일을 끝까지 수행하고 문제 발생 후에도 후속 대응하는 태도",
+      "detailed_description": "",
+      "positive_signals": ["문제 발생 후 후속 조치를 설명함", "책임 범위를 명확히 인식함"],
+      "negative_signals": ["문제 발생 시 책임을 회피함", "후속 대응이 없음"],
+      "question_templates": ["맡은 일이 예상대로 되지 않았을 때 어떻게 대응했나요?"],
+      "followup_templates": ["그 경험에서 무엇을 배웠나요?"],
+      "evaluation_dimensions": ["accountability", "follow_through", "reflection"],
+      "display_order": 3,
+      "is_active": true
+    }
+  },
+  {
+    "model": "analysis.talentprofiletrait",
+    "pk": 4,
+    "fields": {
+      "category": 1,
+      "trait_code": "RESULT_ORIENTED",
+      "trait_name": "성과 지향",
+      "short_description": "수행 과정뿐 아니라 측정 가능한 결과와 변화를 중시하는 태도",
+      "detailed_description": "",
+      "positive_signals": ["수치나 지표로 결과를 표현함", "성과의 변화를 설명함"],
+      "negative_signals": ["노력만 강조하고 결과가 없음", "측정 기준이 없음"],
+      "question_templates": ["본인이 만들어낸 가장 의미 있는 성과를 수치로 설명해주세요."],
+      "followup_templates": ["그 성과를 만들기 위해 무엇을 희생하거나 조율했나요?"],
+      "evaluation_dimensions": ["measurable_result", "impact", "reflection"],
+      "display_order": 4,
+      "is_active": true
+    }
+  },
+  {
+    "model": "analysis.talentprofiletrait",
+    "pk": 5,
+    "fields": {
+      "category": 2,
+      "trait_code": "PROBLEM_SOLVING",
+      "trait_name": "문제해결",
+      "short_description": "문제의 원인을 분석하고 적합한 해결 방법을 도출하는 역량",
+      "detailed_description": "",
+      "positive_signals": ["원인 분석 과정이 구체적임", "여러 해결 방법을 검토함"],
+      "negative_signals": ["원인 분석 없이 결론을 말함", "해결 방법 선택 근거가 없음"],
+      "question_templates": ["복잡한 문제를 해결한 경험을 원인 분석부터 설명해주세요."],
+      "followup_templates": ["다른 해결 방법도 검토했나요? 왜 그 방법을 선택했나요?"],
+      "evaluation_dimensions": ["problem_definition", "root_cause", "solution_selection", "result"],
+      "display_order": 5,
+      "is_active": true
+    }
+  },
+  {
+    "model": "analysis.talentprofiletrait",
+    "pk": 6,
+    "fields": {
+      "category": 2,
+      "trait_code": "LOGICAL_THINKING",
+      "trait_name": "논리적 사고",
+      "short_description": "근거와 구조를 바탕으로 일관된 판단과 설명을 만드는 역량",
+      "detailed_description": "",
+      "positive_signals": ["주장에 근거가 있음", "논리 구조가 일관됨"],
+      "negative_signals": ["근거 없이 주장함", "앞뒤가 맞지 않음"],
+      "question_templates": ["상반된 의견이 있었을 때 본인의 주장을 어떻게 설득했나요?"],
+      "followup_templates": ["상대방의 반박에 어떻게 대응했나요?"],
+      "evaluation_dimensions": ["evidence", "structure", "consistency"],
+      "display_order": 6,
+      "is_active": true
+    }
+  },
+  {
+    "model": "analysis.talentprofiletrait",
+    "pk": 7,
+    "fields": {
+      "category": 2,
+      "trait_code": "DATA_DRIVEN",
+      "trait_name": "데이터 기반",
+      "short_description": "개인의 감보다 데이터와 관찰 결과를 활용해 판단하는 역량",
+      "detailed_description": "",
+      "positive_signals": ["데이터를 수집하고 해석함", "데이터 기반으로 의사결정함"],
+      "negative_signals": ["직관에만 의존함", "데이터 출처가 없음"],
+      "question_templates": ["데이터를 활용해 의사결정한 경험을 설명해주세요."],
+      "followup_templates": ["데이터가 없었다면 어떻게 판단했을 것 같나요?"],
+      "evaluation_dimensions": ["data_collection", "interpretation", "decision"],
+      "display_order": 7,
+      "is_active": true
+    }
+  },
+  {
+    "model": "analysis.talentprofiletrait",
+    "pk": 8,
+    "fields": {
+      "category": 2,
+      "trait_code": "DECISION_MAKING",
+      "trait_name": "의사결정",
+      "short_description": "제한된 정보 안에서도 기준과 위험을 고려해 선택하는 역량",
+      "detailed_description": "",
+      "positive_signals": ["판단 기준을 명확히 설명함", "위험을 고려한 흔적이 있음"],
+      "negative_signals": ["판단 기준이 없음", "위험을 고려하지 않음"],
+      "question_templates": ["불확실한 상황에서 중요한 결정을 내린 경험을 설명해주세요."],
+      "followup_templates": ["그 결정이 틀렸다면 어떻게 대응했을 것 같나요?"],
+      "evaluation_dimensions": ["criteria", "risk_consideration", "outcome"],
+      "display_order": 8,
+      "is_active": true
+    }
+  },
+  {
+    "model": "analysis.talentprofiletrait",
+    "pk": 9,
+    "fields": {
+      "category": 3,
+      "trait_code": "COLLABORATION",
+      "trait_name": "협업",
+      "short_description": "공동 목표를 위해 역할과 정보를 공유하며 함께 결과를 만드는 역량",
+      "detailed_description": "",
+      "positive_signals": ["역할 분담 과정을 설명함", "공동 결과를 강조함"],
+      "negative_signals": ["개인 성과만 설명함", "팀원과의 상호작용이 없음"],
+      "question_templates": ["팀 프로젝트에서 갈등 없이 협업을 성공적으로 이끈 경험을 설명해주세요."],
+      "followup_templates": ["팀원과 의견이 달랐을 때 어떻게 해결했나요?"],
+      "evaluation_dimensions": ["role_sharing", "communication", "joint_result"],
+      "display_order": 9,
+      "is_active": true
+    }
+  },
+  {
+    "model": "analysis.talentprofiletrait",
+    "pk": 10,
+    "fields": {
+      "category": 3,
+      "trait_code": "COMMUNICATION",
+      "trait_name": "의사소통",
+      "short_description": "상대의 상황에 맞게 정보를 명확히 전달하고 이해를 확인하는 역량",
+      "detailed_description": "",
+      "positive_signals": ["상대 수준에 맞게 설명함", "이해 여부를 확인함"],
+      "negative_signals": ["일방적으로 전달함", "상대 반응을 확인하지 않음"],
+      "question_templates": ["복잡한 내용을 비전공자에게 설명해야 했던 경험을 설명해주세요."],
+      "followup_templates": ["상대방이 이해했는지 어떻게 확인했나요?"],
+      "evaluation_dimensions": ["clarity", "audience_awareness", "confirmation"],
+      "display_order": 10,
+      "is_active": true
+    }
+  },
+  {
+    "model": "analysis.talentprofiletrait",
+    "pk": 11,
+    "fields": {
+      "category": 3,
+      "trait_code": "CONFLICT_MANAGEMENT",
+      "trait_name": "갈등 조정",
+      "short_description": "의견 충돌의 원인을 파악하고 합리적인 합의를 만드는 역량",
+      "detailed_description": "",
+      "positive_signals": ["갈등 원인을 구체적으로 파악함", "합의 과정을 설명함"],
+      "negative_signals": ["갈등을 회피함", "일방적으로 해결함"],
+      "question_templates": ["팀 내 갈등 상황에서 합의를 이끌어낸 경험을 설명해주세요."],
+      "followup_templates": ["합의 후 관계가 어떻게 변했나요?"],
+      "evaluation_dimensions": ["conflict_identification", "mediation", "resolution"],
+      "display_order": 11,
+      "is_active": true
+    }
+  },
+  {
+    "model": "analysis.talentprofiletrait",
+    "pk": 12,
+    "fields": {
+      "category": 3,
+      "trait_code": "FEEDBACK_RECEPTIVE",
+      "trait_name": "피드백 수용",
+      "short_description": "피드백을 방어하지 않고 행동 개선과 결과에 반영하는 태도",
+      "detailed_description": "",
+      "positive_signals": ["피드백을 수용한 과정을 설명함", "개선 결과가 있음"],
+      "negative_signals": ["피드백을 방어함", "개선 행동이 없음"],
+      "question_templates": ["받은 피드백을 실제 행동 변화로 연결한 경험을 설명해주세요."],
+      "followup_templates": ["처음에 그 피드백에 동의했나요? 어떻게 받아들였나요?"],
+      "evaluation_dimensions": ["receptiveness", "action", "result"],
+      "display_order": 12,
+      "is_active": true
+    }
+  },
+  {
+    "model": "analysis.talentprofiletrait",
+    "pk": 13,
+    "fields": {
+      "category": 4,
+      "trait_code": "LEARNING_AGILITY",
+      "trait_name": "학습 민첩성",
+      "short_description": "새로운 지식과 기술을 빠르게 학습해 실제 상황에 적용하는 역량",
+      "detailed_description": "",
+      "positive_signals": ["학습 후 실제 적용까지 연결함", "빠른 학습 과정을 설명함"],
+      "negative_signals": ["학습만 했고 적용이 없음", "학습 속도가 느림을 인정하지 않음"],
+      "question_templates": ["처음 접하는 기술이나 도메인을 빠르게 익혀 적용한 경험을 설명해주세요."],
+      "followup_templates": ["그 기술을 배우는 데 얼마나 걸렸나요? 어떻게 배웠나요?"],
+      "evaluation_dimensions": ["learning_speed", "application", "result"],
+      "display_order": 13,
+      "is_active": true
+    }
+  },
+  {
+    "model": "analysis.talentprofiletrait",
+    "pk": 14,
+    "fields": {
+      "category": 4,
+      "trait_code": "ADAPTABILITY",
+      "trait_name": "적응력",
+      "short_description": "환경과 요구사항 변화에 맞게 계획과 행동을 유연하게 조정하는 역량",
+      "detailed_description": "",
+      "positive_signals": ["변화에 맞게 계획을 수정함", "유연한 대응 과정을 설명함"],
+      "negative_signals": ["변화를 거부함", "원래 계획만 고수함"],
+      "question_templates": ["계획이 크게 바뀐 상황에서 어떻게 대응했나요?"],
+      "followup_templates": ["그 변화가 결과에 어떤 영향을 미쳤나요?"],
+      "evaluation_dimensions": ["flexibility", "adjustment", "outcome"],
+      "display_order": 14,
+      "is_active": true
+    }
+  },
+  {
+    "model": "analysis.talentprofiletrait",
+    "pk": 15,
+    "fields": {
+      "category": 4,
+      "trait_code": "CHALLENGE",
+      "trait_name": "도전정신",
+      "short_description": "익숙하지 않거나 어려운 목표에도 위험을 관리하며 시도하는 태도",
+      "detailed_description": "",
+      "positive_signals": ["어려운 목표를 선택한 이유가 있음", "위험을 인식하고 시도함"],
+      "negative_signals": ["쉬운 길만 선택함", "도전 이유가 없음"],
+      "question_templates": ["실패할 수도 있다는 걸 알면서도 도전한 경험을 설명해주세요."],
+      "followup_templates": ["실패했다면 어떻게 했을 것 같나요?"],
+      "evaluation_dimensions": ["goal_selection", "risk_awareness", "attempt", "reflection"],
+      "display_order": 15,
+      "is_active": true
+    }
+  },
+  {
+    "model": "analysis.talentprofiletrait",
+    "pk": 16,
+    "fields": {
+      "category": 4,
+      "trait_code": "SELF_DEVELOPMENT",
+      "trait_name": "자기개발",
+      "short_description": "자신의 부족한 점을 파악하고 지속적으로 보완하는 태도",
+      "detailed_description": "",
+      "positive_signals": ["약점을 스스로 인식함", "보완 행동이 구체적임"],
+      "negative_signals": ["약점을 인정하지 않음", "보완 계획만 말함"],
+      "question_templates": ["스스로 부족하다고 느낀 부분을 어떻게 보완했나요?"],
+      "followup_templates": ["지금도 계속하고 있나요?"],
+      "evaluation_dimensions": ["self_awareness", "action", "continuity"],
+      "display_order": 16,
+      "is_active": true
+    }
+  },
+  {
+    "model": "analysis.talentprofiletrait",
+    "pk": 17,
+    "fields": {
+      "category": 5,
+      "trait_code": "CUSTOMER_FOCUS",
+      "trait_name": "고객 중심",
+      "short_description": "업무 편의보다 사용자의 실제 문제와 경험을 우선하는 태도",
+      "detailed_description": "",
+      "positive_signals": ["사용자 문제를 먼저 파악함", "사용자 관점에서 해결책을 만듦"],
+      "negative_signals": ["내부 편의만 고려함", "사용자 피드백을 무시함"],
+      "question_templates": ["사용자 불편을 먼저 발견하고 개선한 경험을 설명해주세요."],
+      "followup_templates": ["사용자 의견은 어떻게 수집했나요?"],
+      "evaluation_dimensions": ["user_empathy", "problem_identification", "solution", "result"],
+      "display_order": 17,
+      "is_active": true
+    }
+  },
+  {
+    "model": "analysis.talentprofiletrait",
+    "pk": 18,
+    "fields": {
+      "category": 5,
+      "trait_code": "BUSINESS_UNDERSTANDING",
+      "trait_name": "사업 이해",
+      "short_description": "자신의 업무가 비용·수익·운영 등 사업에 미치는 영향을 이해하는 역량",
+      "detailed_description": "",
+      "positive_signals": ["업무와 비즈니스 연결을 설명함", "비용이나 수익 관점이 있음"],
+      "negative_signals": ["기술이나 기능만 설명함", "사업 영향을 고려하지 않음"],
+      "question_templates": ["본인의 업무가 회사 사업에 어떤 영향을 미쳤나요?"],
+      "followup_templates": ["그 영향을 어떻게 측정했나요?"],
+      "evaluation_dimensions": ["business_awareness", "impact_understanding", "communication"],
+      "display_order": 18,
+      "is_active": true
+    }
+  },
+  {
+    "model": "analysis.talentprofiletrait",
+    "pk": 19,
+    "fields": {
+      "category": 5,
+      "trait_code": "VALUE_CREATION",
+      "trait_name": "가치 창출",
+      "short_description": "업무 결과를 사용자나 조직의 실질적인 변화로 연결하는 역량",
+      "detailed_description": "",
+      "positive_signals": ["변화나 개선 결과를 구체적으로 설명함", "이해관계자에게 미친 영향이 있음"],
+      "negative_signals": ["산출물만 나열함", "변화나 영향이 없음"],
+      "question_templates": ["본인이 만든 결과물이 실제로 어떤 가치를 만들었나요?"],
+      "followup_templates": ["그 가치를 어떻게 확인했나요?"],
+      "evaluation_dimensions": ["output", "value", "stakeholder_impact"],
+      "display_order": 19,
+      "is_active": true
+    }
+  },
+  {
+    "model": "analysis.talentprofiletrait",
+    "pk": 20,
+    "fields": {
+      "category": 5,
+      "trait_code": "PRIORITIZATION",
+      "trait_name": "우선순위 판단",
+      "short_description": "제한된 자원 안에서 영향도와 긴급도를 기준으로 순서를 정하는 역량",
+      "detailed_description": "",
+      "positive_signals": ["우선순위 기준을 설명함", "선택과 집중을 실행함"],
+      "negative_signals": ["모든 일을 동시에 하려 함", "우선순위 기준이 없음"],
+      "question_templates": ["해야 할 일이 많은 상황에서 어떻게 우선순위를 정했나요?"],
+      "followup_templates": ["포기한 일이 있었나요? 어떻게 결정했나요?"],
+      "evaluation_dimensions": ["criteria", "trade_off", "execution"],
+      "display_order": 20,
+      "is_active": true
+    }
+  },
+  {
+    "model": "analysis.talentprofiletrait",
+    "pk": 21,
+    "fields": {
+      "category": 6,
+      "trait_code": "TECHNICAL_EXPERTISE",
+      "trait_name": "기술 전문성",
+      "short_description": "직무에 필요한 기술을 이해하고 상황에 맞게 선택·적용하는 역량",
+      "detailed_description": "",
+      "positive_signals": ["기술 선택 이유를 설명함", "트레이드오프를 이해함"],
+      "negative_signals": ["기술 이름만 나열함", "선택 이유가 없음"],
+      "question_templates": ["기술 선택 시 여러 옵션을 비교하고 결정한 경험을 설명해주세요."],
+      "followup_templates": ["다른 기술을 선택했다면 어떤 결과가 있었을까요?"],
+      "evaluation_dimensions": ["knowledge_depth", "selection_rationale", "application"],
+      "display_order": 21,
+      "is_active": true
+    }
+  },
+  {
+    "model": "analysis.talentprofiletrait",
+    "pk": 22,
+    "fields": {
+      "category": 6,
+      "trait_code": "QUALITY_FOCUS",
+      "trait_name": "품질 지향",
+      "short_description": "기능 구현뿐 아니라 안정성·완성도·유지보수성을 고려하는 태도",
+      "detailed_description": "",
+      "positive_signals": ["테스트나 예외처리를 설명함", "유지보수를 고려함"],
+      "negative_signals": ["기능 동작만 확인함", "품질 기준이 없음"],
+      "question_templates": ["품질을 높이기 위해 추가로 노력한 경험을 설명해주세요."],
+      "followup_templates": ["그 노력이 실제로 어떤 효과를 냈나요?"],
+      "evaluation_dimensions": ["quality_criteria", "action", "result"],
+      "display_order": 22,
+      "is_active": true
+    }
+  },
+  {
+    "model": "analysis.talentprofiletrait",
+    "pk": 23,
+    "fields": {
+      "category": 6,
+      "trait_code": "SECURITY_AWARENESS",
+      "trait_name": "보안 의식",
+      "short_description": "개인정보·권한·인증정보와 시스템 위험을 사전에 고려하는 태도",
+      "detailed_description": "",
+      "positive_signals": ["보안 위협을 사전에 고려함", "개인정보 처리를 신중하게 함"],
+      "negative_signals": ["보안을 후순위로 둠", "보안 사고 후 대응만 함"],
+      "question_templates": ["개인정보나 보안을 고려해 설계하거나 처리한 경험을 설명해주세요."],
+      "followup_templates": ["보안 요구사항이 기능 개발과 충돌했을 때 어떻게 했나요?"],
+      "evaluation_dimensions": ["threat_awareness", "preventive_action", "compliance"],
+      "display_order": 23,
+      "is_active": true
+    }
+  },
+  {
+    "model": "analysis.talentprofiletrait",
+    "pk": 24,
+    "fields": {
+      "category": 6,
+      "trait_code": "DOCUMENTATION",
+      "trait_name": "문서화",
+      "short_description": "지식과 의사결정 과정을 다른 구성원이 활용할 수 있게 기록하는 태도",
+      "detailed_description": "",
+      "positive_signals": ["문서화 이유와 효과를 설명함", "다른 사람이 활용한 사례가 있음"],
+      "negative_signals": ["본인만 알 수 있는 문서를 작성함", "문서화를 하지 않음"],
+      "question_templates": ["작성한 문서가 실제로 팀에 도움이 된 경험을 설명해주세요."],
+      "followup_templates": ["문서화하지 않아서 문제가 생긴 경험도 있나요?"],
+      "evaluation_dimensions": ["documentation_habit", "usability", "team_impact"],
+      "display_order": 24,
+      "is_active": true
+    }
+  },
+  {
+    "model": "analysis.talentprofiletrait",
+    "pk": 25,
+    "fields": {
+      "category": 7,
+      "trait_code": "LEADERSHIP",
+      "trait_name": "리더십",
+      "short_description": "목표와 방향을 제시하고 구성원이 성과를 낼 수 있도록 지원하는 역량",
+      "detailed_description": "",
+      "positive_signals": ["방향을 제시한 과정을 설명함", "구성원 성과를 지원함"],
+      "negative_signals": ["지시만 함", "구성원 성장에 무관심함"],
+      "question_templates": ["팀이나 프로젝트를 리드한 경험에서 어떤 방식으로 방향을 제시했나요?"],
+      "followup_templates": ["구성원이 어려움을 겪을 때 어떻게 지원했나요?"],
+      "evaluation_dimensions": ["direction_setting", "member_support", "outcome"],
+      "display_order": 25,
+      "is_active": true
+    }
+  },
+  {
+    "model": "analysis.talentprofiletrait",
+    "pk": 26,
+    "fields": {
+      "category": 7,
+      "trait_code": "KNOWLEDGE_SHARING",
+      "trait_name": "지식 공유",
+      "short_description": "개인의 지식과 경험을 팀이 활용할 수 있는 형태로 공유하는 태도",
+      "detailed_description": "",
+      "positive_signals": ["지식을 공유한 구체적 방법이 있음", "팀이 활용한 사례가 있음"],
+      "negative_signals": ["지식을 혼자 보유함", "공유 방법이 없음"],
+      "question_templates": ["본인의 경험이나 지식을 팀과 공유해 도움이 된 경험을 설명해주세요."],
+      "followup_templates": ["공유하기 어려웠던 점은 없었나요?"],
+      "evaluation_dimensions": ["sharing_action", "format", "team_impact"],
+      "display_order": 26,
+      "is_active": true
+    }
+  },
+  {
+    "model": "analysis.talentprofiletrait",
+    "pk": 27,
+    "fields": {
+      "category": 7,
+      "trait_code": "MENTORING",
+      "trait_name": "동료 성장 지원",
+      "short_description": "동료가 스스로 문제를 해결하고 성장할 수 있도록 돕는 태도",
+      "detailed_description": "",
+      "positive_signals": ["동료 성장을 구체적으로 지원함", "스스로 해결하도록 유도함"],
+      "negative_signals": ["대신 해결해줌", "성장을 신경 쓰지 않음"],
+      "question_templates": ["동료가 어려움을 겪을 때 어떻게 도왔나요?"],
+      "followup_templates": ["그 동료가 스스로 해결했나요? 어떻게 됐나요?"],
+      "evaluation_dimensions": ["support_approach", "autonomy_support", "growth_result"],
+      "display_order": 27,
+      "is_active": true
+    }
+  },
+  {
+    "model": "analysis.talentprofiletrait",
+    "pk": 28,
+    "fields": {
+      "category": 7,
+      "trait_code": "ORGANIZATION_CONTRIBUTION",
+      "trait_name": "조직 개선",
+      "short_description": "개인 업무를 넘어 팀의 도구·절차·환경을 개선하는 태도",
+      "detailed_description": "",
+      "positive_signals": ["팀 프로세스를 개선한 사례가 있음", "구성원에게 긍정적 영향이 있음"],
+      "negative_signals": ["개인 업무 외에 관심이 없음", "제안만 하고 실행하지 않음"],
+      "question_templates": ["팀 전체에 도움이 된 프로세스나 환경을 개선한 경험을 설명해주세요."],
+      "followup_templates": ["그 개선이 팀에 어떤 변화를 가져왔나요?"],
+      "evaluation_dimensions": ["initiative", "improvement_action", "team_impact"],
+      "display_order": 28,
+      "is_active": true
+    }
+  },
+  {
+    "model": "analysis.talentprofiletrait",
+    "pk": 29,
+    "fields": {
+      "category": 8,
+      "trait_code": "INTEGRITY",
+      "trait_name": "정직성",
+      "short_description": "불리한 상황에서도 사실을 숨기거나 왜곡하지 않는 태도",
+      "detailed_description": "",
+      "positive_signals": ["불리한 사실도 솔직하게 공유함", "사실과 의견을 구분함"],
+      "negative_signals": ["불리한 사실을 숨김", "왜곡된 정보를 전달함"],
+      "question_templates": ["실수나 문제가 생겼을 때 어떻게 보고했나요?"],
+      "followup_templates": ["솔직하게 말하기 어려웠던 이유가 있었나요?"],
+      "evaluation_dimensions": ["honesty", "transparency", "consequence_acceptance"],
+      "display_order": 29,
+      "is_active": true
+    }
+  },
+  {
+    "model": "analysis.talentprofiletrait",
+    "pk": 30,
+    "fields": {
+      "category": 8,
+      "trait_code": "TRANSPARENCY",
+      "trait_name": "투명한 소통",
+      "short_description": "진행 상황과 위험을 적절한 시점에 숨김없이 공유하는 태도",
+      "detailed_description": "",
+      "positive_signals": ["진행 상황을 적시에 공유함", "위험을 미리 알림"],
+      "negative_signals": ["정보를 늦게 공유함", "위험을 숨김"],
+      "question_templates": ["프로젝트 진행 중 문제가 생겼을 때 언제, 어떻게 공유했나요?"],
+      "followup_templates": ["더 일찍 공유했다면 어떻게 됐을까요?"],
+      "evaluation_dimensions": ["timeliness", "completeness", "proactiveness"],
+      "display_order": 30,
+      "is_active": true
+    }
+  },
+  {
+    "model": "analysis.talentprofiletrait",
+    "pk": 31,
+    "fields": {
+      "category": 8,
+      "trait_code": "COMPLIANCE",
+      "trait_name": "규정 준수",
+      "short_description": "법적·윤리적 기준과 조직 정책을 이해하고 지키는 태도",
+      "detailed_description": "",
+      "positive_signals": ["규정을 이해하고 따름", "윤리적 판단을 내림"],
+      "negative_signals": ["규정을 모름", "편의 위주로 처리함"],
+      "question_templates": ["규정이나 정책을 지키기 위해 불편함을 감수한 경험을 설명해주세요."],
+      "followup_templates": ["팀원이 규정을 어기려 했다면 어떻게 했을 것 같나요?"],
+      "evaluation_dimensions": ["rule_awareness", "compliance_action", "ethical_judgment"],
+      "display_order": 31,
+      "is_active": true
+    }
+  },
+  {
+    "model": "analysis.talentprofiletrait",
+    "pk": 32,
+    "fields": {
+      "category": 8,
+      "trait_code": "RELIABILITY",
+      "trait_name": "신뢰성",
+      "short_description": "약속한 기준과 일정을 일관되게 지켜 예측 가능성을 만드는 태도",
+      "detailed_description": "",
+      "positive_signals": ["약속을 지킨 구체적 사례가 있음", "일정 관리 방법이 있음"],
+      "negative_signals": ["약속을 자주 어김", "일정 관리를 하지 않음"],
+      "question_templates": ["마감이 촉박한 상황에서 약속한 일정을 지킨 경험을 설명해주세요."],
+      "followup_templates": ["지키지 못할 것 같을 때 어떻게 했나요?"],
+      "evaluation_dimensions": ["commitment", "time_management", "predictability"],
+      "display_order": 32,
+      "is_active": true
+    }
+  }
+]

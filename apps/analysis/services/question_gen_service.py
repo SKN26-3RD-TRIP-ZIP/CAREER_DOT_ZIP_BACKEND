@@ -122,6 +122,13 @@ def generate_questions(
             "source": q.get("source", "project"),
             "basis":  q.get("basis", ""),
         })
+    for q in data.get("talent", []):
+        questions.append({
+            "type":   "talent",
+            "text":   q["text"],
+            "source": q.get("source", "combined"),
+            "basis":  q.get("basis", ""),
+        })
 
     return questions
 

@@ -45,6 +45,14 @@ class AnalysisSession(models.Model):
     ]
     status     = models.CharField(max_length=20, choices=STATUS_CHOICES, default="analyzing")
 
+    company_type = models.CharField(
+        max_length=10,
+        choices=[("large", "대기업"), ("sme", "중소기업")],
+        null=True, blank=True,
+    )
+    company_context          = models.TextField(null=True, blank=True)
+    selected_talent_keywords = models.JSONField(null=True, blank=True)
+
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -109,6 +117,7 @@ class GeneratedQuestion(models.Model):
         ("personality", "인성"),
         ("technical",   "기술·직무"),
         ("experience",  "경험 기반"),
+        ("talent",      "인재상"),
     ]
     question_type = models.CharField(max_length=20, choices=QUESTION_TYPES)
     question_text = models.TextField()
@@ -150,6 +159,46 @@ class GeneratedQuestion(models.Model):
 
     def __str__(self):
         return f"[{self.question_type}] {self.question_text[:40]}"
+
+
+# 인재상 모델은 input 앱이 소유 — 중복 정의 없이 re-export
+from apps.input.models import (  # noqa: E402
+    TalentProfileCategory,
+    TalentProfileTrait,
+    JDTalentProfile,
+    JDTalentProfileItem,
+)
+
+
+class ConglomerateCompany(models.Model):
+    """공정거래위원회 대기업집단 소속 계열사 목록. 대기업 판별용."""
+
+    group_name   = models.CharField(max_length=100)
+    company_name = models.CharField(max_length=100, db_index=True)
+    created_at   = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table     = "conglomerate_companies"
+        verbose_name = "대기업집단 계열사"
+
+    def __str__(self):
+        return f"[{self.group_name}] {self.company_name}"
+
+
+class IndustryTalentProfile(models.Model):
+    """대한상공회의소 기준 업종별 인재상. 중소기업 경로 fallback용."""
+
+    industry         = models.CharField(max_length=100, db_index=True)
+    talent_keywords  = models.JSONField()
+    description      = models.TextField(blank=True)
+    created_at       = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table     = "industry_talent_profiles"
+        verbose_name = "업종별 인재상"
+
+    def __str__(self):
+        return self.industry
 
 
 class QuestionFeedback(models.Model):
