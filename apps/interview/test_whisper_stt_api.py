@@ -7,9 +7,11 @@ from rest_framework import status
 from rest_framework.test import APITestCase
 
 from apps.interview.services.whisper_stt_service import (
+    STTAnswerQualityError,
     WhisperTranscription,
     build_stt_stats,
     transcribe_uploaded_audio,
+    validate_stt_answer_quality,
 )
 
 
@@ -111,14 +113,21 @@ class WhisperSTTServiceTests(APITestCase):
     @patch('apps.interview.services.whisper_stt_service.call_whisper')
     def test_temporary_file_is_removed_after_success(self, mock_call, mock_write, mock_exists, mock_remove):
         mock_call.return_value = WhisperTranscription(
-            text='테스트 답변',
-            words=[{'word': '테스트', 'start': 0.0, 'end': 0.5}],
-            duration=0.8,
+            text='테스트 답변입니다',
+            words=[
+                {'word': '테스트', 'start': 0.0, 'end': 0.7},
+                {'word': '답변입니다', 'start': 0.8, 'end': 1.5},
+            ],
+            duration=1.8,
         )
 
         transcribe_uploaded_audio(self.webm_file(), language='ko')
 
         mock_remove.assert_called_once()
+
+    def test_stt_answer_quality_rejects_short_answer(self):
+        with self.assertRaises(STTAnswerQualityError):
+            validate_stt_answer_quality('네', speech_duration=0.4)
 
     @patch('apps.interview.services.whisper_stt_service.os.remove')
     @patch('apps.interview.services.whisper_stt_service.os.path.exists', return_value=True)

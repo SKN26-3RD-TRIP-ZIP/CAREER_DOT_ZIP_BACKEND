@@ -15,6 +15,9 @@ SUPPORTED_AUDIO_TYPES = {
     'audio/webm',
     'audio/webm;codecs=opus',
 }
+MIN_STT_TEXT_CHARS = 5
+MIN_STT_WORD_COUNT = 2
+MIN_STT_SPEECH_DURATION_SEC = 1.0
 MIN_PAUSE_SEC = 0.5
 LONG_PAUSE_SEC = 3.0
 FILLER_WORDS = ('음', '어', '아')
@@ -42,6 +45,12 @@ class AudioTooLarge(APIException):
     default_code = 'audio_too_large'
 
 
+class STTAnswerQualityError(APIException):
+    status_code = status.HTTP_400_BAD_REQUEST
+    default_detail = 'Recorded answer is too short.'
+    default_code = 'stt_answer_too_short'
+
+
 @dataclass
 class WhisperTranscription:
     text: str
@@ -58,6 +67,10 @@ def transcribe_uploaded_audio(uploaded_file, *, language='ko'):
     try:
         transcription = call_whisper(temp_path, language=language)
         stats = build_stt_stats(transcription.words, transcription.duration)
+        validate_stt_answer_quality(
+            transcription.text,
+            speech_duration=stats['speech_duration'],
+        )
         processing_time_ms = round((time.perf_counter() - started_at) * 1000)
 
         # 프론트는 stt_text를 답변 저장에 쓰고, pause 지표는 평가/리포트 보조 데이터로 사용한다.
@@ -95,6 +108,55 @@ def validate_uploaded_audio(uploaded_file):
         raise ValidationError({'audio': 'Audio file is empty.'})
     if size > MAX_AUDIO_BYTES:
         raise AudioTooLarge()
+
+
+def count_stt_words(text):
+    return len([word for word in str(text or '').split() if word.strip()])
+
+
+def validate_stt_answer_quality(stt_text, *, speech_duration=None):
+    normalized_text = str(stt_text or '').strip()
+    text_length = len(normalized_text)
+    word_count = count_stt_words(normalized_text)
+    reasons = []
+
+    if not normalized_text:
+        reasons.append('empty_text')
+    if text_length < MIN_STT_TEXT_CHARS:
+        reasons.append('text_too_short')
+    if word_count < MIN_STT_WORD_COUNT:
+        reasons.append('word_count_too_low')
+
+    duration_value = None
+    if speech_duration is not None:
+        try:
+            duration_value = float(speech_duration)
+        except (TypeError, ValueError):
+            duration_value = None
+        if duration_value is not None and duration_value < MIN_STT_SPEECH_DURATION_SEC:
+            reasons.append('speech_duration_too_short')
+
+    if reasons:
+        raise STTAnswerQualityError(
+            {
+                'detail': '답변이 너무 짧아 다시 녹음이 필요합니다.',
+                'code': 'stt_answer_too_short',
+                'retryable': True,
+                'reasons': reasons,
+                'metrics': {
+                    'text_length': text_length,
+                    'word_count': word_count,
+                    'speech_duration': duration_value,
+                },
+                'minimums': {
+                    'text_length': MIN_STT_TEXT_CHARS,
+                    'word_count': MIN_STT_WORD_COUNT,
+                    'speech_duration': MIN_STT_SPEECH_DURATION_SEC,
+                },
+            }
+        )
+
+    return normalized_text
 
 
 def write_upload_to_tempfile(uploaded_file):

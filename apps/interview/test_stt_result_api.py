@@ -98,6 +98,19 @@ class MVPSTTResultUpdateAPITests(APITestCase):
 
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
 
+    def test_short_stt_text_returns_bad_request(self):
+        response = self.client.patch(
+            self.stt_url(),
+            {
+                'stt_text': '네',
+                'speech_duration': 0.4,
+            },
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(response.data['code'], 'stt_answer_too_short')
+
     def test_other_users_answer_returns_not_found(self):
         response = self.client.patch(
             self.stt_url(self.other_answer),
