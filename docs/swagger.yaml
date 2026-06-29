@@ -353,6 +353,113 @@ paths:
           description: Extraction failed; user should enter JD manually
         '504':
           description: Fetch timeout
+  /documents/upload:
+    post:
+      summary: Upload a PDF or DOCX document after guardrail validation
+      tags: [Document]
+      description: >
+        Requires JWT authentication. Accepts multipart/form-data with a PDF or DOCX file up to 10MB.
+        The server validates extension, MIME type, file signature, parseability, extracted text length,
+        document type relevance, and prompt-injection/noise signals before saving. TXT is not supported.
+        OCR and malware scanning engines are not integrated; image-only PDFs return OCR_NOT_SUPPORTED.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/DocumentUploadRequest'
+      responses:
+        '201':
+          description: Document saved only after all validations pass
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DocumentUploadResponse'
+        '400':
+          description: Invalid file type, MIME type, signature, empty file, or malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DocumentUploadErrorResponse'
+        '413':
+          description: File exceeds 10MB
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DocumentUploadErrorResponse'
+        '422':
+          description: Text extraction, document relevance/type, safety, encryption, corruption, OCR, or macro validation failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DocumentUploadErrorResponse'
+  /jds/upload:
+    post:
+      summary: Upload a JD PDF or DOCX and save it as a job description
+      tags: [JD, Document]
+      description: >
+        Requires JWT authentication. Uses the same PDF/DOCX guardrails as /documents/upload,
+        then saves JobDescription.original_text only after validation succeeds. input_method remains PDF
+        for backward compatibility with the current model choices. TXT is not supported.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/JDUploadRequest'
+      responses:
+        '201': { description: JD created from validated document text }
+        '400':
+          description: Invalid file type, MIME type, signature, empty file, or malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DocumentUploadErrorResponse'
+        '413':
+          description: File exceeds 10MB
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DocumentUploadErrorResponse'
+        '422':
+          description: Text extraction, document relevance/type, safety, encryption, corruption, OCR, or macro validation failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DocumentUploadErrorResponse'
+  /resumes/upload:
+    post:
+      summary: Upload a resume PDF or DOCX and save extracted text
+      tags: [Resume, Document]
+      description: >
+        Requires JWT authentication. Uses the same PDF/DOCX guardrails as /documents/upload,
+        then saves ResumeMaster.original_text only after validation succeeds. TXT is not supported.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/ResumeUploadRequest'
+      responses:
+        '201': { description: Resume created from validated document text }
+        '400':
+          description: Invalid file type, MIME type, signature, empty file, or malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DocumentUploadErrorResponse'
+        '413':
+          description: File exceeds 10MB
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DocumentUploadErrorResponse'
+        '422':
+          description: Text extraction, document relevance/type, safety, encryption, corruption, OCR, or macro validation failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DocumentUploadErrorResponse'
   /jds/ocr:
     post:
       summary: Extract JD text from PDF or image upload and save it as JD
@@ -856,6 +963,87 @@ components:
     ErrorResponse:
       type: object
       properties:
+        detail:
+          type: string
+        code:
+          type: string
+    DocumentUploadRequest:
+      type: object
+      required: [file, document_type]
+      properties:
+        file:
+          type: string
+          format: binary
+          description: PDF or DOCX only; maximum 10MB.
+        document_type:
+          type: string
+          enum: [resume, cover_letter, jd, portfolio, other]
+    JDUploadRequest:
+      type: object
+      required: [file]
+      properties:
+        file:
+          type: string
+          format: binary
+          description: JD PDF or DOCX only; maximum 10MB.
+        company_name:
+          type: string
+        position:
+          type: string
+    ResumeUploadRequest:
+      type: object
+      required: [file]
+      properties:
+        file:
+          type: string
+          format: binary
+          description: Resume PDF or DOCX only; maximum 10MB.
+        name:
+          type: string
+    DocumentUploadResponse:
+      type: object
+      properties:
+        document_id:
+          type: string
+          format: uuid
+        document_type:
+          type: string
+        original_filename:
+          type: string
+        file_type:
+          type: string
+          enum: [pdf, docx]
+        file_size:
+          type: integer
+        parse_status:
+          type: string
+          enum: [completed]
+        extracted_text:
+          type: string
+        error_message:
+          type: string
+    DocumentUploadErrorResponse:
+      type: object
+      required: [error_code, message]
+      properties:
+        error_code:
+          type: string
+          enum:
+            - INVALID_FILE_TYPE
+            - INVALID_FILE_SIGNATURE
+            - FILE_EMPTY
+            - FILE_TOO_LARGE
+            - DOCUMENT_CORRUPTED
+            - DOCUMENT_ENCRYPTED
+            - DOCUMENT_MACRO_DETECTED
+            - TEXT_EXTRACTION_FAILED
+            - DOCUMENT_TOO_SHORT
+            - DOCUMENT_TYPE_MISMATCH
+            - DOCUMENT_NOT_RELEVANT
+            - UNSAFE_DOCUMENT_CONTENT
+            - OCR_NOT_SUPPORTED
+        message:
+          type: string
         detail:
           type: string
         code:

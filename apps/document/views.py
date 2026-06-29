@@ -10,7 +10,11 @@ from .serializers import (
     DocumentListSerializer,
     DocumentUploadSerializer,
 )
-from .services.document_parser import extract_text_from_document
+from .services.document_guardrails import (
+    map_text_extraction_error,
+    validate_extracted_text,
+)
+from .services.document_parser import extract_text_from_file
 
 
 class DocumentUploadView(APIView):
@@ -24,24 +28,20 @@ class DocumentUploadView(APIView):
             context={'request': request},
         )
         serializer.is_valid(raise_exception=True)
-        document = serializer.save()
-
-        document.parse_status = 'processing'
-        document.save(update_fields=('parse_status', 'updated_at'))
+        uploaded_file = serializer.validated_data['file']
+        document_type = serializer.validated_data['document_type']
         try:
-            document.extracted_text = extract_text_from_document(document)
-            document.parse_status = 'completed'
-            document.error_message = ''
+            extracted_text = extract_text_from_file(uploaded_file, uploaded_file.file_type)
+            validate_extracted_text(extracted_text, document_type, uploaded_file.file_type)
         except Exception as exc:
-            document.parse_status = 'failed'
-            document.error_message = str(exc)
-        document.save(
-            update_fields=(
-                'parse_status',
-                'extracted_text',
-                'error_message',
-                'updated_at',
-            )
+            if hasattr(exc, 'status_code') and hasattr(exc, 'detail'):
+                raise
+            raise map_text_extraction_error(exc) from exc
+
+        document = serializer.save(
+            parse_status='completed',
+            extracted_text=extracted_text,
+            error_message='',
         )
 
         return Response(

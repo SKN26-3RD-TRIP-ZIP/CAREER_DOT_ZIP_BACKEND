@@ -8,6 +8,12 @@ from rest_framework.parsers import MultiPartParser, FormParser
 from django.utils import timezone
 from django.db import transaction
 
+from apps.document.services.document_guardrails import (
+    DocumentUploadError,
+    map_text_extraction_error,
+    validate_extracted_text,
+    validate_upload_file,
+)
 from apps.document.services.document_parser import extract_text_from_file
 from apps.accounts.services.points import apply_point_policy
 from .services.jd_url_analyzer import JDURLAnalysisError, analyze_job_url
@@ -56,10 +62,6 @@ from .serializers import (
 )
 
 
-UPLOAD_MAX_SIZE = 10 * 1024 * 1024  # 10MB
-UPLOAD_ALLOWED_TYPES = {'pdf', 'docx'}
-
-
 def _reward_first_saved_item(*, user, reason_code, reference_id):
     try:
         apply_point_policy(
@@ -86,38 +88,20 @@ def _existing_order_fields(model, *field_names):
     return order_fields
 
 
-def _validate_upload(file_obj, allowed_types=None):
-    """업로드 파일 공통 검증. 통과 시 (file_type, filename) 반환, 실패 시 ValueError(메시지)."""
-    allowed_types = allowed_types or UPLOAD_ALLOWED_TYPES
-    if file_obj is None:
-        raise ValueError('파일이 필요합니다.')
-    filename = Path(file_obj.name).name
-    file_type = Path(filename).suffix.lower().lstrip('.')
-    if file_type not in allowed_types:
-        if allowed_types == {'pdf'}:
-            raise ValueError('PDF 파일만 업로드할 수 있습니다.')
-        raise ValueError('PDF 또는 DOCX 파일만 업로드할 수 있습니다.')
-    if file_obj.size == 0:
-        raise ValueError('빈 파일은 업로드할 수 없습니다.')
-    if file_obj.size > UPLOAD_MAX_SIZE:
-        raise ValueError('파일 크기는 10MB를 초과할 수 없습니다.')
-    return file_type, filename
+def _document_error_response(exc):
+    return Response(exc.detail, status=exc.status_code)
 
 
-def _extract_or_error(file_obj, file_type):
-    """텍스트 추출. 성공 시 (text, None), 실패/빈내용 시 (None, error_response)."""
+def _extract_or_error(file_obj, file_type, document_type):
+    """??? ??? ?? ??? ???? ?? ? ???? ?? ??? ????."""
     try:
         text = (extract_text_from_file(file_obj, file_type) or '').strip()
     except Exception as exc:  # noqa: BLE001
-        return None, Response(
-            {'detail': f'텍스트 추출에 실패했습니다: {exc}'},
-            status=status.HTTP_422_UNPROCESSABLE_ENTITY,
-        )
-    if not text:
-        return None, Response(
-            {'detail': '파일에서 텍스트를 추출하지 못했습니다. (빈 내용)'},
-            status=status.HTTP_422_UNPROCESSABLE_ENTITY,
-        )
+        return None, _document_error_response(map_text_extraction_error(exc))
+    try:
+        validate_extracted_text(text, document_type, file_type)
+    except DocumentUploadError as exc:
+        return None, _document_error_response(exc)
     return text, None
 
 
@@ -129,11 +113,11 @@ class JDUploadView(APIView):
     def post(self, request):
         file_obj = request.FILES.get('file')
         try:
-            file_type, filename = _validate_upload(file_obj, allowed_types={'pdf'})
-        except ValueError as exc:
-            return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+            file_type, filename = validate_upload_file(file_obj)
+        except DocumentUploadError as exc:
+            return _document_error_response(exc)
 
-        text, error = _extract_or_error(file_obj, file_type)
+        text, error = _extract_or_error(file_obj, file_type, 'jd')
         if error is not None:
             return error
 
@@ -341,11 +325,11 @@ class ResumeUploadView(APIView):
     def post(self, request):
         file_obj = request.FILES.get('file')
         try:
-            file_type, filename = _validate_upload(file_obj)
-        except ValueError as exc:
-            return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+            file_type, filename = validate_upload_file(file_obj)
+        except DocumentUploadError as exc:
+            return _document_error_response(exc)
 
-        text, error = _extract_or_error(file_obj, file_type)
+        text, error = _extract_or_error(file_obj, file_type, 'resume')
         if error is not None:
             return error
 
