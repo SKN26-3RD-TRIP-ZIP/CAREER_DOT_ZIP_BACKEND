@@ -2,6 +2,8 @@ from django.urls import path
 from .views import (
     JDListCreateView,
     JDDetailView,
+    TalentProfileCatalogView,
+    JDTalentProfileView,
     JDUploadView,
     JDURLAnalyzeView,
     JDOCRUploadView,
@@ -21,10 +23,12 @@ from .views import (
 )
 
 urlpatterns = [
+    path('talent-profiles/catalog', TalentProfileCatalogView.as_view(), name='talent-profile-catalog'),
     path('jds', JDListCreateView.as_view(), name='jd-list-create'),
     path('jds/upload', JDUploadView.as_view(), name='jd-upload'),
     path('jds/analyze-url', JDURLAnalyzeView.as_view(), name='jd-analyze-url'),
     path('jds/ocr', JDOCRUploadView.as_view(), name='jd-ocr-upload'),
+    path('jds/<uuid:jd_id>/talent-profile', JDTalentProfileView.as_view(), name='jd-talent-profile'),
     path('jds/<uuid:jd_id>', JDDetailView.as_view(), name='jd-detail'),
     path('projects', ProjectExperienceListCreateView.as_view(), name='project-list-create'),
     path('projects/<uuid:project_id>', ProjectExperienceDetailView.as_view(), name='project-detail'),

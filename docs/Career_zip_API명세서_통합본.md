@@ -126,6 +126,146 @@ Error codes:
 ## 입력 데이터와 GitHub URL 의미
 
 | 목적 | 기준 컬럼 |
+
+## 사용자 설정 인재상 API
+
+Base path: `/api/v1`
+
+### GET `/talent-profiles/catalog`
+
+인증: 필요.
+
+활성화된 인재상 상위 영역과 세부 인재상을 `display_order` 오름차순으로 조회한다.
+
+Response 200:
+
+```json
+{
+  "categories": [
+    {
+      "category_id": 1,
+      "category_code": "EXECUTION_RESPONSIBILITY",
+      "category_name": "실행과 책임",
+      "short_description": "목표를 행동과 결과로 연결하고 맡은 일에 끝까지 책임지는 역량",
+      "display_order": 1,
+      "traits": [
+        {
+          "trait_id": 1,
+          "trait_code": "OWNERSHIP",
+          "trait_name": "주도성",
+          "short_description": "지시를 기다리지 않고 필요한 문제를 스스로 발견해 행동하는 역량",
+          "display_order": 1
+        }
+      ]
+    }
+  ]
+}
+```
+
+Validation:
+
+- `TalentProfileCategory.is_active=true`
+- `TalentProfileTrait.is_active=true`
+
+### GET `/jds/{jd_id}/talent-profile`
+
+인증: 필요. 본인 소유 JD만 조회 가능.
+
+Path Parameter:
+
+- `jd_id`: UUID
+
+설정이 없으면 404가 아니라 다음처럼 200을 반환한다.
+
+```json
+{
+  "jd_id": "00000000-0000-0000-0000-000000000000",
+  "profile": null
+}
+```
+
+설정이 있으면 다음 구조를 반환한다.
+
+```json
+{
+  "jd_id": "00000000-0000-0000-0000-000000000000",
+  "source_type": "USER_DEFINED",
+  "source_text": null,
+  "custom_summary": "빠르게 실행하고 결과를 기반으로 개선하는 문화를 중요하게 생각합니다.",
+  "confirmed_by_user": true,
+  "confirmed_at": "2026-06-29T12:00:00+09:00",
+  "items": [
+    {
+      "trait_id": 1,
+      "trait_code": "OWNERSHIP",
+      "trait_name": "주도성",
+      "category_code": "EXECUTION_RESPONSIBILITY",
+      "category_name": "실행과 책임",
+      "priority_order": 1,
+      "custom_description": "문제를 먼저 발견하고 해결 방법을 제안하는 사람"
+    }
+  ]
+}
+```
+
+Error Code:
+
+- 401: 인증 필요
+- 404: JD가 없거나 본인 소유가 아님
+
+### PUT `/jds/{jd_id}/talent-profile`
+
+인증: 필요. 본인 소유 JD만 수정 가능.
+
+Path Parameter:
+
+- `jd_id`: UUID
+
+Request:
+
+```json
+{
+  "source_type": "USER_DEFINED",
+  "source_text": null,
+  "custom_summary": "빠르게 실행하고 결과를 기반으로 개선하는 문화를 중요하게 생각합니다.",
+  "confirmed_by_user": true,
+  "items": [
+    {
+      "trait_code": "OWNERSHIP",
+      "priority_order": 1,
+      "custom_description": "문제를 먼저 발견하고 해결 방법을 제안하는 사람"
+    }
+  ]
+}
+```
+
+Validation:
+
+- `items` 최소 1개, 최대 5개
+- `trait_code` 중복 금지
+- `priority_order` 중복 금지
+- `priority_order`는 1부터 선택 개수까지 연속값
+- 비활성 또는 존재하지 않는 trait 선택 불가
+- `custom_description` 최대 500자
+- `source_type`은 `OFFICIAL`, `AI_EXTRACTED`, `USER_DEFINED`, `JOB_DEFAULT`, `HYBRID` 중 하나
+
+동작:
+
+- 전체 교체 방식으로 저장한다.
+- 저장은 transaction으로 처리하며 일부 항목 실패 시 기존 상태를 유지한다.
+- `confirmed_by_user=false` 임시 저장은 허용하지만 질문 생성에는 사용하지 않는다.
+- `confirmed_by_user`가 `false -> true`가 되면 `confirmed_at`을 현재 시각으로 저장한다.
+- `confirmed_by_user`가 `true -> false`가 되면 `confirmed_at=null`로 변경한다.
+
+Error Code:
+
+- 400: validation error
+- 401: 인증 필요
+- 404: JD가 없거나 본인 소유가 아님
+
+표현 정책:
+
+사용자 설정 인재상은 회사 공식 인재상으로 표현하지 않는다. 화면과 프롬프트에서는 반드시 `사용자가 면접 연습을 위해 설정한 인재상 기준`으로 표현한다.
 | --- | --- |
 | 사용자 대표 GitHub 표시 | `input_userprofile.github_url` |
 | 선택 이력서 대표/참고 GitHub | `input_resumemaster.github_url` |

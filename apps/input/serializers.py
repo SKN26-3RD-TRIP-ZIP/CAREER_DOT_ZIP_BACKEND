@@ -4,6 +4,10 @@ from rest_framework import serializers
 
 from .models import (
     JobDescription,
+    TalentProfileCategory,
+    TalentProfileTrait,
+    JDTalentProfile,
+    JDTalentProfileItem,
     ProjectExperience,
     CoverLetter,
     CoverLetterItem,
@@ -13,6 +17,14 @@ from .models import (
     ResumeCareer,
     ResumeSkill,
     ResumeCertificate,
+)
+
+
+TALENT_PROFILE_PROMPT_NOTICE = (
+    '아래 인재상은 회사가 공식적으로 공개한 정보가 아니라\n'
+    '사용자가 면접 연습을 위해 직접 설정한 기준입니다.\n\n'
+    '회사 공식 인재상으로 단정하지 말고\n'
+    '질문 생성과 답변 피드백의 참고 기준으로만 사용하세요.'
 )
 
 
@@ -208,6 +220,122 @@ class JobDescriptionUpdateSerializer(serializers.ModelSerializer):
     class Meta:
         model = JobDescription
         fields = ('company_name', 'position', 'job_requirements', 'keywords')
+
+
+class TalentProfileTraitCatalogSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = TalentProfileTrait
+        fields = ('trait_id', 'trait_code', 'trait_name', 'short_description', 'display_order')
+
+
+class TalentProfileCategoryCatalogSerializer(serializers.ModelSerializer):
+    traits = serializers.SerializerMethodField()
+
+    class Meta:
+        model = TalentProfileCategory
+        fields = (
+            'category_id',
+            'category_code',
+            'category_name',
+            'short_description',
+            'display_order',
+            'traits',
+        )
+
+    def get_traits(self, obj):
+        traits = obj.traits.filter(is_active=True).order_by('display_order', 'trait_id')
+        return TalentProfileTraitCatalogSerializer(traits, many=True).data
+
+
+class JDTalentProfileItemReadSerializer(serializers.ModelSerializer):
+    trait_id = serializers.IntegerField(source='trait.trait_id')
+    trait_code = serializers.CharField(source='trait.trait_code')
+    trait_name = serializers.CharField(source='trait.trait_name')
+    category_code = serializers.CharField(source='trait.category.category_code')
+    category_name = serializers.CharField(source='trait.category.category_name')
+
+    class Meta:
+        model = JDTalentProfileItem
+        fields = (
+            'trait_id',
+            'trait_code',
+            'trait_name',
+            'category_code',
+            'category_name',
+            'priority_order',
+            'custom_description',
+        )
+
+
+class JDTalentProfileReadSerializer(serializers.ModelSerializer):
+    jd_id = serializers.SerializerMethodField()
+    items = serializers.SerializerMethodField()
+
+    class Meta:
+        model = JDTalentProfile
+        fields = (
+            'jd_id',
+            'source_type',
+            'source_text',
+            'custom_summary',
+            'confirmed_by_user',
+            'confirmed_at',
+            'items',
+        )
+
+    def get_jd_id(self, obj):
+        return str(obj.jd_id)
+
+    def get_items(self, obj):
+        queryset = obj.items.select_related('trait', 'trait__category').order_by('priority_order')
+        return JDTalentProfileItemReadSerializer(queryset, many=True).data
+
+
+class JDTalentProfileItemWriteSerializer(serializers.Serializer):
+    trait_code = serializers.CharField(max_length=50)
+    priority_order = serializers.IntegerField(min_value=1, max_value=5)
+    custom_description = serializers.CharField(max_length=500, allow_blank=True, required=False, default='')
+
+
+class JDTalentProfileWriteSerializer(serializers.Serializer):
+    source_type = serializers.ChoiceField(choices=[choice[0] for choice in JDTalentProfile.SOURCE_TYPE_CHOICES])
+    source_text = serializers.CharField(allow_blank=True, allow_null=True, required=False)
+    custom_summary = serializers.CharField(allow_blank=True, allow_null=True, required=False)
+    confirmed_by_user = serializers.BooleanField(default=False)
+    items = JDTalentProfileItemWriteSerializer(many=True)
+
+    def validate_items(self, items):
+        if len(items) < 1:
+            raise serializers.ValidationError('At least one talent profile item is required.')
+        if len(items) > 5:
+            raise serializers.ValidationError('Talent profile items may not exceed 5.')
+
+        trait_codes = [item['trait_code'] for item in items]
+        if len(trait_codes) != len(set(trait_codes)):
+            raise serializers.ValidationError('trait_code must be unique.')
+
+        priorities = [item['priority_order'] for item in items]
+        if len(priorities) != len(set(priorities)):
+            raise serializers.ValidationError('priority_order must be unique.')
+        expected = list(range(1, len(items) + 1))
+        if sorted(priorities) != expected:
+            raise serializers.ValidationError('priority_order must be consecutive from 1 to item count.')
+
+        traits = {
+            trait.trait_code: trait
+            for trait in TalentProfileTrait.objects.filter(
+                trait_code__in=trait_codes,
+                is_active=True,
+                category__is_active=True,
+            ).select_related('category')
+        }
+        missing = [code for code in trait_codes if code not in traits]
+        if missing:
+            raise serializers.ValidationError(f'Invalid or inactive trait_code: {", ".join(missing)}')
+
+        for item in items:
+            item['trait'] = traits[item['trait_code']]
+        return items
 
 
 class ProjectExperienceCreateSerializer(serializers.ModelSerializer):
