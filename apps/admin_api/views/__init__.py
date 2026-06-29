@@ -9,7 +9,12 @@ from .members import (
     MemberStatsView,
     MemberStatusView,
 )
-from .points import AdminPointAdjustView, AdminPointHistoryView
+from .points import (
+    AdminPointAdjustView,
+    AdminPointHistoryView,
+    AdminPointPolicyListView,
+    AdminPointPolicyUpdateView,
+)
 
 __all__ = [
     'AdminAPIView',
@@ -17,6 +22,8 @@ __all__ = [
     'AdminGuardrailEventListView',
     'AdminPointAdjustView',
     'AdminPointHistoryView',
+    'AdminPointPolicyListView',
+    'AdminPointPolicyUpdateView',
     'AuditLogListView',
     'DashboardStatsView',
     'MemberDetailView',
