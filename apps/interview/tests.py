@@ -10,6 +10,7 @@ from django.test import override_settings
 from rest_framework import status
 from rest_framework.test import APITestCase
 
+from apps.accounts.models import PointHistory
 from apps.accounts.services.points import earn_points
 from apps.common.choices import (
     INTERVIEW_SESSION_STATUS_CANCELLED,
@@ -71,6 +72,56 @@ class InterviewSessionCompleteAPITests(APITestCase):
         session.refresh_from_db()
         self.assertEqual(session.status, INTERVIEW_SESSION_STATUS_COMPLETED)
         self.assertIsNotNone(session.ended_at)
+        self.user.refresh_from_db()
+        self.assertEqual(self.user.point_balance, 300)
+        self.assertEqual(
+            PointHistory.objects.filter(
+                user=self.user,
+                reason_code='INTERVIEW.COMPLETED',
+                reference_id=str(session.id),
+            ).count(),
+            1,
+        )
+
+    def test_complete_session_awards_points_only_once_for_same_session(self):
+        session = self.create_session(status='in_progress')
+
+        first = self.client.patch(self.complete_url(session), {}, format='json')
+        second = self.client.patch(self.complete_url(session), {}, format='json')
+
+        self.assertEqual(first.status_code, status.HTTP_200_OK)
+        self.assertEqual(second.status_code, status.HTTP_200_OK)
+        self.user.refresh_from_db()
+        self.assertEqual(self.user.point_balance, 300)
+        self.assertEqual(
+            PointHistory.objects.filter(
+                user=self.user,
+                reason_code='INTERVIEW.COMPLETED',
+                reference_id=str(session.id),
+            ).count(),
+            1,
+        )
+
+    def test_complete_session_awards_points_only_once_per_user_per_day(self):
+        first_session = self.create_session(status='in_progress')
+        second_session = self.create_session(status='in_progress')
+
+        first = self.client.patch(self.complete_url(first_session), {}, format='json')
+        second = self.client.patch(self.complete_url(second_session), {}, format='json')
+
+        self.assertEqual(first.status_code, status.HTTP_200_OK)
+        self.assertEqual(second.status_code, status.HTTP_200_OK)
+        self.user.refresh_from_db()
+        self.assertEqual(self.user.point_balance, 300)
+        self.assertEqual(
+            PointHistory.objects.filter(
+                user=self.user,
+                reason_code='INTERVIEW.COMPLETED',
+            ).count(),
+            1,
+        )
+        second_session.refresh_from_db()
+        self.assertEqual(second_session.status, INTERVIEW_SESSION_STATUS_COMPLETED)
 
     def test_completed_session_is_returned_without_changing_ended_at(self):
         ended_at = timezone.now() - timedelta(minutes=5)
@@ -510,6 +561,37 @@ class MVPTextInterviewFlowTests(APITestCase):
         self.assertEqual(status_response.status_code, status.HTTP_200_OK)
         self.assertEqual(status_response.data['status'], 'completed')
         self.assertIsNotNone(status_response.data['ended_at'])
+        self.user.refresh_from_db()
+        self.assertEqual(self.user.point_balance, 300)
+        self.assertEqual(
+            PointHistory.objects.filter(
+                user=self.user,
+                reason_code='INTERVIEW.COMPLETED',
+                reference_id=session_id,
+            ).count(),
+            1,
+        )
+
+    def test_session_status_completed_awards_points_only_once(self):
+        created = self.create_session()
+        session_id = created.data['session_id']
+        url = reverse('mvp-session-status', kwargs={'session_id': session_id})
+
+        first = self.client.patch(url, {'status': 'completed'}, format='json')
+        second = self.client.patch(url, {'status': 'completed'}, format='json')
+
+        self.assertEqual(first.status_code, status.HTTP_200_OK)
+        self.assertEqual(second.status_code, status.HTTP_200_OK)
+        self.user.refresh_from_db()
+        self.assertEqual(self.user.point_balance, 300)
+        self.assertEqual(
+            PointHistory.objects.filter(
+                user=self.user,
+                reason_code='INTERVIEW.COMPLETED',
+                reference_id=session_id,
+            ).count(),
+            1,
+        )
 
     def test_question_generation_defaults_to_three_and_prevents_duplicates(self):
         created = self.create_session()

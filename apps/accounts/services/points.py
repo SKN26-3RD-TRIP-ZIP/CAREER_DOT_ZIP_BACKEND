@@ -39,6 +39,10 @@ POINT_POLICIES = {
     "ACTION_PLAN.REGENERATE": -300,
 }
 
+DAILY_ONCE_REASON_CODES = {
+    "INTERVIEW.COMPLETED",
+}
+
 
 class InsufficientPointsError(ValueError):
     """Raised when a point debit would make the balance negative."""
@@ -137,6 +141,13 @@ def _period_sum(*, user: User, reason_code: str, since, until) -> int:
     )
 
 
+def _current_local_day_range():
+    now = timezone.localtime(timezone.now())
+    day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    day_end = day_start + timezone.timedelta(days=1)
+    return day_start, day_end
+
+
 def _enforce_policy_limits(*, user: User, policy: dict, reference_id: str) -> None:
     reason_code = policy["reason_code"]
     amount = int(policy["amount"])
@@ -156,9 +167,19 @@ def _enforce_policy_limits(*, user: User, policy: dict, reference_id: str) -> No
     if amount <= 0:
         return
 
+    day_start, day_end = _current_local_day_range()
+    if (
+        reason_code in DAILY_ONCE_REASON_CODES
+        and PointHistory.objects.filter(
+            user=user,
+            reason_code=reason_code,
+            created_at__gte=day_start,
+            created_at__lt=day_end,
+        ).exists()
+    ):
+        raise ValueError(f"Point policy can be applied only once per day: {reason_code}")
+
     now = timezone.now()
-    day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-    day_end = day_start + timezone.timedelta(days=1)
     month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     if month_start.month == 12:
         month_end = month_start.replace(year=month_start.year + 1, month=1)
