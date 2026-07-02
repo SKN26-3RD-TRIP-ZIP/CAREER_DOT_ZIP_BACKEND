@@ -71,6 +71,12 @@ QUESTION_CATEGORY_ALIASES = {
     'follow_up': 'general',
 }
 
+PREPARED_QUESTION_CATEGORY_ALIASES = {
+    **QUESTION_CATEGORY_ALIASES,
+    'experience': 'personality',
+    'talent': 'personality',
+}
+
 EXPECTED_TECHNICAL_KEYWORDS_LABEL = 'expected_technical_keywords'
 
 
@@ -82,6 +88,27 @@ def _normalize_question_source_type(source_type):
 def _normalize_question_category(question_category):
     normalized = str(question_category or 'general').strip().lower()
     return QUESTION_CATEGORY_ALIASES.get(normalized, 'general')
+
+
+def _normalize_prepared_question_category(question_category):
+    normalized = str(question_category or '').strip().lower()
+    return PREPARED_QUESTION_CATEGORY_ALIASES.get(normalized, 'general')
+
+
+def _is_prepared_question_allowed_for_interview_type(question, interview_type):
+    if interview_type == 'comprehensive':
+        return True
+
+    question_category = _normalize_prepared_question_category(
+        getattr(question, 'question_type', None)
+    )
+    if question_category == 'general':
+        return True
+    if interview_type == 'technical':
+        return question_category == 'technical'
+    if interview_type == 'personality':
+        return question_category == 'personality'
+    return True
 
 
 def _question_category_plan(interview_type, question_count):
@@ -630,6 +657,10 @@ def _build_prepared_question_sources(session):
             'order': question.order,
         }
         for question in prepared_questions
+        if _is_prepared_question_allowed_for_interview_type(
+            question,
+            session.interview_type,
+        )
     ]
 
 
@@ -842,6 +873,12 @@ def _prepared_questions(session, count, excluded_texts=None, prompt_metadata=Non
 
     converted = []
     for question in _get_prepared_questions(session):
+        if not _is_prepared_question_allowed_for_interview_type(
+            question,
+            session.interview_type,
+        ):
+            continue
+
         source_type = _normalize_question_source_type(question.source)
         source_reference = f'analysis_generated_question:{question.id}'
         converted.append(

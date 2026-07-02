@@ -295,6 +295,67 @@ class InterviewQuestionGeneratorRealInputTest(TestCase):
             self.prepared_question.question_text,
         )
 
+    def test_personality_session_filters_out_technical_prepared_questions(self):
+        self.session.interview_type = 'personality'
+        self.session.total_question_count = 1
+        self.session.save(update_fields=['interview_type', 'total_question_count'])
+
+        with patch('apps.interview.services.question_generator.InterviewAIChainService') as service_class, \
+                patch('apps.interview.services.question_generator.select_questions_for_session') as selector:
+            service = service_class.return_value
+            service.generate_questions.return_value = {
+                'session_id': str(self.session.id),
+                'questions': [],
+            }
+            selector.return_value = []
+
+            questions = generate_interview_questions(self.session)
+
+        self.assertEqual(len(questions), 1)
+        self.assertEqual(questions[0]['question_category'], 'personality')
+        self.assertNotEqual(questions[0]['question_text'], self.prepared_question.question_text)
+        self.assertEqual(questions[0]['source_type'], 'rule')
+
+        payload = service.generate_questions.call_args.args[0]
+        self.assertNotIn('prepared_questions', payload['input_sources'])
+
+    def test_technical_session_filters_out_personality_prepared_questions(self):
+        personality_question = GeneratedQuestion.objects.create(
+            jd_analysis=self.analysis,
+            question_type='personality',
+            question_text='Describe how you handled a team conflict during the project.',
+            source='cover_letter',
+            source_ref='Cover letter teamwork evidence',
+            order=0,
+            answer={'summary': 'Team conflict handling'},
+        )
+        self.session.total_question_count = 1
+        self.session.save(update_fields=['total_question_count'])
+
+        with patch('apps.interview.services.question_generator.InterviewAIChainService') as service_class, \
+                patch('apps.interview.services.question_generator.select_questions_for_session') as selector:
+            service = service_class.return_value
+            service.generate_questions.return_value = {
+                'session_id': str(self.session.id),
+                'questions': [],
+            }
+            selector.return_value = []
+
+            questions = generate_interview_questions(self.session)
+
+        self.assertEqual(len(questions), 1)
+        self.assertEqual(questions[0]['question_category'], 'technical')
+        self.assertEqual(questions[0]['question_text'], self.prepared_question.question_text)
+        self.assertNotEqual(questions[0]['question_text'], personality_question.question_text)
+
+        payload = service.generate_questions.call_args.args[0]
+        prepared_question_texts = [
+            question['question_text']
+            for question in payload['input_sources']['prepared_questions']
+        ]
+        self.assertIn(self.prepared_question.question_text, prepared_question_texts)
+        self.assertNotIn(personality_question.question_text, prepared_question_texts)
+
     def test_selected_project_ids_limit_project_input_sources(self):
         other_project = ProjectExperience.objects.create(
             user=self.user,
