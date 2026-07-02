@@ -3,6 +3,7 @@ import json
 from django.db.models import Q
 
 from apps.input.services.talent_profile_service import resolve_effective_talent_profile
+from apps.interview.services.ai_chain_openai_engine import AIChainOpenAIError
 from apps.interview.services.ai_chain_service import InterviewAIChainService
 from apps.interview.services.ai_chain_persona_prompts import (
     get_persona_policy,
@@ -366,7 +367,15 @@ def _append_unique_questions(target, candidates, *, limit, excluded_texts=None):
     return target
 
 
-def _rule_based_questions(session, count, excluded_texts=None):
+def _ai_generation_failure_metadata(exc):
+    return {
+        'ai_generation_failed': True,
+        'ai_generation_fallback_used': True,
+        'ai_generation_error_type': getattr(exc, 'chain_name', None) or exc.__class__.__name__,
+    }
+
+
+def _rule_based_questions(session, count, excluded_texts=None, prompt_metadata=None):
     templates = RULE_QUESTIONS.get(session.interview_type, RULE_QUESTIONS['comprehensive'])
     excluded = {_candidate_key(text) for text in (excluded_texts or [])}
     questions = []
@@ -402,6 +411,7 @@ def _rule_based_questions(session, count, excluded_texts=None):
                     ],
                 },
                 'rule_fallback',
+                prompt_metadata=prompt_metadata,
             )
         )
         excluded.add(_candidate_key(text))
@@ -826,7 +836,7 @@ def _ai_chain_questions(session, count, excluded_texts=None, prompt_version_id=N
     )[:count]
 
 
-def _prepared_questions(session, count, excluded_texts=None):
+def _prepared_questions(session, count, excluded_texts=None, prompt_metadata=None):
     if count <= 0:
         return []
 
@@ -859,6 +869,7 @@ def _prepared_questions(session, count, excluded_texts=None):
                     ],
                 },
                 'prepared_question',
+                prompt_metadata=prompt_metadata,
             )
         )
 
@@ -872,7 +883,7 @@ def _prepared_questions(session, count, excluded_texts=None):
     return selected
 
 
-def _question_bank_questions(session, count, excluded_texts=None):
+def _question_bank_questions(session, count, excluded_texts=None, prompt_metadata=None):
     if count <= 0:
         return []
 
@@ -886,7 +897,11 @@ def _question_bank_questions(session, count, excluded_texts=None):
         excluded_texts=excluded_texts,
     )
     return [
-        _attach_generation_metadata(question, 'question_bank')
+        _attach_generation_metadata(
+            question,
+            'question_bank',
+            prompt_metadata=prompt_metadata,
+        )
         for question in normalized
     ]
 
@@ -894,15 +909,22 @@ def _question_bank_questions(session, count, excluded_texts=None):
 def generate_interview_questions(session, prompt_version_id=None):
     question_count = int(session.total_question_count or 3)
     input_sources = _build_ai_input_sources(session)
+    ai_failure_metadata = None
 
     selected = []
 
     if input_sources:
-        ai_questions = _ai_chain_questions(
-            session,
-            question_count,
-            prompt_version_id=prompt_version_id,
-        )
+        try:
+            ai_questions = _ai_chain_questions(
+                session,
+                question_count,
+                prompt_version_id=prompt_version_id,
+            )
+        except AIChainOpenAIError as exc:
+            if prompt_version_id:
+                raise
+            ai_failure_metadata = _ai_generation_failure_metadata(exc)
+            ai_questions = []
         _append_unique_questions(
             selected,
             ai_questions,
@@ -914,6 +936,7 @@ def generate_interview_questions(session, prompt_version_id=None):
             session,
             question_count - len(selected),
             excluded_texts=_question_texts(selected),
+            prompt_metadata=ai_failure_metadata,
         )
         _append_unique_questions(
             selected,
@@ -927,6 +950,7 @@ def generate_interview_questions(session, prompt_version_id=None):
             session,
             question_count - len(selected),
             excluded_texts=_question_texts(selected),
+            prompt_metadata=ai_failure_metadata,
         )
         _append_unique_questions(
             selected,
@@ -936,12 +960,18 @@ def generate_interview_questions(session, prompt_version_id=None):
         )
 
     if len(selected) < question_count and not input_sources:
-        ai_questions = _ai_chain_questions(
-            session,
-            question_count - len(selected),
-            excluded_texts=_question_texts(selected),
-            prompt_version_id=prompt_version_id,
-        )
+        try:
+            ai_questions = _ai_chain_questions(
+                session,
+                question_count - len(selected),
+                excluded_texts=_question_texts(selected),
+                prompt_version_id=prompt_version_id,
+            )
+        except AIChainOpenAIError as exc:
+            if prompt_version_id:
+                raise
+            ai_failure_metadata = _ai_generation_failure_metadata(exc)
+            ai_questions = []
         _append_unique_questions(
             selected,
             ai_questions,
@@ -954,6 +984,7 @@ def generate_interview_questions(session, prompt_version_id=None):
             session,
             question_count - len(selected),
             excluded_texts=_question_texts(selected),
+            prompt_metadata=ai_failure_metadata,
         )
         _append_unique_questions(
             selected,

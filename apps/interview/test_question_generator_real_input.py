@@ -23,6 +23,7 @@ from apps.input.models import (
     TalentProfileTrait,
 )
 from apps.interview.models import InterviewQuestion, InterviewSession, QuestionSourceTag
+from apps.interview.services.ai_chain_openai_engine import AIChainOpenAIError
 from apps.interview.services.question_generator import (
     _build_ai_generation_payload,
     generate_interview_questions,
@@ -603,6 +604,71 @@ class InterviewQuestionGeneratorRealInputTest(TestCase):
             ['unknown_ai', 'prepared_question', 'question_bank', 'rule_fallback'],
         )
         selector.assert_called_once_with(self.session, 2)
+
+    def test_ai_generation_failure_uses_prepared_bank_and_rule_fallback(self):
+        self.session.total_question_count = 3
+        self.session.save(update_fields=['total_question_count'])
+
+        with patch('apps.interview.services.question_generator.InterviewAIChainService') as service_class, \
+                patch('apps.interview.services.question_generator.select_questions_for_session') as selector:
+            service = service_class.return_value
+            service.generate_questions.side_effect = AIChainOpenAIError(
+                'question_generation',
+                'invalid json',
+            )
+            selector.return_value = [
+                {
+                    'question_text': 'OpenAI ?ㅽ뙣 ??question bank fallback 吏덈Ц?낅땲??',
+                    'source_type': 'question_bank',
+                    'source_reference': 'question_bank:item-fallback',
+                }
+            ]
+
+            questions = generate_interview_questions(self.session)
+
+        self.assertEqual(len(questions), 3)
+        self.assertEqual(questions[0]['source_type'], 'combined')
+        self.assertEqual(questions[1]['source_type'], 'question_bank')
+        self.assertEqual(questions[2]['source_type'], 'rule')
+        selector.assert_called_once_with(self.session, 2)
+
+        metadata_by_source = {}
+        for question in questions:
+            metadata_tag = next(
+                tag for tag in question['source_tags']
+                if tag['source_label'] == 'generation_metadata'
+            )
+            metadata_by_source[question['source_type']] = json.loads(
+                metadata_tag['source_text_excerpt']
+            )
+
+        self.assertEqual(
+            metadata_by_source['combined']['generation_source'],
+            'prepared_question',
+        )
+        self.assertEqual(
+            metadata_by_source['question_bank']['generation_source'],
+            'question_bank',
+        )
+        self.assertEqual(
+            metadata_by_source['rule']['generation_source'],
+            'rule_fallback',
+        )
+        for metadata in metadata_by_source.values():
+            self.assertTrue(metadata['ai_generation_failed'])
+            self.assertTrue(metadata['ai_generation_fallback_used'])
+            self.assertEqual(metadata['ai_generation_error_type'], 'question_generation')
+
+    def test_ai_generation_failure_with_prompt_version_id_is_not_swallowed(self):
+        with patch('apps.interview.services.question_generator.InterviewAIChainService') as service_class:
+            service = service_class.return_value
+            service.generate_questions.side_effect = AIChainOpenAIError(
+                'question_generation',
+                'invalid json',
+            )
+
+            with self.assertRaises(AIChainOpenAIError):
+                generate_interview_questions(self.session, prompt_version_id=123)
 
 
 class InterviewQuestionGenerateSourceTagsAPITest(APITestCase):
