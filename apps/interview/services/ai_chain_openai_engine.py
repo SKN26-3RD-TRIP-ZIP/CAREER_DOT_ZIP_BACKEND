@@ -251,7 +251,22 @@ class AIChainOpenAIEngine:
         self.model = model or getattr(
             settings,
             "INTERVIEW_AI_OPENAI_MODEL",
-            "gpt-4o-mini",
+            "gpt-4o",
+        )
+        self.question_generation_model = model or getattr(
+            settings,
+            "OPENAI_MODEL_QUESTION_GENERATION",
+            self.model,
+        )
+        self.answer_sufficiency_model = model or getattr(
+            settings,
+            "OPENAI_MODEL_ANSWER_SUFFICIENCY",
+            self.model,
+        )
+        self.followup_generation_model = model or getattr(
+            settings,
+            "OPENAI_MODEL_FOLLOWUP_GENERATION",
+            self.model,
         )
         self.api_key = api_key or getattr(settings, "OPENAI_API_KEY", None)
         self.fallback_engine = fallback_engine or AIChainMockEngine()
@@ -286,6 +301,7 @@ class AIChainOpenAIEngine:
                 fallback_builder=build_question_generation_system_prompt,
             )
             raw_response = self._request_text(
+                model=self.question_generation_model,
                 system_prompt=prompt["content"],
                 user_prompt=build_question_generation_user_prompt(payload),
                 temperature=0.3,
@@ -320,6 +336,7 @@ class AIChainOpenAIEngine:
                 fallback_builder=build_answer_sufficiency_system_prompt,
             )
             raw_response = self._request_text(
+                model=self.answer_sufficiency_model,
                 system_prompt=prompt["content"],
                 user_prompt=build_answer_sufficiency_user_prompt(payload),
                 temperature=0.1,
@@ -363,6 +380,7 @@ class AIChainOpenAIEngine:
                 fallback_builder=build_followup_system_prompt,
             )
             raw_response = self._request_text(
+                model=self.followup_generation_model,
                 system_prompt=prompt["content"],
                 user_prompt=build_followup_user_prompt(payload),
                 temperature=0.3,
@@ -495,6 +513,7 @@ class AIChainOpenAIEngine:
     def _request_text(
         self,
         *,
+        model: str | None = None,
         system_prompt: str,
         user_prompt: str,
         temperature: float = 0.2,
@@ -503,7 +522,7 @@ class AIChainOpenAIEngine:
         """OpenAI Chat Completions API를 호출하고 message content를 반환한다."""
         client = self._get_client()
         response = client.chat.completions.create(
-            model=self.model,
+            model=model or self.model,
             messages=[
                 {
                     "role": "system",

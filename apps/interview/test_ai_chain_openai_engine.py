@@ -612,6 +612,89 @@ class AIChainOpenAIEngineTest(TestCase):
             "user prompt",
         )
 
+    @override_settings(
+        INTERVIEW_AI_OPENAI_MODEL="gpt-base",
+        OPENAI_MODEL_QUESTION_GENERATION="gpt-question",
+        OPENAI_MODEL_ANSWER_SUFFICIENCY="gpt-sufficiency",
+        OPENAI_MODEL_FOLLOWUP_GENERATION="gpt-followup",
+    )
+    def test_feature_specific_model_settings_route_each_real_call(self):
+        question_client = FakeOpenAIClient("""{
+          "session_id": "11111111-1111-1111-1111-111111111111",
+          "questions": [{"question_text": "Question model routing?", "order_index": 1}]
+        }""")
+        question_engine = AIChainOpenAIEngine(
+            api_key="test-api-key",
+            client_factory=lambda api_key: question_client,
+            enable_real_call=True,
+        )
+
+        question_engine.generate_questions(self._question_generation_payload())
+
+        self.assertEqual(
+            question_client.completions.last_kwargs["model"],
+            "gpt-question",
+        )
+
+        sufficiency_client = FakeOpenAIClient("""{
+          "next_action": "NEXT_QUESTION",
+          "is_sufficient": true,
+          "should_generate_followup": false
+        }""")
+        sufficiency_engine = AIChainOpenAIEngine(
+            api_key="test-api-key",
+            client_factory=lambda api_key: sufficiency_client,
+            enable_real_call=True,
+        )
+
+        sufficiency_engine.judge_answer_sufficiency(self._sufficiency_payload())
+
+        self.assertEqual(
+            sufficiency_client.completions.last_kwargs["model"],
+            "gpt-sufficiency",
+        )
+
+        followup_client = FakeOpenAIClient("""{
+          "session_id": "11111111-1111-1111-1111-111111111111",
+          "followup_question": {
+            "question_text": "Follow-up model routing?",
+            "order_index": 2
+          }
+        }""")
+        followup_engine = AIChainOpenAIEngine(
+            api_key="test-api-key",
+            client_factory=lambda api_key: followup_client,
+            enable_real_call=True,
+        )
+
+        followup_engine.generate_followup_question(self._followup_payload())
+
+        self.assertEqual(
+            followup_client.completions.last_kwargs["model"],
+            "gpt-followup",
+        )
+
+    @override_settings(
+        INTERVIEW_AI_OPENAI_MODEL="gpt-base",
+        OPENAI_MODEL_QUESTION_GENERATION="",
+        OPENAI_MODEL_ANSWER_SUFFICIENCY="",
+        OPENAI_MODEL_FOLLOWUP_GENERATION="",
+    )
+    def test_feature_specific_model_settings_fallback_to_interview_model(self):
+        fake_client = FakeOpenAIClient("""{
+          "session_id": "11111111-1111-1111-1111-111111111111",
+          "questions": [{"question_text": "Fallback model routing?", "order_index": 1}]
+        }""")
+        engine = AIChainOpenAIEngine(
+            api_key="test-api-key",
+            client_factory=lambda api_key: fake_client,
+            enable_real_call=True,
+        )
+
+        engine.generate_questions(self._question_generation_payload())
+
+        self.assertEqual(fake_client.completions.last_kwargs["model"], "gpt-base")
+
     @override_settings(OPENAI_API_KEY="")
     def test_get_client_raises_value_error_without_api_key(self):
         engine = AIChainOpenAIEngine(api_key="")
