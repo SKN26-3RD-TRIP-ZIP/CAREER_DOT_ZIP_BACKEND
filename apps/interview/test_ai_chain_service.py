@@ -301,6 +301,39 @@ class EvaluateAnswerSufficiencyPublicInterfaceTest(TestCase):
             payload["followup_context"]["purpose"],
             "alternative_and_tradeoff_comparison",
         )
+        self.assertIn(
+            "technical interview angle",
+            payload["followup_context"]["category_guidance"],
+        )
+        self.assertIn(
+            "unsupported external facts",
+            payload["followup_context"]["unsupported_premise_policy"],
+        )
+
+    def test_followup_payload_adds_personality_category_guidance(self):
+        self.session.interview_type = "personality"
+        self.question.question_category = "personality"
+        self.session.save(update_fields=("interview_type", "updated_at"))
+        self.question.save(update_fields=("question_category", "updated_at"))
+
+        payload = FollowupGenerator._build_followup_payload(
+            self.answer,
+            {
+                "tag_name": "MISSING_REASON",
+                "reason": "Decision reasoning is missing.",
+            },
+        )
+
+        self.assertEqual(payload["parent_question"]["question_category"], "personality")
+        self.assertIn(
+            "personality/behavioral interview angle",
+            payload["followup_context"]["category_guidance"],
+        )
+        self.assertIn("collaboration", payload["followup_context"]["category_guidance"])
+        self.assertIn(
+            "technical correctness",
+            payload["followup_context"]["category_guidance"],
+        )
 
     def test_sufficiency_and_followup_payloads_include_persona_policy(self):
         expected_personas = {

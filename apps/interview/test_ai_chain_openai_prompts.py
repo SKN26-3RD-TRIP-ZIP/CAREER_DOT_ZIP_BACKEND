@@ -67,6 +67,26 @@ class AIChainOpenAIPromptsTest(SimpleTestCase):
         self.assertIn("followup_question", prompt)
         self.assertIn("question_text", prompt)
 
+    def test_followup_system_prompt_guides_category_specific_angles(self):
+        prompt = build_followup_system_prompt({"persona_type": "practical"})
+
+        self.assertIn("question_category is personality", prompt)
+        self.assertIn("do not turn the answer into a technical knowledge check", prompt)
+        self.assertIn("decision process", prompt)
+        self.assertIn("collaboration", prompt)
+        self.assertIn("question_category is technical", prompt)
+        self.assertIn("technology choice rationale", prompt)
+        self.assertIn("trade-offs", prompt)
+
+    def test_followup_system_prompt_forbids_unsupported_premises(self):
+        prompt = build_followup_system_prompt({"persona_type": "verifier"})
+
+        self.assertIn("do not assert unsupported external facts", prompt)
+        self.assertIn("market claims", prompt)
+        self.assertIn("rarely used in real work", prompt)
+        self.assertIn("not used in practice", prompt)
+        self.assertIn("What evidence made that choice appropriate", prompt)
+
     def test_followup_user_prompt_serializes_payload(self):
         payload = {
             "session_id": "session-1",

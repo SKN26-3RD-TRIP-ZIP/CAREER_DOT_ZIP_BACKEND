@@ -496,16 +496,18 @@ class MVPTextInterviewFlowTests(APITestCase):
         )
 
     def test_authenticated_user_creates_text_session(self):
-        response = self.create_session()
+        response = self.create_session(interview_type='personality')
 
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         self.assertEqual(response.data['status'], 'ready')
+        self.assertEqual(response.data['interview_type'], 'personality')
         self.assertEqual(response.data['persona_type'], 'practical')
         self.assertEqual(response.data['interview_mode'], 'text')
         session = InterviewSession.objects.get(id=response.data['session_id'])
         self.assertEqual(session.user, self.user)
         self.assertEqual(session.jd, self.jd)
         self.assertEqual(session.resume, self.resume)
+        self.assertEqual(session.interview_type, 'personality')
 
     def test_session_creation_requires_jd(self):
         # jd_id는 필수, resume_id는 선택(JD-only 플로우 지원)
@@ -558,6 +560,7 @@ class MVPTextInterviewFlowTests(APITestCase):
 
         self.assertEqual(detail.status_code, status.HTTP_200_OK)
         self.assertEqual(detail.data['status'], 'ready')
+        self.assertEqual(detail.data['interview_type'], 'comprehensive')
         self.assertEqual(status_response.status_code, status.HTTP_200_OK)
         self.assertEqual(status_response.data['status'], 'completed')
         self.assertIsNotNone(status_response.data['ended_at'])

@@ -756,10 +756,36 @@ class FollowupGenerator:
             "WEAK_JD_LINK": "job_requirement_alignment",
             "WEAK_JD_FIT": "job_requirement_alignment",
         }
+        category = question_context.get("question_category") or "general"
+        if category == "personality":
+            category_guidance = (
+                "Keep the follow-up in a personality/behavioral interview angle. "
+                "Even if the answer mentions technical tools, ask about decision process, "
+                "collaboration, communication, problem solving, conflict resolution, "
+                "reflection, ownership, or stakeholder alignment instead of checking "
+                "technical correctness or implementation details."
+            )
+        elif category == "technical":
+            category_guidance = (
+                "Keep the follow-up in a technical interview angle. Ask about implementation "
+                "principles, technology choice rationale, troubleshooting, alternatives, "
+                "trade-offs, failure modes, and job-relevant technical depth."
+            )
+        else:
+            category_guidance = (
+                "Keep the follow-up aligned with the parent question category and avoid "
+                "changing the interview angle only because a tool or keyword appears in the answer."
+            )
         return {
             **question_context,
             "trigger": trigger or None,
             "purpose": technical_purposes.get(trigger, "answer_clarification"),
+            "category_guidance": category_guidance,
+            "unsupported_premise_policy": (
+                "Do not assert unsupported external facts, market claims, or claims that a "
+                "technology is rarely used, meaningless, obsolete, or not used in practice "
+                "unless explicitly provided in the payload. Challenge choices neutrally."
+            ),
         }
 
     @classmethod

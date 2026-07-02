@@ -404,6 +404,7 @@ def serialize_mvp_session(session, include_created_at=False, prompt_version_id=N
     data = {
         'session_id': str(session.id),
         'status': STATUS_OUTPUT_MAP.get(session.status, session.status),
+        'interview_type': session.interview_type,
         'persona_type': PERSONA_OUTPUT_MAP.get(session.persona, session.persona),
         'interview_mode': session.interview_mode,
     }
