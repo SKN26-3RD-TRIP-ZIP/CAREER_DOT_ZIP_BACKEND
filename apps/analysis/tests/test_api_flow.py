@@ -272,11 +272,8 @@ class MatchAPITest(APITestCase):
                 "key_experiences": ["백엔드 API 설계 및 개발", "DB 모델링"],
                 "strengths": ["문제 해결력", "커뮤니케이션"],
                 "projects": [{"name": "커리어닷집", "role": "백엔드 개발", "result": "MVP 출시"}]
-            },
-            "questions": [
-                {"id": 1, "question_type": "personality", "question_text": "...", "order": 0},
-                ...총 10개...
-            ]
+            }
+            # 예상 질문은 분리됨 — GET/POST /analysis/questions/ 로 조회·생성
         }
     """
 
@@ -370,29 +367,6 @@ class MatchAPITest(APITestCase):
         self.assertEqual(response.data["strengths"],       MOCK_STRENGTHS)
         self.assertEqual(response.data["weaknesses"],      MOCK_WEAKNESSES)
         self.assertEqual(response.data["cl_points"],       MOCK_CL_POINTS)
-        self.assertEqual(len(response.data["questions"]),  10)
-
-    def test_질문_타입별_개수_확인(self):
-        session = self._create_ready_session()
-
-        response = self.client.post(self.url, {"session_id": session.id}, format="json")
-
-        types = [q["question_type"] for q in response.data["questions"]]
-        print("\n[match] 질문 타입 분포:", {t: types.count(t) for t in set(types)})
-
-        self.assertEqual(types.count("personality"), 3)
-        self.assertEqual(types.count("technical"),   4)
-        self.assertEqual(types.count("experience"),  3)
-
-    def test_질문_순서_확인(self):
-        session = self._create_ready_session()
-
-        response = self.client.post(self.url, {"session_id": session.id}, format="json")
-
-        orders = [q["order"] for q in response.data["questions"]]
-        print("\n[match] 질문 순서:", orders)
-
-        self.assertEqual(orders, list(range(10)))
 
     def test_분석미완료_세션_조회시_400_반환(self):
         session = AnalysisSession.objects.create(

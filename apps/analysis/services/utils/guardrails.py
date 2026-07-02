@@ -83,13 +83,13 @@ class InputGuardrail:
                 return {
                     "valid": False,
                     "field": "jd",
-                    "error": "채용공고 내용이 너무 짧습니다. 20자 이상 입력해주세요.",
+                    "error": f"채용공고 내용이 너무 짧습니다. {self.jd_min_len:,}자 이상 입력해주세요.",
                 }
             if len(jd) > self.jd_max_len:
                 return {
                     "valid": False,
                     "field": "jd",
-                    "error": "채용공고 내용이 너무 깁니다.",
+                    "error": f"채용공고 내용이 너무 깁니다. {self.jd_max_len:,}자 이하로 입력해주세요.",
                 }
 
         # 자소서 길이 검사
@@ -98,13 +98,13 @@ class InputGuardrail:
                 return {
                     "valid": False,
                     "field": "cover_letter",
-                    "error": "자소서 내용이 너무 짧습니다. 10자 이상 입력해주세요.",
+                    "error": f"자소서 내용이 너무 짧습니다. {self.cover_letter_min_len:,}자 이상 입력해주세요.",
                 }
             if len(cover_letter) > self.cover_letter_max_len:
                 return {
                     "valid": False,
                     "field": "cover_letter",
-                    "error": "자소서 내용이 너무 깁니다.",
+                    "error": f"자소서 내용이 너무 깁니다. {self.cover_letter_max_len:,}자 이하로 입력해주세요.",
                 }
 
         # 프롬프트 인젝션 패턴 검사 (jd, cover_letter 각각)
@@ -116,7 +116,7 @@ class InputGuardrail:
                     return {
                         "valid": False,
                         "field": field_name,
-                        "error": "올바른 형식으로 입력해주세요.",
+                        "error": "허용되지 않는 내용이 포함되어 있습니다. 올바른 형식으로 입력해주세요.",
                     }
 
         # 욕설 금지어 검사
