@@ -84,49 +84,6 @@ MOCK_STRENGTHS  = ["Django 실무 경험", "REST API 설계 능력"]
 MOCK_WEAKNESSES = ["Docker 경험 부족"]
 MOCK_CL_POINTS  = ["배달 플랫폼 API 성능 개선 경험 강조"]
 
-MOCK_QUESTIONS = [
-    {
-        "id":            str(uuid.uuid4()),
-        "question_type": "personality",
-        "question_text": "팀 내 갈등이 생겼을 때 어떻게 해결하시나요?",
-        "answer": {
-            "summary":   "갈등은 대화로 해결합니다.",
-            "situation": "팀 프로젝트 중 의견 충돌",
-            "task":      "조율 역할 수행",
-            "action":    "1:1 면담 및 공통 목표 재확인",
-            "result":    "합의 도출 및 일정 준수",
-        },
-        "order": 0,
-    },
-    {
-        "id":            str(uuid.uuid4()),
-        "question_type": "technical",
-        "question_text": "Django ORM의 N+1 문제를 어떻게 해결하나요?",
-        "answer": {
-            "summary":   "select_related / prefetch_related를 사용합니다.",
-            "situation": "배달 플랫폼 주문 조회 API에서 N+1 발생",
-            "task":      "쿼리 최적화",
-            "action":    "select_related 적용 + 쿼리 수 모니터링",
-            "result":    "쿼리 수 20개 → 2개로 감소",
-        },
-        "order": 1,
-    },
-    {
-        "id":            str(uuid.uuid4()),
-        "question_type": "experience",
-        "question_text": "백엔드 API 설계 경험을 구체적으로 말씀해주세요.",
-        "answer": {
-            "summary":   "스타트업에서 20개 API를 설계했습니다.",
-            "situation": "배달 플랫폼 MVP 개발",
-            "task":      "백엔드 API 전담",
-            "action":    "DRF 기반 RESTful API 설계, 문서화",
-            "result":    "서비스 출시 및 DAU 3천 달성",
-        },
-        "order": 2,
-    },
-]
-
-
 # ══════════════════════════════════════════════════════════════
 # Mock 객체 팩토리
 # ══════════════════════════════════════════════════════════════
@@ -162,7 +119,6 @@ def _mock_jd_analysis():
     jd_analysis.strengths         = MOCK_STRENGTHS
     jd_analysis.weaknesses        = MOCK_WEAKNESSES
     jd_analysis.cl_points         = MOCK_CL_POINTS
-    jd_analysis.questions.values.return_value = MOCK_QUESTIONS
     return jd_analysis
 
 
@@ -189,12 +145,17 @@ class TestAnalysisStartView(SimpleTestCase):
         self.resume.original_text = "Python Django 2년 경력"
         self.jd_get_patcher = patch("apps.analysis.views.JobDescription.objects.get")
         self.resume_get_patcher = patch("apps.analysis.views.ResumeMaster.objects.get")
+        self.session_filter_patcher = patch("apps.analysis.views.AnalysisSession.objects.filter")
         self.mock_jd_get = self.jd_get_patcher.start()
         self.mock_resume_get = self.resume_get_patcher.start()
+        self.mock_session_filter = self.session_filter_patcher.start()
         self.mock_jd_get.return_value = self.jd
         self.mock_resume_get.return_value = self.resume
+        # 기본값: 재사용 가능한 기존 세션 없음 (신규 세션 생성 경로를 탄다)
+        self.mock_session_filter.return_value.order_by.return_value.first.return_value = None
         self.addCleanup(self.jd_get_patcher.stop)
         self.addCleanup(self.resume_get_patcher.stop)
+        self.addCleanup(self.session_filter_patcher.stop)
         self.body = {
             "jd_id":             MOCK_JD_ID,
             "resume_id":         MOCK_RESUME_ID,
@@ -384,7 +345,6 @@ class TestAnalysisMatchView(SimpleTestCase):
             "jd_keywords", "resume_analysis",
             "gap", "gap_message",
             "strengths", "weaknesses", "cl_points",
-            "questions",
         ]
         print("\n[match] 리턴 필드:", list(res.data.keys()))
         for key in expected_keys:
@@ -451,58 +411,6 @@ class TestAnalysisMatchView(SimpleTestCase):
         self.assertIsInstance(res.data["gap_message"], dict)
         self.assertIn("tech_gap",  res.data["gap"])
         self.assertIn("summary",   res.data["gap_message"])
-
-    def test_questions_개수_및_구조(self, mock_session_get, mock_jd_get):
-        mock_session_get.return_value = _mock_session(status="ready")
-        mock_jd_get.return_value      = _mock_jd_analysis()
-        res = self.client.post(self.url, {"session_id": MOCK_SESSION_ID}, format="json")
-
-        questions = res.data["questions"]
-        print(f"\n[match] 질문 {len(questions)}개:")
-        for q in questions:
-            print(f"  [{q['question_type']:12}] {q['question_text'][:50]}")
-
-        self.assertEqual(len(questions), 3)
-        for q in questions:
-            self.assertIn("id",            q)
-            self.assertIn("question_type", q)
-            self.assertIn("question_text", q)
-            self.assertIn("answer",        q)
-            self.assertIn("order",         q)
-
-    def test_questions_answer_STAR_구조(self, mock_session_get, mock_jd_get):
-        mock_session_get.return_value = _mock_session(status="ready")
-        mock_jd_get.return_value      = _mock_jd_analysis()
-        res = self.client.post(self.url, {"session_id": MOCK_SESSION_ID}, format="json")
-
-        star_keys = {"summary", "situation", "task", "action", "result"}
-        for q in res.data["questions"]:
-            missing = star_keys - set(q["answer"].keys())
-            self.assertFalse(missing,
-                             f"STAR 필드 누락: {missing} — {q['question_text'][:30]}")
-        print("\n[match] 모든 질문 STAR 구조 확인")
-
-    def test_questions_타입별_분포(self, mock_session_get, mock_jd_get):
-        mock_session_get.return_value = _mock_session(status="ready")
-        mock_jd_get.return_value      = _mock_jd_analysis()
-        res = self.client.post(self.url, {"session_id": MOCK_SESSION_ID}, format="json")
-
-        types = [q["question_type"] for q in res.data["questions"]]
-        dist  = {t: types.count(t) for t in set(types)}
-        print(f"\n[match] 질문 타입 분포: {dist}")
-
-        self.assertIn("personality", types)
-        self.assertIn("technical",   types)
-        self.assertIn("experience",  types)
-
-    def test_questions_순서_정렬(self, mock_session_get, mock_jd_get):
-        mock_session_get.return_value = _mock_session(status="ready")
-        mock_jd_get.return_value      = _mock_jd_analysis()
-        res = self.client.post(self.url, {"session_id": MOCK_SESSION_ID}, format="json")
-
-        orders = [q["order"] for q in res.data["questions"]]
-        print(f"\n[match] 질문 순서: {orders}")
-        self.assertEqual(orders, sorted(orders))
 
     def test_분석미완료_세션_400(self, mock_session_get, mock_jd_get):
         mock_session_get.return_value = _mock_session(status="analyzing")
