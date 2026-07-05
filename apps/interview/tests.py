@@ -476,6 +476,13 @@ class MVPTextInterviewFlowTests(APITestCase):
             email='mvp-owner@example.com',
             original_text='Python backend developer',
         )
+        earn_points(
+            user=self.user,
+            amount=1000,
+            reason_code='TEST.MVP_BALANCE',
+            idempotency_key=f'test-mvp-balance:{self.user.id}',
+            description='mvp interview point fixture',
+        )
         self.client.force_authenticate(self.user)
 
     def create_payload(self, **overrides):
@@ -616,6 +623,62 @@ class MVPTextInterviewFlowTests(APITestCase):
             [item['order_index'] for item in question_list.data['results']],
             [1, 2, 3],
         )
+
+    def test_question_generation_charges_start_points_once_per_session(self):
+        created = self.create_session(total_question_count=1)
+        session_id = created.data['session_id']
+        generate_url = reverse('mvp-question-generate', kwargs={'session_id': session_id})
+
+        first = self.client.post(generate_url, {}, format='json')
+        second = self.client.post(generate_url, {}, format='json')
+
+        self.user.refresh_from_db()
+        charges = PointHistory.objects.filter(
+            user=self.user,
+            reason_code='INTERVIEW.SESSION_STARTED',
+            reference_id=str(session_id),
+        )
+        self.assertEqual(first.status_code, status.HTTP_200_OK)
+        self.assertEqual(second.status_code, status.HTTP_200_OK)
+        self.assertEqual(charges.count(), 1)
+        self.assertEqual(charges.first().amount, -10)
+        self.assertEqual(self.user.point_balance, 990)
+
+    @patch('apps.interview.mvp_views.generate_interview_questions')
+    def test_question_generation_requires_start_points(self, mock_generate):
+        mock_generate.return_value = [
+            {
+                'question_text': 'Explain how you designed the API.',
+                'question_type': 'main',
+                'question_category': 'technical',
+                'order_index': 1,
+                'difficulty': 'medium',
+                'source_type': 'jd',
+                'source_reference': 'test',
+            }
+        ]
+        self.user.point_balance = 0
+        self.user.save(update_fields=['point_balance'])
+        created = self.create_session(total_question_count=1)
+        session_id = created.data['session_id']
+
+        response = self.client.post(
+            reverse('mvp-question-generate', kwargs={'session_id': session_id}),
+            {},
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, 402)
+        self.assertEqual(response.data['code'], 'POINTS_INSUFFICIENT')
+        self.assertFalse(
+            PointHistory.objects.filter(
+                user=self.user,
+                reason_code='INTERVIEW.SESSION_STARTED',
+                reference_id=str(session_id),
+            ).exists()
+        )
+        self.assertEqual(InterviewQuestion.objects.filter(session_id=session_id).count(), 0)
+        mock_generate.assert_not_called()
 
     @patch('apps.interview.mvp_views.generate_interview_questions')
     def test_question_generation_response_includes_source_tags(self, mock_generate):

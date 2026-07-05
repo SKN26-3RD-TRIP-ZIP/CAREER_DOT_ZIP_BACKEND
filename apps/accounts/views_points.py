@@ -3,6 +3,10 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.accounts.models import PointHistory
+from apps.accounts.services.points import resolve_point_policy
+
+
+INTERVIEW_SESSION_STARTED_REASON = "INTERVIEW.SESSION_STARTED"
 
 
 class PointHistorySerializer(serializers.ModelSerializer):
@@ -65,6 +69,32 @@ class MyPointHistoryView(APIView):
                 "page": page,
                 "size": size,
                 "results": serializer.data,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+class InterviewSessionStartPointPolicyView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        try:
+            policy = resolve_point_policy(INTERVIEW_SESSION_STARTED_REASON)
+        except ValueError as exc:
+            return Response(
+                {"detail": str(exc), "code": "POINT_POLICY_NOT_AVAILABLE"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        amount = int(policy["amount"])
+        return Response(
+            {
+                "reason_code": policy["reason_code"],
+                "transaction_type": policy["transaction_type"],
+                "amount": amount,
+                "cost": abs(amount),
+                "is_active": policy["is_active"],
+                "policy_version": policy["policy_version"],
             },
             status=status.HTTP_200_OK,
         )

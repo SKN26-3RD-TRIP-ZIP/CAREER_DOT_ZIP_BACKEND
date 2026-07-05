@@ -28,6 +28,20 @@ _PROMPT_INJECTION_PATTERN = re.compile(
     r'지금부터\s*너는|이전\s*지시|시스템\s*프롬프트|프롬프트\s*무시)',
     re.I,
 )
+_KOREAN_PROMPT_INJECTION_PATTERN = re.compile(
+    '|'.join(
+        [
+            r'\uc774\uc804\s*(?:\uc9c0\uc2dc|\uba85\ub839)\s*\ubb34\uc2dc',
+            r'\uc2dc\uc2a4\ud15c\s*\ud504\ub86c\ud504\ud2b8',
+            r'\ud504\ub86c\ud504\ud2b8\s*(?:\ucd9c\ub825|\uacf5\uac1c|\ubcf4\uc5ec)',
+            r'\uac1c\ubc1c\uc790\s*(?:\uba54\uc2dc\uc9c0|\uc9c0\uc2dc)',
+            r'\ubb34\uc870\uac74\s*\ub9cc\uc810',
+            r'\ud3c9\uac00\s*\uae30\uc900\s*(?:\ubc14\uafd4|\ubcc0\uacbd)',
+            r'\ub108\ub294\s*\uc774\uc81c\ubd80\ud130',
+        ]
+    ),
+    re.I,
+)
 _XSS_PATTERN = re.compile(r'(<\s*script\b|javascript\s*:|onerror\s*=|onload\s*=)', re.I)
 _SQLI_PATTERN = re.compile(r"(\bunion\s+select\b|\bdrop\s+table\b|--\s|/\*|\bor\s+1\s*=\s*1\b)", re.I)
 _HARMFUL_PATTERN = re.compile(
@@ -100,7 +114,7 @@ def scan_user_input(text, *, previous_answers=None, min_answer_length=15):
         return GuardrailResult('G3', 'BLOCK_INPUT', 'XSS_PATTERN', mask_sensitive_text(value))
     if _SQLI_PATTERN.search(value):
         return GuardrailResult('G3', 'BLOCK_INPUT', 'SQL_INJECTION_PATTERN', mask_sensitive_text(value))
-    if _PROMPT_INJECTION_PATTERN.search(value):
+    if _PROMPT_INJECTION_PATTERN.search(value) or _KOREAN_PROMPT_INJECTION_PATTERN.search(value):
         return GuardrailResult('G3', 'BLOCK_INPUT', 'PROMPT_INJECTION_PATTERN', mask_sensitive_text(value))
     if _AUTOMATION_ABUSE_PATTERN.search(value):
         return GuardrailResult('G5', 'REQUIRE_ADMIN_REVIEW', 'AUTOMATION_OR_PRIVILEGE_ABUSE', mask_sensitive_text(value))

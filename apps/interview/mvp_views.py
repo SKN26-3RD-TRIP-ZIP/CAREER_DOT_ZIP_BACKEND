@@ -8,16 +8,19 @@ merged until consumers agree on a canonical contract.
 
 from django.shortcuts import get_object_or_404
 from django.conf import settings
+from django.db import transaction
 from django.http import HttpResponse
 from django.utils import timezone
 from rest_framework import parsers
 from rest_framework import permissions, status
+from rest_framework.exceptions import ValidationError
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.prompt.models import AdminPromptTestRun, PersonaConfig, PromptVersion
-from apps.accounts.services.points import InsufficientPointsError, apply_point_policy, refund_points
-from .models import InterviewAnswer, InterviewQuestion, InterviewSession, QuestionSourceTag
+from apps.accounts.models import User
+from apps.accounts.services.points import InsufficientPointsError, apply_point_policy, refund_points, resolve_point_policy
+from .models import GuardrailEvent, InterviewAnswer, InterviewQuestion, InterviewSession, QuestionSourceTag
 from .mvp_serializers import (
     MVPQuestionGenerateSerializer,
     MVPQuestionSerializer,
@@ -33,6 +36,7 @@ from .mvp_serializers import (
 from .services.question_generator import generate_interview_questions
 from .services.answer_service import AnswerService
 from .services.follow_up_generator import FollowupGenerator
+from .services.guardrails import scan_user_input
 from .services.whisper_stt_service import transcribe_uploaded_audio
 from .services.tts_service import synthesize_interview_question
 from .services.ai_chain_openai_engine import AIChainOpenAIError
@@ -42,6 +46,7 @@ from .services.practice_session_service import (
 )
 
 EXPECTED_TECHNICAL_KEYWORDS_LABEL = 'expected_technical_keywords'
+INTERVIEW_SESSION_STARTED_REASON = 'INTERVIEW.SESSION_STARTED'
 
 
 def get_prompt_version_id(session):
@@ -281,6 +286,15 @@ class MVPQuestionGenerateView(APIView):
                 },
             )
 
+        if not prompt_version_id:
+            try:
+                start_policy = resolve_point_policy(INTERVIEW_SESSION_STARTED_REASON)
+            except ValueError as exc:
+                return Response({'detail': str(exc), 'code': 'POINT_POLICY_BLOCKED'}, status=status.HTTP_400_BAD_REQUEST)
+            current_balance = User.objects.only('point_balance').get(pk=request.user.pk).point_balance
+            if current_balance + int(start_policy['amount']) < 0:
+                return Response({'detail': 'Point balance is insufficient.', 'code': 'POINTS_INSUFFICIENT'}, status=402)
+
         try:
             generated = generate_interview_questions(
                 session,
@@ -295,22 +309,36 @@ class MVPQuestionGenerateView(APIView):
                 exc=exc,
             )
         created = []
+        with transaction.atomic():
+            if not prompt_version_id:
+                try:
+                    apply_point_policy(
+                        user=request.user,
+                        reason_code=INTERVIEW_SESSION_STARTED_REASON,
+                        reference_id=str(session.id),
+                        idempotency_key=f'{INTERVIEW_SESSION_STARTED_REASON}:{session.id}',
+                        description='interview session started',
+                    )
+                except InsufficientPointsError:
+                    return Response({'detail': 'Point balance is insufficient.', 'code': 'POINTS_INSUFFICIENT'}, status=402)
+                except ValueError as exc:
+                    return Response({'detail': str(exc), 'code': 'POINT_POLICY_BLOCKED'}, status=status.HTTP_400_BAD_REQUEST)
 
-        for question in generated:
-            source_tags = question.get('source_tags', [])
+            for question in generated:
+                source_tags = question.get('source_tags', [])
 
-            interview_question = InterviewQuestion.objects.create(
-                session=session,
-                question_text=question.get('question_text'),
-                question_type=question.get('question_type', 'main'),
-                question_category=question.get('question_category', 'general'),
-                order_index=question.get('order_index'),
-                difficulty=question.get('difficulty'),
-                source_type=question.get('source_type', 'general'),
-                source_reference=question.get('source_reference'),
-            )
-            _save_question_source_tags(interview_question, source_tags)
-            created.append(interview_question)
+                interview_question = InterviewQuestion.objects.create(
+                    session=session,
+                    question_text=question.get('question_text'),
+                    question_type=question.get('question_type', 'main'),
+                    question_category=question.get('question_category', 'general'),
+                    order_index=question.get('order_index'),
+                    difficulty=question.get('difficulty'),
+                    source_type=question.get('source_type', 'general'),
+                    source_reference=question.get('source_reference'),
+                )
+                _save_question_source_tags(interview_question, source_tags)
+                created.append(interview_question)
 
         return self._response(created)
 
@@ -378,9 +406,36 @@ class MVPSTTResultUpdateView(APIView):
             partial=True,
         )
         serializer.is_valid(raise_exception=True)
+        stt_text = serializer.validated_data['stt_text']
+        previous_answers = (
+            InterviewAnswer.objects
+            .filter(session=answer.session)
+            .exclude(question=answer.question)
+            .values_list('answer_text', flat=True)
+        )
+        guardrail = scan_user_input(stt_text, previous_answers=previous_answers)
+        GuardrailEvent.objects.create(
+            user=request.user,
+            session=answer.session,
+            question=answer.question,
+            answer=answer,
+            category=guardrail.category,
+            action=guardrail.action,
+            stage='INTERVIEW',
+            direction='USER_TO_AI',
+            rule_source='RULE',
+            reason_code=guardrail.reason_code,
+            masked_excerpt=guardrail.masked_excerpt,
+            endpoint='mvp_answer_stt_update',
+        )
+        if guardrail.should_block:
+            raise ValidationError({
+                'stt_text': 'Input was blocked by guardrail.',
+                'guardrail': guardrail.as_response(),
+            })
         # 음성 답변도 기존 평가/리포트 흐름을 그대로 타도록 answer_text에 STT 텍스트를 동기화한다.
         serializer.save(
-            answer_text=serializer.validated_data['stt_text'],
+            answer_text=stt_text,
             answer_source='stt',
         )
         return Response(

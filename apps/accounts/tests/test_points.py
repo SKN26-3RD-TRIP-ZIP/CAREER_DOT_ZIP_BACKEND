@@ -235,6 +235,29 @@ class PointAPITests(APITestCase):
         self.assertEqual(history.data["total"], 1)
         self.assertEqual(history.data["results"][0]["amount"], 300)
 
+    def test_interview_session_start_policy_uses_db_amount(self):
+        PointPolicy.objects.update_or_create(
+            reason_code="INTERVIEW.SESSION_STARTED",
+            defaults={
+                "transaction_type": PointHistory.TRANSACTION_USE,
+                "amount": -35,
+                "daily_limit": None,
+                "monthly_limit": None,
+                "account_once": False,
+                "per_reference_once": True,
+                "is_active": True,
+                "policy_version": "test-session-start-policy",
+            },
+        )
+
+        response = self.client.get("/api/v1/users/me/points/policies/interview-session-start")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["reason_code"], "INTERVIEW.SESSION_STARTED")
+        self.assertEqual(response.data["amount"], -35)
+        self.assertEqual(response.data["cost"], 35)
+        self.assertEqual(response.data["policy_version"], "test-session-start-policy")
+
     def test_points_require_auth(self):
         self.client.credentials()
         response = self.client.get("/api/v1/users/me/points")
