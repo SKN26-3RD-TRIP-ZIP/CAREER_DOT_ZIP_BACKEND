@@ -3,6 +3,7 @@ from rest_framework import serializers
 
 from .models import AuditLog
 from apps.accounts.models import PointHistory, PointPolicy
+from apps.interview.models import GuardrailEvent
 
 
 User = get_user_model()
@@ -77,6 +78,44 @@ class AuditLogSerializer(serializers.ModelSerializer):
             'target_name',
             'before_value',
             'after_value',
+            'created_at',
+        )
+
+
+class AdminGuardrailEventQuerySerializer(PageQuerySerializer):
+    category = serializers.ChoiceField(choices=GuardrailEvent.CATEGORY_CHOICES, required=False)
+    action = serializers.ChoiceField(choices=GuardrailEvent.ACTION_CHOICES, required=False)
+    user_id = serializers.IntegerField(required=False, min_value=1)
+    session_id = serializers.IntegerField(required=False, min_value=1)
+
+
+class AdminGuardrailEventSerializer(serializers.ModelSerializer):
+    guardrail_event_id = serializers.IntegerField(source='id', read_only=True)
+    user_id = serializers.IntegerField(read_only=True)
+    user_name = serializers.CharField(source='user.name', read_only=True)
+    user_email = serializers.EmailField(source='user.email', read_only=True)
+    session_id = serializers.IntegerField(read_only=True, allow_null=True)
+    question_id = serializers.IntegerField(read_only=True, allow_null=True)
+    answer_id = serializers.IntegerField(read_only=True, allow_null=True)
+
+    class Meta:
+        model = GuardrailEvent
+        fields = (
+            'guardrail_event_id',
+            'user_id',
+            'user_name',
+            'user_email',
+            'session_id',
+            'question_id',
+            'answer_id',
+            'category',
+            'action',
+            'stage',
+            'direction',
+            'rule_source',
+            'reason_code',
+            'masked_excerpt',
+            'endpoint',
             'created_at',
         )
 
