@@ -166,11 +166,9 @@ def verify_pending_code(pending, code: str) -> str:
         pending.is_used = True
         pending.save(update_fields=["is_used", "updated_at"])
         return VerifyResult.TOO_MANY
-    print("Verifying pending code:", code, "against hash:", pending.code_hash)
 
     pending.attempt_count += 1
     if hmac.compare_digest(pending.code_hash, hash_code(code)):
-        print("hmac.compare_digest succeeded")
         pending.is_used = True
         pending.verified_at = now
         pending.save(update_fields=["attempt_count", "is_used", "verified_at", "updated_at"])
