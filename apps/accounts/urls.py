@@ -7,6 +7,7 @@ from .views import (
     VerifyEmailView,
     LogoutView,
     ResendVerificationView,
+    CheckEmailView,
 )
 from .views_me import MeView
 from .views_oauth import (
@@ -19,6 +20,7 @@ from .views_terms import MarketingConsentView, MyTermsAgreementListView
 
 urlpatterns = [
     # no-slash alias (프론트/명세 호환)
+    path("check-email", CheckEmailView.as_view()),
     path("signup", SignupView.as_view()),
     path("login", LoginView.as_view()),
     path("verify-email/resend", ResendVerificationView.as_view()),
@@ -35,6 +37,7 @@ urlpatterns = [
     path("users/me/terms-agreements/marketing", MarketingConsentView.as_view(), name="my-marketing-consent"),
 
     # trailing-slash route
+    path("check-email/", CheckEmailView.as_view(), name="check-email"),
     path("signup/", SignupView.as_view(), name="signup"),
     path("login/", LoginView.as_view(), name="login"),
     path("verify-email/resend/", ResendVerificationView.as_view(), name="verify-email-resend"),
