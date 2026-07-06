@@ -555,6 +555,8 @@ class MVPTextInterviewFlowTests(APITestCase):
     def test_session_detail_and_status_update(self):
         created = self.create_session()
         session_id = created.data['session_id']
+        self.user.refresh_from_db()
+        initial_balance = self.user.point_balance
 
         detail = self.client.get(
             reverse('mvp-session-detail', kwargs={'session_id': session_id})
@@ -572,7 +574,7 @@ class MVPTextInterviewFlowTests(APITestCase):
         self.assertEqual(status_response.data['status'], 'completed')
         self.assertIsNotNone(status_response.data['ended_at'])
         self.user.refresh_from_db()
-        self.assertEqual(self.user.point_balance, 300)
+        self.assertEqual(self.user.point_balance, initial_balance + 300)
         self.assertEqual(
             PointHistory.objects.filter(
                 user=self.user,
@@ -586,6 +588,8 @@ class MVPTextInterviewFlowTests(APITestCase):
         created = self.create_session()
         session_id = created.data['session_id']
         url = reverse('mvp-session-status', kwargs={'session_id': session_id})
+        self.user.refresh_from_db()
+        initial_balance = self.user.point_balance
 
         first = self.client.patch(url, {'status': 'completed'}, format='json')
         second = self.client.patch(url, {'status': 'completed'}, format='json')
@@ -593,7 +597,7 @@ class MVPTextInterviewFlowTests(APITestCase):
         self.assertEqual(first.status_code, status.HTTP_200_OK)
         self.assertEqual(second.status_code, status.HTTP_200_OK)
         self.user.refresh_from_db()
-        self.assertEqual(self.user.point_balance, 300)
+        self.assertEqual(self.user.point_balance, initial_balance + 300)
         self.assertEqual(
             PointHistory.objects.filter(
                 user=self.user,
