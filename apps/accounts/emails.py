@@ -78,6 +78,7 @@ def send_verification_code_email(user, code: str) -> None:
     # 유효시간은 settings.EMAIL_CODE_TTL_SECONDS 와 동기화한다(현재 10분).
     ttl_min = max(1, int(getattr(settings, "EMAIL_CODE_TTL_SECONDS", 600)) // 60)
 
+    print(f"Sending verification code email to {user.email} with code {code} (TTL {ttl_min} min)")
     text_body = (
         f"{user.name}님, Career.zip 이메일 인증번호를 안내드립니다.\n\n"
         f"인증번호: {code}\n\n"
