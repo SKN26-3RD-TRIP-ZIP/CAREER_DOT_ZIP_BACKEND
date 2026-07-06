@@ -1,5 +1,7 @@
 from django.contrib import admin
-from .models import AnalysisSession, JdAnalysis, GeneratedQuestion, ConglomerateCompany
+from .models import (
+    AnalysisSession, JdAnalysis, GeneratedQuestion, ConglomerateCompany, IndustryTalentProfile,
+)
 
 
 @admin.register(AnalysisSession)
@@ -30,3 +32,9 @@ class ConglomerateCompanyAdmin(admin.ModelAdmin):
     list_display  = ["group_name", "company_name"]
     list_filter   = ["group_name"]
     search_fields = ["company_name", "group_name"]
+
+
+@admin.register(IndustryTalentProfile)
+class IndustryTalentProfileAdmin(admin.ModelAdmin):
+    list_display  = ["industry", "talent_keywords", "created_at"]
+    search_fields = ["industry"]

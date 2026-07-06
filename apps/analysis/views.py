@@ -623,8 +623,15 @@ class AnalysisQuestionsView(APIView):
                     company_type = classify_company(company_name)
 
                     industry = None
+                    recent_trends = ""
                     if company_type == "sme":
                         industry = get_industry_from_jd(session.jd_text or "")
+                    else:
+                        try:
+                            from apps.analysis.services.trend_service import get_company_recent_trends
+                            recent_trends = get_company_recent_trends(company_name)
+                        except Exception as e:
+                            logger.warning("[AnalysisQuestions] 최근 동향 조회 실패: %s", e)
 
                     # ── 인재상 조회 우선순위 ──────────────────────────────
                     confirmed_traits = []
@@ -692,16 +699,18 @@ class AnalysisQuestionsView(APIView):
                             logger.warning("[AnalysisQuestions] LLM 인재상 추출 실패: %s", e)
 
                     # 3순위: 업종 기반 IndustryTalentProfile fallback
+                    # (해당 업종 검색 실패 시 기본 업종으로 재검색하는 fallback은
+                    #  get_industry_talent_keywords 내부에서 처리한다)
                     if not confirmed_traits:
                         try:
-                            from apps.analysis.models import IndustryTalentProfile
+                            from apps.analysis.services.company_service import get_industry_talent_keywords
                             from apps.input.models import TalentProfileTrait as _Trait
                             _industry = get_industry_from_jd(session.jd_text or "")
-                            _itp = IndustryTalentProfile.objects.filter(industry=_industry).first()
-                            if _itp and _itp.talent_keywords:
+                            _keywords, _matched_industry = get_industry_talent_keywords(_industry)
+                            if _keywords:
                                 fallback_traits = list(
                                     _Trait.objects.filter(
-                                        trait_name__in=_itp.talent_keywords, is_active=True
+                                        trait_name__in=_keywords, is_active=True
                                     ).select_related("category")[:3]
                                 )
                                 if fallback_traits:
@@ -727,6 +736,7 @@ class AnalysisQuestionsView(APIView):
                         confirmed_traits=confirmed_traits,
                         talent_source=talent_source,
                         talent_summary=talent_summary,
+                        recent_trends=recent_trends,
                     )
 
                     session.company_type    = company_type

@@ -10,6 +10,8 @@ from rest_framework_simplejwt.exceptions import InvalidToken, TokenError
 from django.conf import settings
 from django.contrib.auth.hashers import make_password
 from django.contrib.auth.models import update_last_login
+from django.core.exceptions import ValidationError as DjangoValidationError
+from django.core.validators import validate_email
 from django.db import IntegrityError, transaction
 from django.utils import timezone
 
@@ -79,6 +81,61 @@ def _pending_signup_payload(*, detail="인증번호를 발송했습니다.", ret
         data["resend_after"] = retry_after
         data["retry_after"] = retry_after
     return data
+
+
+class CheckEmailView(APIView):
+    """이메일 중복 확인. POST /api/v1/auth/check-email  body: {"email": "..."}
+
+    회원가입 진행 전 프론트에서 이메일 사용 가능 여부를 미리 확인하기 위한 엔드포인트.
+    SignupView 의 중복 이메일 차단 기준과 동일하게 판단한다.
+    - banned 계정      → available: false, code: ACCOUNT_BANNED
+    - is_verified=True → available: false, code: EMAIL_ALREADY_REGISTERED
+    - 그 외(미가입 · 미인증) → available: true (재가입/인증 재발송 흐름으로 처리되므로 차단하지 않음)
+    """
+    permission_classes = [permissions.AllowAny]
+    authentication_classes = []
+
+    def post(self, request):
+        email = (request.data.get('email') or '').strip()
+        if not email:
+            return Response(
+                {'detail': '이메일을 입력해 주세요.', 'code': 'EMAIL_REQUIRED'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            validate_email(email)
+        except DjangoValidationError:
+            return Response(
+                {'detail': '올바른 이메일 형식이 아닙니다.', 'code': 'EMAIL_INVALID'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        existing_user = User.objects.filter(email=email).first()
+        if existing_user is not None:
+            if existing_user.status == 'banned':
+                return Response(
+                    {
+                        'available': False,
+                        'code': 'ACCOUNT_BANNED',
+                        'detail': '이용이 제한된 계정입니다. 관리자에게 문의해 주세요.',
+                    },
+                    status=status.HTTP_200_OK,
+                )
+            if existing_user.is_verified:
+                return Response(
+                    {
+                        'available': False,
+                        'code': 'EMAIL_ALREADY_REGISTERED',
+                        'detail': '이미 가입된 이메일입니다.',
+                    },
+                    status=status.HTTP_200_OK,
+                )
+
+        return Response(
+            {'available': True, 'code': 'AVAILABLE', 'detail': '사용 가능한 이메일입니다.'},
+            status=status.HTTP_200_OK,
+        )
 
 
 class SignupView(APIView):
