@@ -1,6 +1,7 @@
 from .audit import AuditLogListView
 from .base import AdminAPIView, paginate
 from .dashboard import DashboardStatsView
+from .guardrails import AdminGuardrailEventListView
 from .members import (
     MemberDetailView,
     MemberInviteView,
@@ -24,6 +25,7 @@ __all__ = [
     'AdminPointPolicyUpdateView',
     'AuditLogListView',
     'DashboardStatsView',
+    'AdminGuardrailEventListView',
     'MemberDetailView',
     'MemberInviteView',
     'MemberListView',
