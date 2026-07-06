@@ -66,6 +66,10 @@ OPENAI_API_KEY = os.getenv('OPENAI_API_KEY', '')
 # ===== Pinecone =====
 PINECONE_API_KEY    = os.getenv('PINECONE_API_KEY', '')
 PINECONE_INDEX_NAME = os.getenv('PINECONE_INDEX_NAME', '')
+
+# ===== Tavily Search (대기업 최근 동향 조회) =====
+TAVILY_API_KEY = os.getenv('TAVILY_API_KEY', '')
+
 INTERVIEW_AI_CHAIN_ENGINE = os.getenv('INTERVIEW_AI_CHAIN_ENGINE', 'mock').strip().lower()
 INTERVIEW_AI_OPENAI_MODEL = os.getenv('INTERVIEW_AI_OPENAI_MODEL', 'gpt-4o')
 OPENAI_MODEL_QUESTION_GENERATION = os.getenv(

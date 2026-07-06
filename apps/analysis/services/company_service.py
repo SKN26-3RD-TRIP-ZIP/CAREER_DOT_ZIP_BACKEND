@@ -27,7 +27,8 @@ def classify_company(company_name: str) -> str:
         from apps.analysis.models import ConglomerateCompany
         if ConglomerateCompany.objects.filter(company_name=company_name).exists():
             return "large"
-        if ConglomerateCompany.objects.filter(company_name__contains=company_name).exists():
+        known_names = ConglomerateCompany.objects.values_list("company_name", flat=True)
+        if any(name in company_name for name in known_names):
             return "large"
         return "sme"
     except Exception as e:
@@ -61,6 +62,36 @@ def get_industry_from_jd(jd_text: str) -> str:
         return "스타트업"
 
 
+_DEFAULT_INDUSTRY_FALLBACK = "스타트업"
+
+
+def get_industry_talent_keywords(industry: str) -> tuple[list, str | None]:
+    """업종별 인재상 키워드를 조회한다.
+
+    1) 해당 업종으로 IndustryTalentProfile을 검색한다 (검색 가능 여부 확인).
+    2) 검색 결과가 없거나 키워드가 비어 있으면, 기본 업종("스타트업")으로 재검색해 fallback한다.
+    3) 기본 업종에도 데이터가 없으면 빈 결과를 반환한다 (예외 전파 금지).
+
+    반환값: (talent_keywords, 실제 매칭된 industry). 매칭 실패 시 ([], None).
+    """
+    from apps.analysis.models import IndustryTalentProfile
+
+    try:
+        itp = IndustryTalentProfile.objects.filter(industry=industry).first()
+        if itp and itp.talent_keywords:
+            return itp.talent_keywords, industry
+
+        if industry != _DEFAULT_INDUSTRY_FALLBACK:
+            itp = IndustryTalentProfile.objects.filter(industry=_DEFAULT_INDUSTRY_FALLBACK).first()
+            if itp and itp.talent_keywords:
+                return itp.talent_keywords, _DEFAULT_INDUSTRY_FALLBACK
+
+        return [], None
+    except Exception as e:
+        logger.warning("get_industry_talent_keywords 실패 (industry=%s): %s", industry, e)
+        return [], None
+
+
 _SOURCE_LABEL = {
     "OFFICIAL":     "회사가 공식적으로 공개한 인재상",
     "AI_EXTRACTED": "채용공고에서 추출한 인재상 (사용자 미확정)",
@@ -77,6 +108,7 @@ def build_company_context(
     confirmed_traits: list,
     talent_source: str | None = None,
     talent_summary: str = "",
+    recent_trends: str = "",
 ) -> str:
     """질문 생성 프롬프트에 주입할 기업 맞춤형 컨텍스트를 조립한다."""
     type_label = "대기업" if company_type == "large" else "중소기업"
@@ -88,6 +120,9 @@ def build_company_context(
     ]
     if company_type == "sme" and industry:
         header_lines.append(f"업종: {industry}")
+    if company_type == "large" and recent_trends:
+        header_lines.append("최근 동향:")
+        header_lines.extend(f"  {line}" for line in recent_trends.splitlines())
     header_lines.append("============================")
     header = "\n".join(header_lines)
 

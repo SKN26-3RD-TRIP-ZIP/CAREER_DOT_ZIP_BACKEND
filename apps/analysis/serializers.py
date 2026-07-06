@@ -9,8 +9,6 @@ from .models import TalentProfileCategory, TalentProfileTrait, JDTalentProfile, 
 class TalentProfileTraitSerializer(serializers.ModelSerializer):
     """인재상 세부 항목 직렬화."""
 
-    trait_id = serializers.IntegerField(source="id")
-
     class Meta:
         model  = TalentProfileTrait
         fields = ("trait_id", "trait_code", "trait_name", "short_description", "display_order")
@@ -19,8 +17,7 @@ class TalentProfileTraitSerializer(serializers.ModelSerializer):
 class TalentProfileCategorySerializer(serializers.ModelSerializer):
     """인재상 상위 영역 직렬화. traits를 중첩해서 반환한다."""
 
-    category_id = serializers.IntegerField(source="id")
-    traits      = TalentProfileTraitSerializer(many=True, read_only=True)
+    traits = TalentProfileTraitSerializer(many=True, read_only=True)
 
     class Meta:
         model  = TalentProfileCategory
