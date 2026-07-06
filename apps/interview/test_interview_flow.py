@@ -22,6 +22,8 @@ class MVPInterviewFlowAPITests(APITestCase):
             password="password123",
             name="Flow Owner",
         )
+        self.user.point_balance = 1000
+        self.user.save(update_fields=["point_balance"])
         self.client.force_authenticate(self.user)
 
         self.jd = JobDescription.objects.create(

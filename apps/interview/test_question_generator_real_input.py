@@ -8,6 +8,7 @@ from django.urls import reverse
 from rest_framework import status
 from rest_framework.test import APITestCase
 
+from apps.accounts.services.points import earn_points
 from apps.analysis.models import AnalysisSession, GeneratedQuestion, JdAnalysis
 from apps.input.models import (
     CoverLetter,
@@ -740,6 +741,13 @@ class InterviewQuestionGenerateSourceTagsAPITest(APITestCase):
             password='password123',
             name='Source Tag API Owner',
         )
+        earn_points(
+            user=self.user,
+            amount=1000,
+            reason_code='TEST.MVP_QUESTION_GENERATE_BALANCE',
+            idempotency_key=f'test-mvp-question-generate-balance:{self.user.id}',
+            description='mvp question generate point fixture',
+        )
         self.jd = JobDescription.objects.create(
             user=self.user,
             company_name='Career Zip',
@@ -951,6 +959,13 @@ class MVPAnalysisQuestionLinkAPITest(APITestCase):
             email='analysis-link-owner@example.com',
             password='password123',
             name='Analysis Link Owner',
+        )
+        earn_points(
+            user=self.user,
+            amount=1000,
+            reason_code='TEST.MVP_ANALYSIS_LINK_BALANCE',
+            idempotency_key=f'test-mvp-analysis-link-balance:{self.user.id}',
+            description='mvp analysis link point fixture',
         )
         self.jd = JobDescription.objects.create(
             user=self.user,
