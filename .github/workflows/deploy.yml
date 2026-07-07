@@ -27,6 +27,9 @@ jobs:
     # environment 를 지정하면 동일 이름의 GitHub Environment 에 등록된 Secret 이
     # 레포 레벨 Secret 보다 우선 적용된다(없으면 레포 레벨로 폴백).
     environment: ${{ inputs.environment }}
+    permissions:
+      contents: read
+      packages: write   # ghcr.io push 에 필요
     steps:
       - uses: actions/checkout@v4
 
@@ -39,15 +42,17 @@ jobs:
           else
             echo "moving=dev" >> "$GITHUB_OUTPUT"
           fi
+          echo "owner=$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
 
       - uses: docker/login-action@v3
         with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build & push backend image
         run: |
-          IMG=${{ secrets.DOCKERHUB_USERNAME }}/careerzip-backend
+          IMG=ghcr.io/${{ steps.tag.outputs.owner }}/careerzip-backend
           docker build -f Dockerfile.prod -t $IMG:${{ steps.tag.outputs.sha }} -t $IMG:${{ steps.tag.outputs.moving }} .
           docker push $IMG:${{ steps.tag.outputs.sha }}
           docker push $IMG:${{ steps.tag.outputs.moving }}
@@ -61,7 +66,7 @@ jobs:
           script: |
             set -e
             cd ~/CAREER_DOT_ZIP
-            export DOCKERHUB_USERNAME=${{ secrets.DOCKERHUB_USERNAME }}
+            export BACKEND_IMAGE=ghcr.io/${{ steps.tag.outputs.owner }}/careerzip-backend
             export BACKEND_TAG=${{ steps.tag.outputs.sha }}
             docker compose -f docker-compose.prod.yml pull backend
             # 마이그레이션은 1회용 잡으로만 (앱 컨테이너는 RUN_MIGRATIONS=0)
@@ -73,10 +78,12 @@ jobs:
             done
 
 # 필요한 GitHub Secrets:
-#   레포 레벨(공용): DOCKERHUB_USERNAME, DOCKERHUB_TOKEN
+#   레포 레벨: 없음 (ghcr.io push 는 GITHUB_TOKEN 으로 자동 인증됨 — Docker Hub 계정/토큰 불필요)
 #   Environment 레벨(development / production 각각 별도 값):
 #     EC2_HOST, EC2_USER, EC2_SSH_KEY
 #   ※ Settings → Environments 에서 development/production 을 만들고 그 안에 위 3개를 등록.
-#      (레포 레벨에도 같은 이름이 있으면 Environment 쪽 값이 우선한다)
+# ※ ghcr.io 패키지는 기본 Private 로 생성됨. EC2 에서 별도 로그인 없이 pull 하려면
+#   최초 1회 GitHub → Packages → careerzip-backend → Package settings 에서
+#   Visibility 를 Public 으로 바꾸거나, EC2 쪽에 read:packages PAT 로 docker login 을 추가해야 함.
 # 실행: Actions 탭에서 backend-deploy 워크플로 실행 시 environment 입력값으로 development/production 선택.
 # 롤백: EC2 에서 BACKEND_TAG=<직전 SHA> 로 docker compose up -d backend (이미지 태그 보존).
