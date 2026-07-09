@@ -9,7 +9,7 @@ from .views import (
     ResendVerificationView,
     CheckEmailView,
 )
-from .views_me import MeView
+from .views_me import MeView, OnboardingCompleteView
 from .views_oauth import (
     OAuthCallbackView,
     OAuthExchangeView,
@@ -29,6 +29,7 @@ urlpatterns = [
     path("logout", LogoutView.as_view()),
     path("token/refresh", CookieTokenRefreshView.as_view()),
     path("me", MeView.as_view()),
+    path("onboarding/complete", OnboardingCompleteView.as_view()),
     path("oauth/exchange", OAuthExchangeView.as_view(), name="oauth-exchange"),
     path("oauth/social/terms", OAuthSocialTermsView.as_view(), name="oauth-social-terms"),
     path("oauth/<str:provider>/start", OAuthStartView.as_view(), name="oauth-start"),
@@ -46,6 +47,7 @@ urlpatterns = [
     path("logout/", LogoutView.as_view(), name="logout"),
     path("token/refresh/", CookieTokenRefreshView.as_view(), name="token_refresh"),
     path("me/", MeView.as_view(), name="me"),
+    path("onboarding/complete/", OnboardingCompleteView.as_view(), name="onboarding-complete"),
     path("oauth/exchange/", OAuthExchangeView.as_view()),
     path("oauth/social/terms/", OAuthSocialTermsView.as_view()),
     path("oauth/<str:provider>/start/", OAuthStartView.as_view()),

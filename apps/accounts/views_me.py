@@ -1,9 +1,29 @@
 """현재 로그인 사용자 조회 (GET /api/v1/auth/me)."""
+from django.utils import timezone
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import permissions
 
 from apps.input.models import UserProfile
+
+CURRENT_ONBOARDING_VERSION = 1
+
+
+def build_onboarding_state(user):
+    completed_at = user.onboarding_completed_at
+    required = (
+        not user.is_staff and
+        (
+            completed_at is None or
+            user.onboarding_version < CURRENT_ONBOARDING_VERSION
+        )
+    )
+    return {
+        "required": required,
+        "completed_at": completed_at.isoformat() if completed_at else None,
+        "version": user.onboarding_version,
+        "next_path": "/input/onboarding/1" if required else None,
+    }
 
 
 class MeView(APIView):
@@ -19,7 +39,16 @@ class MeView(APIView):
             profile.major_type and
             profile.desired_job
         )
-        next_path = '/admin/dashboard' if u.is_staff else ('/mypage' if profile_complete else '/profile')
+        onboarding = build_onboarding_state(u)
+        next_path = (
+            '/admin/dashboard'
+            if u.is_staff
+            else (
+                onboarding["next_path"]
+                if onboarding["required"]
+                else ('/mypage' if profile_complete else '/profile')
+            )
+        )
         return Response({
             "user_id": u.id,
             "email": u.email,
@@ -33,5 +62,22 @@ class MeView(APIView):
                 "is_complete": profile_complete,
                 "profile_id": str(profile.id) if profile else None,
             },
+            "onboarding": onboarding,
             "next_path": next_path,
+        })
+
+
+class OnboardingCompleteView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        user = request.user
+        if user.onboarding_completed_at is None or user.onboarding_version < CURRENT_ONBOARDING_VERSION:
+            user.onboarding_completed_at = timezone.now()
+            user.onboarding_version = CURRENT_ONBOARDING_VERSION
+            user.save(update_fields=["onboarding_completed_at", "onboarding_version", "updated_at"])
+
+        return Response({
+            "detail": "온보딩이 완료되었습니다.",
+            "onboarding": build_onboarding_state(user),
         })

@@ -1,4 +1,5 @@
 from django.test import override_settings
+from django.utils import timezone
 from rest_framework import status
 from rest_framework.test import APITestCase
 from apps.accounts.models import User
@@ -29,7 +30,8 @@ class MeEndpointTests(APITestCase):
         self.assertEqual(res.status_code, status.HTTP_200_OK)
         self.assertEqual(res.data["email"], "a@example.com")
         self.assertEqual(res.data["name"], "사용자A")
-        self.assertEqual(res.data["next_path"], "/profile")
+        self.assertTrue(res.data["onboarding"]["required"])
+        self.assertEqual(res.data["next_path"], "/input/onboarding/1")
         self.assertFalse(res.data["profile"]["exists"])
 
     def test_me_distinct_per_account(self):
@@ -51,6 +53,8 @@ class MeEndpointTests(APITestCase):
 
     def test_me_returns_mypage_next_path_when_profile_complete(self):
         user = self._verified("profiled@example.com", "프로필")
+        user.onboarding_completed_at = timezone.now()
+        user.save(update_fields=["onboarding_completed_at"])
         UserProfile.objects.create(
             user=user,
             career_type="신입",
@@ -65,7 +69,26 @@ class MeEndpointTests(APITestCase):
         self.assertEqual(res.status_code, status.HTTP_200_OK)
         self.assertTrue(res.data["profile"]["exists"])
         self.assertTrue(res.data["profile"]["is_complete"])
+        self.assertFalse(res.data["onboarding"]["required"])
         self.assertEqual(res.data["next_path"], "/mypage")
+
+    def test_onboarding_complete_marks_user_and_updates_me_route(self):
+        self._verified("onboard@example.com", "온보딩")
+        token = self._login_token("onboard@example.com")
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {token}")
+
+        before = self.client.get(self.me_url)
+        self.assertEqual(before.status_code, status.HTTP_200_OK)
+        self.assertTrue(before.data["onboarding"]["required"])
+
+        complete = self.client.post("/api/v1/auth/onboarding/complete")
+        self.assertEqual(complete.status_code, status.HTTP_200_OK)
+        self.assertFalse(complete.data["onboarding"]["required"])
+
+        after = self.client.get(self.me_url)
+        self.assertEqual(after.status_code, status.HTTP_200_OK)
+        self.assertFalse(after.data["onboarding"]["required"])
+        self.assertEqual(after.data["next_path"], "/profile")
 
     def test_me_returns_admin_next_path_for_staff(self):
         user = self._verified("admin-next@example.com", "관리자")

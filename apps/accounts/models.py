@@ -138,6 +138,8 @@ class User(AbstractBaseUser, PermissionsMixin):
     point_last_updated_at = models.DateTimeField(null=True, blank=True, default=None)
     withdrawn_at = models.DateTimeField(null=True, blank=True, default=None)
     attendance_record = models.DateField(null=True, blank=True, default=None)
+    onboarding_completed_at = models.DateTimeField(null=True, blank=True, default=None)
+    onboarding_version = models.PositiveSmallIntegerField(default=1)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     
