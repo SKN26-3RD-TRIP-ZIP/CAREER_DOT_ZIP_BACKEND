@@ -46,10 +46,13 @@ def extract_jd_keywords(jd_text: str, model: str = "gpt-4o-mini") -> dict:
     }
 
 
-def extract_jd_requirements(jd_text: str, model: str = "gpt-4o-mini") -> dict:
+def extract_jd_requirements(jd_text: str, company_name: str = "", model: str = "gpt-4o-mini") -> dict:
     """
-    JD 텍스트에서 지원 자격 요건(필수 조건)을 추출한다.
-    match_service의 룰베이스 점수 및 gap_service의 갭 계산에 사용된다.
+    JD 텍스트에서 지원 자격 요건(필수 조건), 회사 소개 요약, 업종을 추출한다.
+    자격 요건은 match_service의 룰베이스 점수 및 gap_service의 갭 계산에 사용되고,
+    company_summary/industry는 각각 JobDescription.company_summary 저장과
+    AnalysisQuestionsView의 업종 기반 인재상 fallback(company_service.resolve_industry)에
+    재사용되어, 별도 AI를 새로 호출하지 않고 이 프롬프트 결과를 재사용한다.
 
     반환 형식 (예시):
     {
@@ -57,7 +60,9 @@ def extract_jd_requirements(jd_text: str, model: str = "gpt-4o-mini") -> dict:
         "education":  "대졸",      # 최소 학력 ("무관" | "고졸" | "대졸" | "석사이상")
         "job_type":   "백엔드",    # 직군 키워드
         "required_tech": ["Python", "Django"],  # 필수(must-have) 기술 — 우대와 분리
-        "preferred_tech": ["Kubernetes"]        # 우대(nice-to-have) 기술
+        "preferred_tech": ["Kubernetes"],       # 우대(nice-to-have) 기술
+        "company_summary": "...",               # 회사 소개 한 문장 요약 (근거 부족 시 "")
+        "industry": "IT서비스"                   # ALLOWED_INDUSTRIES 중 하나 (검증은 호출측 책임)
     }
 
     """
@@ -67,7 +72,7 @@ def extract_jd_requirements(jd_text: str, model: str = "gpt-4o-mini") -> dict:
         temperature=0.2,
         messages=[
             {"role": "system", "content": JD_REQUIREMENTS_SYSTEM},
-            {"role": "user",   "content": build_jd_requirements_user(jd_text)},
+            {"role": "user",   "content": build_jd_requirements_user(jd_text, company_name)},
         ],
     )
     log_llm_usage(response)
@@ -75,9 +80,11 @@ def extract_jd_requirements(jd_text: str, model: str = "gpt-4o-mini") -> dict:
     result = json.loads(raw)
 
     return {
-        "min_years":      int(result.get("min_years", 0)),
-        "education":      result.get("education", "무관"),
-        "job_type":       result.get("job_type", ""),
-        "required_tech":  result.get("required_tech", []),
-        "preferred_tech": result.get("preferred_tech", []),
+        "min_years":       int(result.get("min_years", 0)),
+        "education":       result.get("education", "무관"),
+        "job_type":        result.get("job_type", ""),
+        "required_tech":   result.get("required_tech", []),
+        "preferred_tech":  result.get("preferred_tech", []),
+        "company_summary": result.get("company_summary", ""),
+        "industry":        result.get("industry", ""),
     }
