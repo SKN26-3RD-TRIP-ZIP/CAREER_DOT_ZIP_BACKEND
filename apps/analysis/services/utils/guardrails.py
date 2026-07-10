@@ -77,30 +77,32 @@ class InputGuardrail:
         """
         # ── 1차: 규칙 기반 검사 (LLM 호출 없음) ──────────────────────
 
-        # JD 길이 검사
+        # JD 길이 검사 (공백만 있는 입력은 빈 입력으로 취급)
         if jd is not None:
-            if len(jd) < self.jd_min_len:
+            jd_stripped = jd.strip()
+            if len(jd_stripped) < self.jd_min_len:
                 return {
                     "valid": False,
                     "field": "jd",
                     "error": f"채용공고 내용이 너무 짧습니다. {self.jd_min_len:,}자 이상 입력해주세요.",
                 }
-            if len(jd) > self.jd_max_len:
+            if len(jd_stripped) > self.jd_max_len:
                 return {
                     "valid": False,
                     "field": "jd",
                     "error": f"채용공고 내용이 너무 깁니다. {self.jd_max_len:,}자 이하로 입력해주세요.",
                 }
 
-        # 자소서 길이 검사
+        # 자소서 길이 검사 (공백만 있는 입력은 빈 입력으로 취급)
         if cover_letter:
-            if len(cover_letter) < self.cover_letter_min_len:
+            cl_stripped = cover_letter.strip()
+            if len(cl_stripped) < self.cover_letter_min_len:
                 return {
                     "valid": False,
                     "field": "cover_letter",
                     "error": f"자소서 내용이 너무 짧습니다. {self.cover_letter_min_len:,}자 이상 입력해주세요.",
                 }
-            if len(cover_letter) > self.cover_letter_max_len:
+            if len(cl_stripped) > self.cover_letter_max_len:
                 return {
                     "valid": False,
                     "field": "cover_letter",
@@ -199,7 +201,9 @@ class OutputGuardrail:
 
         Args:
             questions:          LLM이 생성한 질문 dict 목록.
-                                각 항목은 "question_text" 또는 "text" 키를 포함해야 한다.
+                                각 항목은 "question_text" / "text" / "question" 중
+                                하나의 키로 질문 본문을 담고 있어야 한다
+                                (build_question_output()의 API 응답 형식은 "question" 키 사용).
             existing_questions: 동일 세션에 이미 저장된 question_text 문자열 목록.
                                 None이면 빈 리스트로 처리한다.
 
@@ -210,7 +214,7 @@ class OutputGuardrail:
         filtered = []
 
         for q in questions:
-            text = (q.get("question_text") or q.get("text", "")).strip()
+            text = (q.get("question_text") or q.get("text") or q.get("question", "")).strip()
 
             if len(text) < 10:
                 logger.debug("[OutputGuardrail] 짧은 질문 제거: '%s'", text)

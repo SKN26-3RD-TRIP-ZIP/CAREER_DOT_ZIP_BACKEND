@@ -34,6 +34,9 @@ from .services.gap_service             import calculate_gap, build_gap_message
 from .services.question_service        import generate_all_questions
 from .services.question_output_service import to_db_records
 from .services.utils.guardrails        import InputGuardrail, OutputGuardrail
+from apps.accounts.services.points     import (
+    apply_point_policy, refund_points, InsufficientPointsError,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -90,7 +93,7 @@ def _run_analysis(session_id: int):
         t0 = time.time()
         with ThreadPoolExecutor(max_workers=3) as executor:
             f_jd_kw  = executor.submit(extract_jd_keywords,    session.jd_text)
-            f_jd_req = executor.submit(extract_jd_requirements, session.jd_text)
+            f_jd_req = executor.submit(extract_jd_requirements, session.jd_text, session.company_name)
             f_resume = executor.submit(analyze_resume, session.resume_text, session.cover_letter_text)
 
         jd_kw,          err_jd_kw  = _resolve_future(f_jd_kw,  "JD 키워드 추출",   {})
@@ -159,6 +162,7 @@ def _run_analysis(session_id: int):
         # /analysis/questions/ 를 호출할 때 생성·저장된다 (AnalysisQuestionsView).
 
         # input.JobDescription에 분석 결과 반영
+        # 실패 시 기존 방식(자격요건 필드 나열)으로 폴백
         summary_parts = []
         if jd_req.get("job_type"):
             summary_parts.append(jd_req["job_type"])
@@ -168,7 +172,10 @@ def _run_analysis(session_id: int):
             summary_parts.append(jd_req["education"])
         if jd_req.get("required_tech"):
             summary_parts.append(", ".join(jd_req["required_tech"][:5]))
-        company_summary = " | ".join(summary_parts) if summary_parts else session.job_role
+        fallback_summary = " | ".join(summary_parts) if summary_parts else session.job_role
+
+        # company_summary는 별도 AI 호출 없이 extract_jd_requirements() 결과를 재사용한다.
+        company_summary = jd_req.get("company_summary") or fallback_summary
 
         JobDescription.objects.filter(id=session.jd_id).update(
             company_summary=company_summary,
@@ -341,22 +348,22 @@ class AnalysisStartView(APIView):
             request.user.id, jd_id, resume_id, cover_letter_id,
             len(jd_text), len(cover_letter_text),
         )
-        # TODO: 가드레일 기준 재조정 후 다시 활성화
-        # guardrail = InputGuardrail()
-        # guard_result = guardrail.validate(jd=jd_text, cover_letter=cover_letter_text)
-        # if not guard_result["valid"]:
-        #     logger.warning(
-        #         "[AnalysisStart] 가드레일 차단 user=%s field=%s error=%s jd_text_len=%d",
-        #         request.user.id, guard_result.get("field"), guard_result["error"], len(jd_text),
-        #     )
-        #     return Response(
-        #         {
-        #             "error_code": "INVALID_INPUT",
-        #             "field":      guard_result.get("field"),
-        #             "message":    guard_result["error"],
-        #         },
-        #         status=400,
-        #     )
+        # 규칙 기반 1차 검사만 수행 (LLM 2차 검사는 guardrails.py 내부에서 별도로 비활성화됨)
+        guardrail = InputGuardrail()
+        guard_result = guardrail.validate(jd=jd_text, cover_letter=cover_letter_text)
+        if not guard_result["valid"]:
+            logger.warning(
+                "[AnalysisStart] 가드레일 차단 user=%s field=%s error=%s jd_text_len=%d",
+                request.user.id, guard_result.get("field"), guard_result["error"], len(jd_text),
+            )
+            return Response(
+                {
+                    "error_code": "INVALID_INPUT",
+                    "field":      guard_result.get("field"),
+                    "message":    guard_result["error"],
+                },
+                status=400,
+            )
 
         # 동일 조합(jd + resume + cover_letter)으로 완료된 세션이 있으면 재사용
         existing_session = (
@@ -547,16 +554,34 @@ class AnalysisQuestionsView(APIView):
         if existing and not regenerate:
             return Response(self._payload(jd_analysis, existing))
 
-        # 생성 또는 재생성 — 무료 상한 검사
+        # 생성 또는 재생성 — 무료 상한 초과 시 포인트 차감으로 진행
+        point_charge = None
+        point_idempotency_key = None
         if jd_analysis.generation_count >= MAX_QUESTION_GENERATIONS:
-            return Response(
-                {
-                    "error": f"이 분석의 질문 생성 횟수({MAX_QUESTION_GENERATIONS}회)를 모두 사용했습니다.",
-                    "generation_count": jd_analysis.generation_count,
-                    "max_generations": MAX_QUESTION_GENERATIONS,
-                },
-                status=429,   # Too Many Requests (Phase 2: 포인트 차감 분기 자리)
+            point_idempotency_key = (
+                f"ANALYSIS.EXTRA_QUESTION_GEN:{request.user.id}:"
+                f"{jd_analysis.id}:{jd_analysis.generation_count}"
             )
+            try:
+                point_charge = apply_point_policy(
+                    user=request.user,
+                    reason_code="ANALYSIS.EXTRA_QUESTION_GEN",
+                    reference_id=str(jd_analysis.id),
+                    idempotency_key=point_idempotency_key,
+                    description="예상 질문 추가 생성 (무료 횟수 소진 후)",
+                )
+            except InsufficientPointsError:
+                return Response(
+                    {
+                        "error": "무료 생성 횟수를 모두 사용했습니다. 포인트가 부족해 추가 생성할 수 없습니다.",
+                        "error_code": "POINTS_INSUFFICIENT",
+                        "generation_count": jd_analysis.generation_count,
+                        "max_generations": MAX_QUESTION_GENERATIONS,
+                    },
+                    status=402,
+                )
+            except ValueError as exc:
+                return Response({"error": str(exc), "error_code": "POINT_POLICY_BLOCKED"}, status=400)
 
         try:
             # ── GitHub URL 수집 (우선순위 순서: 세션 저장값 > 이력서 > 프로젝트 경험) ──
@@ -618,14 +643,19 @@ class AnalysisQuestionsView(APIView):
             if company_name:
                 try:
                     from apps.analysis.services.company_service import (
-                        classify_company, get_industry_from_jd, build_company_context,
+                        classify_company, resolve_industry, build_company_context,
                     )
                     company_type = classify_company(company_name)
+                    # extract_jd_requirements()가 분석 단계에서 이미 추출한 industry를
+                    # 재사용한다 (없거나 무효할 때만 resolve_industry가 새로 AI를 호출).
+                    # jd_keywords는 구형 list 형식으로 저장된 레거시 데이터일 수 있어 dict인 경우만 조회한다.
+                    _jd_kw = jd_analysis.jd_keywords
+                    stored_requirements = (_jd_kw.get("requirements") or {}) if isinstance(_jd_kw, dict) else {}
 
                     industry = None
                     recent_trends = ""
                     if company_type == "sme":
-                        industry = get_industry_from_jd(session.jd_text or "")
+                        industry = resolve_industry(stored_requirements.get("industry"), session.jd_text or "")
                     else:
                         try:
                             from apps.analysis.services.trend_service import get_company_recent_trends
@@ -657,6 +687,7 @@ class AnalysisQuestionsView(APIView):
                         try:
                             from apps.input.models import TalentProfileTrait as _Trait
                             from .services.utils import get_client as _get_client
+                            from .services.analysis_prompt import build_talent_trait_extract_user
                             import json as _json
 
                             trait_catalog = list(
@@ -664,18 +695,14 @@ class AnalysisQuestionsView(APIView):
                                 .values_list("trait_code", "trait_name")
                             )
                             catalog_str = "\n".join(f"{code}: {name}" for code, name in trait_catalog)
-                            prompt = (
-                                "다음 채용공고에서 이 회사가 중요하게 여기는 인재상이나 핵심 역량을\n"
-                                "아래 세부 인재상 목록 중에서 최대 3개를 골라 trait_code만 JSON 배열로 반환하세요.\n"
-                                "다른 텍스트는 포함하지 마세요.\n\n"
-                                f"세부 인재상 목록:\n{catalog_str}\n\n"
-                                f"채용공고:\n{(session.jd_text or '')[:3000]}"
-                            )
                             _client = _get_client()
                             _resp = _client.chat.completions.create(
                                 model="gpt-4o-mini",
                                 temperature=0,
-                                messages=[{"role": "user", "content": prompt}],
+                                messages=[{
+                                    "role": "user",
+                                    "content": build_talent_trait_extract_user(catalog_str, session.jd_text or ""),
+                                }],
                             )
                             codes = _json.loads(_resp.choices[0].message.content.strip())
                             if isinstance(codes, list) and codes:
@@ -705,7 +732,9 @@ class AnalysisQuestionsView(APIView):
                         try:
                             from apps.analysis.services.company_service import get_industry_talent_keywords
                             from apps.input.models import TalentProfileTrait as _Trait
-                            _industry = get_industry_from_jd(session.jd_text or "")
+                            _industry = industry or resolve_industry(
+                                stored_requirements.get("industry"), session.jd_text or ""
+                            )
                             _keywords, _matched_industry = get_industry_talent_keywords(_industry)
                             if _keywords:
                                 fallback_traits = list(
@@ -790,12 +819,37 @@ class AnalysisQuestionsView(APIView):
                 JdAnalysis.objects.filter(id=jd_analysis.id).update(
                     generation_count=F("generation_count") + 1
                 )
+
+            # 포인트를 냈는데 결과가 0건이면 자동 환불 (사용자 귀책 아님)
+            if point_charge is not None and point_charge.created and not db_records:
+                refund_points(
+                    user=request.user,
+                    amount=abs(point_charge.history.amount),
+                    reason_code="ANALYSIS.EXTRA_QUESTION_GEN.REFUND",
+                    reference_id=str(jd_analysis.id),
+                    idempotency_key=f"{point_idempotency_key}:REFUND",
+                    description="질문 생성 결과 0건으로 자동 환불",
+                )
+                point_charge = None
         except Exception as e:
             logger.error("[Analysis] 질문 생성 실패 session=%s: %s", session_id, e, exc_info=True)
+            if point_charge is not None and point_charge.created:
+                refund_points(
+                    user=request.user,
+                    amount=abs(point_charge.history.amount),
+                    reason_code="ANALYSIS.EXTRA_QUESTION_GEN.REFUND",
+                    reference_id=str(jd_analysis.id),
+                    idempotency_key=f"{point_idempotency_key}:REFUND",
+                    description="질문 생성 실패로 자동 환불",
+                )
             return Response({"error": "질문 생성 중 오류가 발생했습니다."}, status=500)
 
         jd_analysis.refresh_from_db(fields=["generation_count"])
-        return Response(self._payload(jd_analysis, self._serialize(jd_analysis)))
+        payload = self._payload(jd_analysis, self._serialize(jd_analysis))
+        if point_charge is not None and point_charge.created:
+            payload["point_charged"]  = abs(point_charge.history.amount)
+            payload["point_balance"]  = point_charge.history.balance_after
+        return Response(payload)
 
 
 class QuestionFeedbackView(APIView):

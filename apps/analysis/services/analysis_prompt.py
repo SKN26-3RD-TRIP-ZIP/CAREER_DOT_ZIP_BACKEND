@@ -17,18 +17,27 @@ from __future__ import annotations
 # ──────────────────────────────────────────────────────────────
 
 PROMPT_REGISTRY: dict[str, dict] = {
-    "jd_keywords":        {"version": "1.1", "output_schema": "jd_keywords"},
-    "jd_requirements":    {"version": "1.1", "output_schema": "jd_requirements"},
-    "resume_analysis":    {"version": "1.2", "output_schema": "resume_analysis"},
-    "match_strengths":    {"version": "1.1", "output_schema": "match_strengths"},
-    "star_answer":        {"version": "1.1", "output_schema": None},   # 배열 형식
-    "technical_answer":   {"version": "1.1", "output_schema": None},   # 배열 형식
-    "question_gen":       {"version": "1.2", "output_schema": "question_gen"},
-    "github_question":    {"version": "1.1", "output_schema": "github_question"},
-    "interview_context":  {"version": "1.1", "output_schema": "interview_context"},
-    "guardrail_jd":       {"version": "1.0", "output_schema": None},   # YES/NO 텍스트
-    "guardrail_cl":       {"version": "1.0", "output_schema": None},   # YES/NO 텍스트
+    "jd_keywords":         {"version": "1.1", "output_schema": "jd_keywords"},
+    "jd_requirements":     {"version": "1.3", "output_schema": "jd_requirements"},
+    "resume_analysis":     {"version": "1.2", "output_schema": "resume_analysis"},
+    "match_strengths":     {"version": "1.1", "output_schema": "match_strengths"},
+    "star_answer":         {"version": "1.1", "output_schema": None},   # 배열 형식
+    "technical_answer":    {"version": "1.1", "output_schema": None},   # 배열 형식
+    "question_gen":        {"version": "1.2", "output_schema": "question_gen"},
+    "github_question":     {"version": "1.1", "output_schema": "github_question"},
+    "interview_context":   {"version": "1.1", "output_schema": "interview_context"},
+    "guardrail_jd":        {"version": "1.0", "output_schema": None},   # YES/NO 텍스트
+    "guardrail_cl":        {"version": "1.0", "output_schema": None},   # YES/NO 텍스트
+    "industry_classify":   {"version": "1.0", "output_schema": None},   # 업종명 텍스트 (jd_requirements의 fallback)
+    "talent_trait_extract": {"version": "1.0", "output_schema": None},  # trait_code 배열
 }
+
+# JD 자격 요건 추출(industry 필드)과 업종 분류 fallback(get_industry_from_jd)이 공유하는
+# 허용 업종 목록. company_service.py의 IndustryTalentProfile 조회와도 값이 일치해야 한다.
+ALLOWED_INDUSTRIES = (
+    "IT서비스", "제조업", "금융/핀테크", "유통/이커머스", "건설/엔지니어링",
+    "바이오/헬스케어", "미디어/콘텐츠", "컨설팅/전문서비스", "공공/공기업", "스타트업",
+)
 
 OUTPUT_SCHEMAS: dict[str, list[str]] = {
     "jd_keywords":       ["tech_keywords", "trait_keywords"],
@@ -106,12 +115,12 @@ def build_jd_keywords_user(jd_text: str) -> str:
 
 # ──────────────────────────────────────────────────────────────
 
-JD_REQUIREMENTS_SYSTEM = """\
+JD_REQUIREMENTS_SYSTEM = f"""\
 [페르소나]
 당신은 IT 채용공고에서 지원 자격 요건을 정확하게 구조화하는 분석 전문가입니다.
 
 [태스크]
-JD에서 지원 자격 요건 5개 필드를 추출하세요.
+JD에서 지원 자격 요건 5개 필드, 회사 소개 요약 1개 필드, 업종 1개 필드를 추출하세요.
 
 [추출 기준]
 1. min_years (정수)
@@ -135,20 +144,37 @@ JD에서 지원 자격 요건 5개 필드를 추출하세요.
    · "우대" / "우대 사항" / "Preferred" 섹션 기술만
    · required_tech와 중복 제거. 없으면 []
 
+6. company_summary (문자열)
+   · 이 공고를 낸 회사를 지원자에게 소개하는 한 문장짜리 한국어 요약
+   · 회사가 어떤 사업/서비스를 하는 곳인지 중심으로 작성
+   · [회사명]과 JD 본문만 근거로 작성. JD에 없는 내용은 추측 금지
+   · 80자 이내, 한 문장. 요약 문장 외 다른 텍스트 포함 금지
+   · 근거가 부족하면 빈 문자열 ""
+
+7. industry (문자열)
+   · 아래 목록 중 정확히 하나만 선택 (다른 값 금지)
+     [{", ".join(ALLOWED_INDUSTRIES)}]
+   · JD 본문의 사업 영역/도메인을 근거로 판단. 애매하면 "스타트업"
+
 [출력 형식]
 JSON만 응답. 마크다운 코드블록 금지.
-{
-  "min_years":      0,
-  "education":      "무관",
-  "job_type":       "백엔드",
-  "required_tech":  ["Python", "Django"],
-  "preferred_tech": ["Kubernetes"]
-}"""
+{{
+  "min_years":       0,
+  "education":       "무관",
+  "job_type":        "백엔드",
+  "required_tech":   ["Python", "Django"],
+  "preferred_tech":  ["Kubernetes"],
+  "company_summary": "클라우드 기반 협업 툴을 개발·운영하는 IT 서비스 회사입니다.",
+  "industry":        "IT서비스"
+}}"""
 
 
-def build_jd_requirements_user(jd_text: str) -> str:
+def build_jd_requirements_user(jd_text: str, company_name: str = "") -> str:
     return f"""\
-아래 채용공고에서 지원 자격 요건을 추출해주세요.
+아래 채용공고에서 지원 자격 요건과 회사 소개 요약, 업종을 추출해주세요.
+
+[회사명]
+{company_name}
 
 [채용공고 JD]
 {jd_text}"""
@@ -191,10 +217,12 @@ RESUME_ANALYSIS_SYSTEM = """\
    예) "의견 충돌 시 A/B 테스트 수치로 팀 합의를 이끌어낸 경험"
 
 5. projects
-   · 필수 5개 필드: name / role / tech / result / domain
+   · 필수 6개 필드: name / role / tech / result / domain / period
    · result: 정량 수치 우선, 없으면 정성적 성과 (절대 "[수치 입력]" 플레이스홀더 금지)
    · role: 팀 내 본인의 실제 기여 범위만
    · domain: 서비스 도메인  예) e-commerce, fintech, healthcare, edu-tech
+   · period: 원문에 명시된 수행 기간 그대로  예) "2024.09~2024.12", "3개월", "2022.03~2024.02(2년)"
+     기간 미명시 시 빈 문자열 "" (추측 금지)
 
 6. years_of_experience
    · 정규직·계약직·인턴 실무 경험 합산 연수 (0.5 단위 허용)
@@ -216,7 +244,7 @@ JSON만 응답. 마크다운 코드블록, 설명 텍스트 금지.
   "strengths":           ["역량 + 근거"],
   "trait_evidence":      ["태도·역량 증거 문장"],
   "projects": [
-    {"name": "프로젝트명", "role": "본인의 역할", "tech": ["사용 기술"], "result": "정량 또는 정성 성과", "domain": "e-commerce"}
+    {"name": "프로젝트명", "role": "본인의 역할", "tech": ["사용 기술"], "result": "정량 또는 정성 성과", "domain": "e-commerce", "period": "2024.09~2024.12"}
   ],
   "years_of_experience": 0,
   "education":           "대졸",
@@ -704,3 +732,36 @@ YES 또는 NO 단 한 단어만 응답하세요. 설명 금지.
 
 텍스트:
 {cover_letter[:500]}"""
+
+
+# ══════════════════════════════════════════════════════════════
+# 업종 분류 fallback  (company_service.py — get_industry_from_jd)
+#
+# extract_jd_requirements()가 이미 industry를 함께 추출하므로 정상 흐름에서는
+# 이 프롬프트를 호출하지 않는다. 저장된 값이 없거나(레거시 데이터) 허용 목록
+# 밖일 때만 company_service.resolve_industry()가 재분류 목적으로 호출한다.
+# ══════════════════════════════════════════════════════════════
+
+def build_industry_classify_user(jd_text: str) -> str:
+    return f"""\
+다음 채용공고의 회사 업종을 아래 중 하나로만 답하세요.
+[{", ".join(ALLOWED_INDUSTRIES)}]
+업종명만 답하고 다른 텍스트는 포함하지 마세요.
+채용공고: {jd_text[:1000]}"""
+
+
+# ══════════════════════════════════════════════════════════════
+# 인재상 추출  (views.py — AnalysisQuestionsView, 업종 3순위 fallback 이전 단계)
+# ══════════════════════════════════════════════════════════════
+
+def build_talent_trait_extract_user(catalog_str: str, jd_text: str) -> str:
+    return f"""\
+다음 채용공고에서 이 회사가 중요하게 여기는 인재상이나 핵심 역량을
+아래 세부 인재상 목록 중에서 최대 3개를 골라 trait_code만 JSON 배열로 반환하세요.
+다른 텍스트는 포함하지 마세요.
+
+세부 인재상 목록:
+{catalog_str}
+
+채용공고:
+{jd_text[:3000]}"""

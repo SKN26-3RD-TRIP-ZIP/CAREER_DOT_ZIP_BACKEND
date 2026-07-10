@@ -7,13 +7,9 @@
 
 import logging
 from .utils import get_client
+from .analysis_prompt import ALLOWED_INDUSTRIES, build_industry_classify_user
 
 logger = logging.getLogger(__name__)
-
-_ALLOWED_INDUSTRIES = {
-    "IT서비스", "제조업", "금융/핀테크", "유통/이커머스", "건설/엔지니어링",
-    "바이오/헬스케어", "미디어/콘텐츠", "컨설팅/전문서비스", "공공/공기업", "스타트업",
-}
 
 
 def classify_company(company_name: str) -> str:
@@ -39,27 +35,35 @@ def classify_company(company_name: str) -> str:
 def get_industry_from_jd(jd_text: str) -> str:
     """JD 텍스트에서 업종을 분류한다. gpt-4o-mini 사용.
 
+    extract_jd_requirements()가 이미 industry를 함께 추출하므로, 정상 흐름에서는
+    이 함수 대신 resolve_industry()를 통해 그 결과를 재사용해야 한다.
+    이 함수는 저장된 값이 없거나 유효하지 않을 때만 호출되는 재분류 fallback이다.
+
     반환값이 허용 목록에 없거나 예외 발생 시 '스타트업'을 반환한다.
     """
     try:
         client = get_client()
-        prompt = (
-            "다음 채용공고의 회사 업종을 아래 중 하나로만 답하세요.\n"
-            "[IT서비스, 제조업, 금융/핀테크, 유통/이커머스, 건설/엔지니어링, "
-            "바이오/헬스케어, 미디어/콘텐츠, 컨설팅/전문서비스, 공공/공기업, 스타트업]\n"
-            "업종명만 답하고 다른 텍스트는 포함하지 마세요.\n"
-            f"채용공고: {jd_text[:1000]}"
-        )
         response = client.chat.completions.create(
             model="gpt-4o-mini",
             temperature=0,
-            messages=[{"role": "user", "content": prompt}],
+            messages=[{"role": "user", "content": build_industry_classify_user(jd_text)}],
         )
         result = response.choices[0].message.content.strip()
-        return result if result in _ALLOWED_INDUSTRIES else "스타트업"
+        return result if result in ALLOWED_INDUSTRIES else "스타트업"
     except Exception as e:
         logger.warning("get_industry_from_jd 실패 (fallback=스타트업): %s", e)
         return "스타트업"
+
+
+def resolve_industry(stored_industry: str | None, jd_text: str) -> str:
+    """extract_jd_requirements()에서 이미 추출된 industry 값을 우선 재사용한다.
+
+    저장된 값이 없거나(레거시 분석 데이터) 허용 목록 밖이면 그때만
+    get_industry_from_jd()로 새로 분류한다 — 정상 흐름에서는 AI를 다시 호출하지 않는다.
+    """
+    if stored_industry in ALLOWED_INDUSTRIES:
+        return stored_industry
+    return get_industry_from_jd(jd_text)
 
 
 _DEFAULT_INDUSTRY_FALLBACK = "스타트업"

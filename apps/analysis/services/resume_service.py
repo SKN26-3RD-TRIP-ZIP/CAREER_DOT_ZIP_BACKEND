@@ -30,7 +30,8 @@ def analyze_resume(resume_text: str, cover_letter_text: str, model: str = "gpt-4
                 "role":   "백엔드 개발",
                 "tech":   ["Python", "Django"],
                 "result": "MAU 1만 달성",
-                "domain": "e-commerce"
+                "domain": "e-commerce",
+                "period": "2024.09~2024.12"
             }
         ],
 
@@ -44,6 +45,18 @@ def analyze_resume(resume_text: str, cover_letter_text: str, model: str = "gpt-4
         "career_level":        "entry",  # 이력서 기반 자동 추론 ("entry" | "experienced")
     }
     """
+    if not resume_text.strip():
+        return {
+            "tech_stack": [],
+            "key_experiences": [],
+            "projects": [],
+            "strengths": [],
+            "trait_evidence": [],
+            "years_of_experience": 0,
+            "education": "고졸",
+            "career_level": "entry",
+        }
+
     client = get_client()
     response = client.chat.completions.create(
         model=model,

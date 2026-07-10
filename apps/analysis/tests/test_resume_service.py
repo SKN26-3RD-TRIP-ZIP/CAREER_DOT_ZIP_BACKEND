@@ -138,7 +138,7 @@ def _assert_structure(result: dict):
 
 def _assert_projects_structure(projects: list):
     """projects 배열의 각 항목 필드 검증"""
-    required_keys = {"name", "role", "tech", "result", "domain"}
+    required_keys = {"name", "role", "tech", "result", "domain", "period"}
     for i, p in enumerate(projects):
         missing = required_keys - set(p.keys())
         assert not missing, f"projects[{i}] 누락 필드: {missing} / 전체: {p}"
