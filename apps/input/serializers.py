@@ -175,7 +175,7 @@ class JobDescriptionListSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = JobDescription
-        fields = ('jd_id', 'company_name', 'position', 'input_method', 'analysis_status', 'source_url', 'is_mock_source', 'created_at')
+        fields = ('jd_id', 'company_name', 'position', 'input_method', 'analysis_status', 'source_url', 'is_mock_source', 'created_at', 'updated_at')
 
     def get_jd_id(self, obj):
         return str(obj.id)
@@ -202,6 +202,7 @@ class JobDescriptionDetailSerializer(serializers.ModelSerializer):
             'extracted_fields',
             'is_mock_source',
             'created_at',
+            'updated_at',
         )
 
     def get_jd_id(self, obj):
@@ -216,10 +217,82 @@ class JobDescriptionUpdateSerializer(serializers.ModelSerializer):
     position = serializers.CharField(max_length=100, required=False, allow_blank=False)
     job_requirements = serializers.CharField(required=False, allow_blank=True, allow_null=True)
     keywords = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    original_text = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    job_category = serializers.CharField(required=False, allow_blank=True, write_only=True)
+    experience_level = serializers.CharField(required=False, allow_blank=True, write_only=True)
+    tech_stacks = serializers.ListField(
+        child=serializers.CharField(allow_blank=False),
+        required=False,
+        default=list,
+        write_only=True,
+    )
+    custom_tech_stacks = serializers.ListField(
+        child=serializers.CharField(allow_blank=False),
+        required=False,
+        default=list,
+        write_only=True,
+    )
+    main_tasks = serializers.CharField(required=False, allow_blank=True, write_only=True)
+    requirements = serializers.CharField(required=False, allow_blank=True, write_only=True)
+    preferences = serializers.CharField(required=False, allow_blank=True, write_only=True)
+    jd_text = serializers.CharField(required=False, allow_blank=True, write_only=True)
+    custom_keywords = serializers.ListField(
+        child=serializers.CharField(allow_blank=False),
+        required=False,
+        default=list,
+        write_only=True,
+    )
 
     class Meta:
         model = JobDescription
-        fields = ('company_name', 'position', 'job_requirements', 'keywords')
+        fields = (
+            'company_name',
+            'position',
+            'original_text',
+            'job_requirements',
+            'keywords',
+            'job_category',
+            'experience_level',
+            'tech_stacks',
+            'custom_tech_stacks',
+            'main_tasks',
+            'requirements',
+            'preferences',
+            'jd_text',
+            'custom_keywords',
+        )
+
+    def update(self, instance, validated_data):
+        dropdown_data = {
+            'job_category': validated_data.pop('job_category', '') or '',
+            'experience_level': validated_data.pop('experience_level', '') or '',
+            'tech_stacks': validated_data.pop('tech_stacks', []) or [],
+            'custom_tech_stacks': validated_data.pop('custom_tech_stacks', []) or [],
+            'main_tasks': validated_data.pop('main_tasks', '') or '',
+            'requirements': validated_data.pop('requirements', '') or '',
+            'preferences': validated_data.pop('preferences', '') or '',
+            'jd_text': validated_data.pop('jd_text', '') or '',
+            'custom_keywords': validated_data.pop('custom_keywords', []) or [],
+        }
+
+        dropdown_text = _build_original_text_from_dropdown(dropdown_data)
+        explicit_text = validated_data.get('original_text')
+        if dropdown_text:
+            validated_data['original_text'] = '\n'.join(
+                filter(None, [dropdown_text, (explicit_text or '').strip()])
+            )
+        elif explicit_text is not None:
+            validated_data['original_text'] = (explicit_text or '').strip()
+
+        new_keywords = _build_keywords_from_dropdown(dropdown_data)
+        if new_keywords:
+            validated_data['keywords'] = json.dumps(new_keywords, ensure_ascii=False)
+
+        requirements = dropdown_data.get('requirements', '')
+        if requirements:
+            validated_data['job_requirements'] = requirements
+
+        return super().update(instance, validated_data)
 
 
 class TalentProfileTraitCatalogSerializer(serializers.ModelSerializer):

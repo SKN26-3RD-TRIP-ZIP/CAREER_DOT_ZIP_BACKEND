@@ -18,6 +18,9 @@ import logging
 
 from django.conf import settings
 from django.core.mail import EmailMultiAlternatives
+from django.contrib.auth.tokens import default_token_generator
+from django.utils.encoding import force_bytes
+from django.utils.http import urlsafe_base64_encode
 from django.utils import timezone
 
 from .tokens import generate_email_verification_token
@@ -25,6 +28,40 @@ from .tokens import generate_email_verification_token
 logger = logging.getLogger("apps.accounts")
 
 SUPPORT_EMAIL = "support@career.zip"
+
+
+def build_password_reset_url(user) -> str:
+    frontend_base = getattr(settings, "FRONTEND_BASE_URL", "http://localhost:5173").rstrip("/")
+    uid = urlsafe_base64_encode(force_bytes(user.pk))
+    token = default_token_generator.make_token(user)
+    return f"{frontend_base}/auth/reset-password?uid={uid}&token={token}"
+
+
+def send_password_reset_email(user) -> None:
+    reset_url = build_password_reset_url(user)
+    subject = "[Career.zip] 비밀번호 재설정 안내"
+    from_email = getattr(settings, "DEFAULT_FROM_EMAIL", "no-reply@career.zip")
+    text_body = (
+        "Career.zip 비밀번호 재설정 요청을 받았습니다.\n\n"
+        f"아래 링크에서 새 비밀번호를 설정해주세요:\n{reset_url}\n\n"
+        "본인이 요청하지 않았다면 이 메일을 무시하셔도 됩니다.\n"
+        f"문의: {SUPPORT_EMAIL}\n"
+    )
+    html_body = f"""\
+<div style="font-family:Apple SD Gothic Neo,Malgun Gothic,sans-serif;max-width:560px;margin:0 auto;color:#1f2937">
+  <h2 style="color:#253900">Career.zip 비밀번호 재설정</h2>
+  <p>아래 버튼을 눌러 새 비밀번호를 설정해주세요.</p>
+  <p style="margin:24px 0">
+    <a href="{reset_url}" style="background:#08CB00;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:600">비밀번호 재설정하기</a>
+  </p>
+  <p style="font-size:13px;color:#6b7280">버튼이 동작하지 않으면 아래 주소를 복사해 접속하세요.<br>{reset_url}</p>
+  <p style="font-size:13px;color:#6b7280">본인이 요청하지 않았다면 이 메일을 무시하셔도 됩니다.</p>
+</div>
+"""
+    message = EmailMultiAlternatives(subject, text_body, from_email, [user.email])
+    message.attach_alternative(html_body, "text/html")
+    message.send(fail_silently=False)
+    logger.info("password reset email sent user_id=%s", user.id)
 
 
 def build_verification_url(user) -> str:

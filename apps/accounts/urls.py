@@ -9,7 +9,7 @@ from .views import (
     ResendVerificationView,
     CheckEmailView,
 )
-from .views_me import MeView, OnboardingCompleteView
+from .views_me import AccountWithdrawalView, MeView, OnboardingCompleteView
 from .views_oauth import (
     OAuthCallbackView,
     OAuthExchangeView,
@@ -17,18 +17,22 @@ from .views_oauth import (
     OAuthStartView,
 )
 from .views_terms import MarketingConsentView, MyTermsAgreementListView
+from .views_password_reset import PasswordResetConfirmView, PasswordResetRequestView
 
 urlpatterns = [
     # no-slash alias (프론트/명세 호환)
     path("check-email", CheckEmailView.as_view()),
     path("signup", SignupView.as_view()),
     path("login", LoginView.as_view()),
+    path("password-reset/request", PasswordResetRequestView.as_view()),
+    path("password-reset/confirm", PasswordResetConfirmView.as_view()),
     path("verify-email/resend", ResendVerificationView.as_view()),
     path("verify-email", VerifyEmailView.as_view()),
     path("resend-verification", ResendVerificationView.as_view()),
     path("logout", LogoutView.as_view()),
     path("token/refresh", CookieTokenRefreshView.as_view()),
     path("me", MeView.as_view()),
+    path("me/withdraw", AccountWithdrawalView.as_view()),
     path("onboarding/complete", OnboardingCompleteView.as_view()),
     path("oauth/exchange", OAuthExchangeView.as_view(), name="oauth-exchange"),
     path("oauth/social/terms", OAuthSocialTermsView.as_view(), name="oauth-social-terms"),
@@ -41,12 +45,15 @@ urlpatterns = [
     path("check-email/", CheckEmailView.as_view(), name="check-email"),
     path("signup/", SignupView.as_view(), name="signup"),
     path("login/", LoginView.as_view(), name="login"),
+    path("password-reset/request/", PasswordResetRequestView.as_view(), name="password-reset-request"),
+    path("password-reset/confirm/", PasswordResetConfirmView.as_view(), name="password-reset-confirm"),
     path("verify-email/resend/", ResendVerificationView.as_view(), name="verify-email-resend"),
     path("verify-email/", VerifyEmailView.as_view(), name="verify-email"),
     path("resend-verification/", ResendVerificationView.as_view(), name="resend-verification"),
     path("logout/", LogoutView.as_view(), name="logout"),
     path("token/refresh/", CookieTokenRefreshView.as_view(), name="token_refresh"),
     path("me/", MeView.as_view(), name="me"),
+    path("me/withdraw/", AccountWithdrawalView.as_view(), name="account-withdraw"),
     path("onboarding/complete/", OnboardingCompleteView.as_view(), name="onboarding-complete"),
     path("oauth/exchange/", OAuthExchangeView.as_view()),
     path("oauth/social/terms/", OAuthSocialTermsView.as_view()),

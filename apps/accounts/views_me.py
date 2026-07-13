@@ -1,12 +1,15 @@
 """현재 로그인 사용자 조회 (GET /api/v1/auth/me)."""
+from django.conf import settings
 from django.utils import timezone
 from rest_framework.views import APIView
 from rest_framework.response import Response
-from rest_framework import permissions
+from rest_framework import permissions, status
 
 from apps.input.models import UserProfile
+from apps.admin_api.services.member_service import withdraw_member
 
 CURRENT_ONBOARDING_VERSION = 1
+REFRESH_COOKIE_NAME = "refresh_token"
 
 
 def build_onboarding_state(user):
@@ -81,3 +84,35 @@ class OnboardingCompleteView(APIView):
             "detail": "온보딩이 완료되었습니다.",
             "onboarding": build_onboarding_state(user),
         })
+
+
+class AccountWithdrawalView(APIView):
+    """현재 로그인 사용자의 회원탈퇴(소프트 삭제)."""
+    permission_classes = [permissions.IsAuthenticated]
+
+    def delete(self, request):
+        confirm = (request.data.get("confirm") or "").strip()
+        if confirm != "회원탈퇴":
+            return Response(
+                {"detail": "회원탈퇴 확인 문구가 일치하지 않습니다.", "code": "CONFIRM_TEXT_REQUIRED"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        withdrawn = withdraw_member(request.user.id, request.user)
+        if withdrawn is None:
+            return Response(
+                {"detail": "이미 탈퇴한 회원입니다.", "code": "ALREADY_WITHDRAWN"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        response = Response(
+            {"detail": "회원탈퇴가 완료되었습니다.", "withdrawn_at": withdrawn.withdrawn_at},
+            status=status.HTTP_200_OK,
+        )
+        response.delete_cookie(
+            REFRESH_COOKIE_NAME,
+            samesite=getattr(settings, "REFRESH_COOKIE_SAMESITE", "Lax"),
+            path=getattr(settings, "REFRESH_COOKIE_PATH", "/"),
+            domain=getattr(settings, "REFRESH_COOKIE_DOMAIN", None),
+        )
+        return response

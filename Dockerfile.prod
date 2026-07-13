@@ -27,10 +27,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # 의존성 레이어 분리(캐시 최적화)
-COPY requirements.txt .
-# torch 는 CPU 휠로 고정. 버전은 requirements.txt(torch==2.12.1)와 일치시켜 재설치/충돌 방지.
+COPY requirements.prod.txt .
+# Pin torch to the CPU-only wheel and keep torch out of requirements.prod.txt.
 RUN pip install torch==2.12.1+cpu --index-url https://download.pytorch.org/whl/cpu \
-    && pip install -r requirements.txt
+    && pip install -r requirements.prod.txt
 
 # 앱 소스
 COPY . .

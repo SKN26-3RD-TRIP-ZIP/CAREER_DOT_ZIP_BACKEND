@@ -330,6 +330,7 @@ SIMPLE_JWT = {
     'ROTATE_REFRESH_TOKENS': True,
     'BLACKLIST_AFTER_ROTATION': False,
     'UPDATE_LAST_LOGIN': True,
+    'CHECK_REVOKE_TOKEN': True,
 }
 
 # ===== Speech Evaluation Metrics Configuration =====
@@ -442,6 +443,10 @@ OCR_API_KEY = os.getenv("OCR_API_KEY", "")
 # 이메일 인증 토큰 만료 (초) — 기본 24시간
 EMAIL_VERIFICATION_TOKEN_MAX_AGE = int(
     os.getenv("EMAIL_VERIFICATION_TOKEN_MAX_AGE", str(60 * 60 * 24))
+)
+PASSWORD_RESET_TIMEOUT = int(os.getenv("PASSWORD_RESET_TIMEOUT", "3600"))
+PASSWORD_RESET_REQUEST_COOLDOWN_SECONDS = int(
+    os.getenv("PASSWORD_RESET_REQUEST_COOLDOWN_SECONDS", "60")
 )
 
 # ===== 이메일 인증번호(코드) 정책 =====
