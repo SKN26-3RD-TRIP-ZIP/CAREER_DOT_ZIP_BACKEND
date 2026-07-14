@@ -603,6 +603,7 @@ class AIChainOpenAIEngineTest(TestCase):
         self.assertEqual(fake_client.completions.last_kwargs["model"], "gpt-test")
         self.assertEqual(fake_client.completions.last_kwargs["temperature"], 0.1)
         self.assertEqual(fake_client.completions.last_kwargs["max_tokens"], 500)
+        self.assertEqual(fake_client.completions.last_kwargs["timeout"], 30)
         self.assertEqual(
             fake_client.completions.last_kwargs["messages"][0]["content"],
             "system prompt",
@@ -611,6 +612,24 @@ class AIChainOpenAIEngineTest(TestCase):
             fake_client.completions.last_kwargs["messages"][1]["content"],
             "user prompt",
         )
+
+    @override_settings(
+        INTERVIEW_AI_OPENAI_TIMEOUT_SECONDS=12,
+        INTERVIEW_AI_OPENAI_MAX_RETRIES=0,
+    )
+    def test_openai_request_limits_are_configurable(self):
+        fake_client = FakeOpenAIClient('{"next_action": "NEXT_QUESTION"}')
+        engine = AIChainOpenAIEngine(
+            api_key="test-api-key",
+            client_factory=lambda api_key: fake_client,
+            enable_real_call=True,
+        )
+
+        engine._request_text(system_prompt="system", user_prompt="user")
+
+        self.assertEqual(engine.request_timeout, 12)
+        self.assertEqual(engine.max_retries, 0)
+        self.assertEqual(fake_client.completions.last_kwargs["timeout"], 12)
 
     @override_settings(
         INTERVIEW_AI_OPENAI_MODEL="gpt-base",

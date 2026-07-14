@@ -269,6 +269,14 @@ class AIChainOpenAIEngine:
             self.model,
         )
         self.api_key = api_key or getattr(settings, "OPENAI_API_KEY", None)
+        self.request_timeout = max(
+            1,
+            int(getattr(settings, "INTERVIEW_AI_OPENAI_TIMEOUT_SECONDS", 30)),
+        )
+        self.max_retries = max(
+            0,
+            int(getattr(settings, "INTERVIEW_AI_OPENAI_MAX_RETRIES", 1)),
+        )
         self.fallback_engine = fallback_engine or AIChainMockEngine()
         self.client_factory = client_factory
         self.enable_real_call = (
@@ -507,7 +515,11 @@ class AIChainOpenAIEngine:
 
         from openai import OpenAI
 
-        self._client = OpenAI(api_key=self.api_key)
+        self._client = OpenAI(
+            api_key=self.api_key,
+            timeout=self.request_timeout,
+            max_retries=self.max_retries,
+        )
         return self._client
 
     def _request_text(
@@ -535,6 +547,7 @@ class AIChainOpenAIEngine:
             ],
             temperature=temperature,
             max_tokens=max_tokens,
+            timeout=self.request_timeout,
         )
 
         from apps.analysis.services.utils import log_llm_usage
