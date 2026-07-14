@@ -97,6 +97,7 @@ INTERVIEW_AI_OPENAI_ENABLE_REAL_CALL = _env_bool(
     'INTERVIEW_AI_OPENAI_ENABLE_REAL_CALL',
     False,
 )
+SBERT_ENABLED = _env_bool('SBERT_ENABLED', True)
 
 
 # Quick-start development settings - unsuitable for production

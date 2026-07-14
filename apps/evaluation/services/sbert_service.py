@@ -24,6 +24,13 @@ SBERT_MODEL_NAME = getattr(
 @lru_cache(maxsize=1)
 def _get_sbert_model():
     """SentenceTransformer 모델을 싱글턴으로 로드 (최초 1회만 로드)."""
+    # sentence-transformers/torch consumes hundreds of MB while loading.
+    # Allow small production instances to skip it and use the existing
+    # model-unavailable fallback instead of losing a Gunicorn worker to OOM.
+    if not getattr(settings, "SBERT_ENABLED", True):
+        logger.info("SBERT disabled by configuration; skipping model load")
+        return None
+
     try:
         from sentence_transformers import SentenceTransformer
         logger.info("SBERT 모델 로드 시작: %s", SBERT_MODEL_NAME)
