@@ -70,6 +70,36 @@ def _build_keywords_from_dropdown(data: dict) -> list:
     return unique
 
 
+def _parse_dropdown_fields_from_original_text(original_text: str) -> dict:
+    """저장된 JD 원문에서 목록 카드에 필요한 드롭다운 값을 복원한다."""
+    labels = {
+        '직무 카테고리': 'job_category',
+        '경력 구분': 'experience_level',
+        '기술스택': 'tech_stacks',
+    }
+    parsed = {
+        'job_category': '',
+        'experience_level': '',
+        'tech_stacks': [],
+    }
+
+    for raw_line in (original_text or '').splitlines():
+        line = raw_line.strip()
+        for label, field_name in labels.items():
+            prefix = f'[{label}]'
+            if not line.startswith(prefix):
+                continue
+
+            value = line[len(prefix):].strip()
+            if field_name == 'tech_stacks':
+                parsed[field_name] = [item.strip() for item in value.split(',') if item.strip()]
+            else:
+                parsed[field_name] = value
+            break
+
+    return parsed
+
+
 class JobDescriptionCreateSerializer(serializers.ModelSerializer):
     job_category = serializers.CharField(required=False, allow_blank=True, write_only=True)
     experience_level = serializers.CharField(required=False, allow_blank=True, write_only=True)
@@ -172,13 +202,38 @@ class JobDescriptionCreateSerializer(serializers.ModelSerializer):
 
 class JobDescriptionListSerializer(serializers.ModelSerializer):
     jd_id = serializers.SerializerMethodField()
+    job_category = serializers.SerializerMethodField()
+    experience_level = serializers.SerializerMethodField()
+    tech_stacks = serializers.SerializerMethodField()
 
     class Meta:
         model = JobDescription
-        fields = ('jd_id', 'company_name', 'position', 'input_method', 'analysis_status', 'source_url', 'is_mock_source', 'created_at', 'updated_at')
+        fields = (
+            'jd_id',
+            'company_name',
+            'position',
+            'job_category',
+            'experience_level',
+            'tech_stacks',
+            'input_method',
+            'analysis_status',
+            'source_url',
+            'is_mock_source',
+            'created_at',
+            'updated_at',
+        )
 
     def get_jd_id(self, obj):
         return str(obj.id)
+
+    def get_job_category(self, obj):
+        return _parse_dropdown_fields_from_original_text(obj.original_text)['job_category']
+
+    def get_experience_level(self, obj):
+        return _parse_dropdown_fields_from_original_text(obj.original_text)['experience_level']
+
+    def get_tech_stacks(self, obj):
+        return _parse_dropdown_fields_from_original_text(obj.original_text)['tech_stacks']
 
 
 class JobDescriptionDetailSerializer(serializers.ModelSerializer):

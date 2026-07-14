@@ -76,6 +76,27 @@ class JDDropdownCreateTests(APITestCase):
         self.assertIsNotNone(jd.job_requirements)
         self.assertIn('REST API', jd.job_requirements)
 
+    def test_list_returns_dropdown_fields_for_jd_cards(self):
+        """목록 카드가 원문의 구조화 필드를 표시할 수 있도록 값을 반환한다."""
+        payload = {
+            'company_name': 'Career.zip',
+            'position': 'Backend Developer',
+            'job_category': 'backend',
+            'experience_level': 'junior',
+            'tech_stacks': ['Python', 'Django'],
+            'custom_tech_stacks': ['DRF'],
+        }
+        create_response = self.client.post(self.url, payload, format='json')
+        self.assertEqual(create_response.status_code, status.HTTP_201_CREATED)
+
+        response = self.client.get(self.url)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        items = response.data.get('results', response.data)
+        self.assertEqual(items[0]['job_category'], 'backend')
+        self.assertEqual(items[0]['experience_level'], 'junior')
+        self.assertEqual(items[0]['tech_stacks'], ['Python', 'Django', 'DRF'])
+
     def test_existing_manual_original_text_method(self):
         """기존 original_text 직접입력 방식이 그대로 동작하는지 확인"""
         payload = {
