@@ -280,6 +280,27 @@ class OAuthProviderResponseTests(APITestCase):
                 oauth_service.exchange_code_for_profile('kakao', code='x')
 
 
+class LegacyUserManagerCompatibilityTests(APITestCase):
+    def test_legacy_insert_includes_required_onboarding_version(self):
+        cursor = mock.Mock()
+        cursor.lastrowid = 123
+        cursor_context = mock.MagicMock()
+        cursor_context.__enter__.return_value = cursor
+
+        with mock.patch.object(User.objects, '_has_legacy_role_column', return_value=True), \
+             mock.patch('apps.accounts.models.connection.cursor', return_value=cursor_context):
+            user = User.objects.create_user(
+                email='legacy-social@example.com',
+                name='Legacy Social',
+                password=None,
+            )
+
+        sql, params = cursor.execute.call_args.args
+        self.assertIn('onboarding_version', sql)
+        self.assertIn(user.onboarding_version, params)
+        self.assertEqual(user.id, 123)
+
+
 class OAuthExchangeCodeUnitTests(APITestCase):
     def setUp(self):
         cache.clear()

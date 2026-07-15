@@ -33,9 +33,10 @@ class UserManager(BaseUserManager):
                     INSERT INTO accounts_user (
                         password, last_login, is_superuser, email, name,
                         is_verified, status, is_staff, is_active,
-                        point_balance, created_at, updated_at, role
+                        point_balance, onboarding_version,
+                        created_at, updated_at, role
                     )
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """,
                     [
                         user.password,
@@ -48,6 +49,7 @@ class UserManager(BaseUserManager):
                         user.is_staff,
                         user.is_active,
                         user.point_balance,
+                        user.onboarding_version,
                         now,
                         now,
                         role,
@@ -76,9 +78,10 @@ class UserManager(BaseUserManager):
                     INSERT INTO accounts_user (
                         password, last_login, is_superuser, email, name,
                         is_verified, status, is_staff, is_active,
-                        point_balance, created_at, updated_at, role
+                        point_balance, onboarding_version,
+                        created_at, updated_at, role
                     )
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """,
                     [
                         user.password,
@@ -91,6 +94,7 @@ class UserManager(BaseUserManager):
                         user.is_staff,
                         user.is_active,
                         user.point_balance,
+                        user.onboarding_version,
                         now,
                         now,
                         role,
