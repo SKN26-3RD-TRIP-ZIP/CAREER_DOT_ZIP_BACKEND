@@ -48,7 +48,7 @@ class MeView(APIView):
         terms = {
             "required": bool(missing_terms),
             "missing": missing_terms,
-            "next_path": "/signup/social/terms" if missing_terms else None,
+            "next_path": "/signup/terms" if missing_terms else None,
         }
         next_path = (
             '/admin/dashboard'

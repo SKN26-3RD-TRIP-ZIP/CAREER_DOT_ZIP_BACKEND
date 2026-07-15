@@ -22,8 +22,10 @@ OAUTH_STATE_MAX_AGE = 10 * 60
 OAUTH_EXCHANGE_SALT = 'accounts.oauth.exchange'
 OAUTH_EXCHANGE_CACHE_PREFIX = 'oauth:exchange:'
 
-# 회원가입 직후 필수 약관 미동의 시 이동할 프론트 경로(소셜 전용 약관 화면).
-SOCIAL_TERMS_PATH = '/signup/social/terms'
+# 회원가입 또는 로그인 후 필수 약관 미동의 시 이동할 공통 프론트 경로.
+TERMS_PATH = '/signup/terms'
+# Backward-compatible import for older callers. New code must use TERMS_PATH.
+SOCIAL_TERMS_PATH = TERMS_PATH
 DEFAULT_NEXT_PATH = '/mypage'
 
 

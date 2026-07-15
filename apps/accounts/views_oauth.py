@@ -12,7 +12,7 @@ from apps.accounts.emails import send_admin_signup_notification
 from apps.accounts.models import User
 from apps.accounts.services.oauth import (
     DEFAULT_NEXT_PATH,
-    SOCIAL_TERMS_PATH,
+    TERMS_PATH,
     OAuthAccountBlocked,
     OAuthAccountConflict,
     OAuthCallbackInvalid,
@@ -216,7 +216,7 @@ class OAuthCallbackView(APIView):
         next_path = sanitize_next_path(state_payload.get('next_path'), DEFAULT_NEXT_PATH)
         needs_terms = bool(required_terms_reconsent_status(user))
         if needs_terms:
-            next_path = SOCIAL_TERMS_PATH
+            next_path = TERMS_PATH
         elif created:
             _award_social_signup_rewards(user, provider)
 
@@ -279,8 +279,8 @@ class OAuthExchangeView(APIView):
         return response
 
 
-class OAuthSocialTermsView(APIView):
-    """소셜 간편가입 필수 약관 동의 제출. 동의 완료 시 /mypage 로 이동 가능."""
+class TermsAcceptanceView(APIView):
+    """일반·소셜 계정의 필수 약관 동의 제출."""
 
     permission_classes = [permissions.IsAuthenticated]
 
@@ -308,3 +308,7 @@ class OAuthSocialTermsView(APIView):
             {'detail': '약관 동의가 완료되었습니다.', 'next_path': DEFAULT_NEXT_PATH},
             status=status.HTTP_200_OK,
         )
+
+
+# Existing clients may still call the previous class/URL during rollout.
+OAuthSocialTermsView = TermsAcceptanceView

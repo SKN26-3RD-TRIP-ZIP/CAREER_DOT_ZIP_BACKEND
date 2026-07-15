@@ -15,6 +15,7 @@ from .views_oauth import (
     OAuthExchangeView,
     OAuthSocialTermsView,
     OAuthStartView,
+    TermsAcceptanceView,
 )
 from .views_terms import MarketingConsentView, MyTermsAgreementListView
 from .views_password_reset import PasswordResetConfirmView, PasswordResetRequestView
@@ -35,6 +36,7 @@ urlpatterns = [
     path("me/withdraw", AccountWithdrawalView.as_view()),
     path("onboarding/complete", OnboardingCompleteView.as_view()),
     path("oauth/exchange", OAuthExchangeView.as_view(), name="oauth-exchange"),
+    path("terms", TermsAcceptanceView.as_view(), name="terms-acceptance"),
     path("oauth/social/terms", OAuthSocialTermsView.as_view(), name="oauth-social-terms"),
     path("oauth/<str:provider>/start", OAuthStartView.as_view(), name="oauth-start"),
     path("oauth/<str:provider>/callback", OAuthCallbackView.as_view(), name="oauth-callback"),
@@ -56,6 +58,7 @@ urlpatterns = [
     path("me/withdraw/", AccountWithdrawalView.as_view(), name="account-withdraw"),
     path("onboarding/complete/", OnboardingCompleteView.as_view(), name="onboarding-complete"),
     path("oauth/exchange/", OAuthExchangeView.as_view()),
+    path("terms/", TermsAcceptanceView.as_view()),
     path("oauth/social/terms/", OAuthSocialTermsView.as_view()),
     path("oauth/<str:provider>/start/", OAuthStartView.as_view()),
     path("oauth/<str:provider>/callback/", OAuthCallbackView.as_view()),

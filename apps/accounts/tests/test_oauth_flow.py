@@ -161,7 +161,7 @@ class OAuthCallbackRedirectTests(APITestCase):
         self.assertEqual(exchange.status_code, status.HTTP_200_OK)
         self.assertTrue(exchange.data['created'])
         self.assertTrue(exchange.data['needs_terms'])
-        self.assertEqual(exchange.data['next_path'], '/signup/social/terms')
+        self.assertEqual(exchange.data['next_path'], '/signup/terms')
 
     def test_kakao_new_user_signup_without_required_terms_goes_to_mypage(self):
         self._disable_required_terms()
@@ -263,7 +263,7 @@ class OAuthCallbackRedirectTests(APITestCase):
         self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {exchange.data['access_token']}")
         with mock.patch('apps.accounts.views_oauth.send_admin_signup_notification') as notify:
             accepted = self.client.post(
-                '/api/v1/auth/oauth/social/terms',
+                '/api/v1/auth/terms',
                 {'terms_agreed': True, 'privacy_agreed': True, 'marketing_agreed': False},
                 format='json',
             )
@@ -323,7 +323,7 @@ class OAuthCallbackRedirectTests(APITestCase):
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertTrue(response.data['needs_terms'])
-        self.assertEqual(response.data['next_path'], '/signup/social/terms')
+        self.assertEqual(response.data['next_path'], '/signup/terms')
         self.assertFalse(PointHistory.objects.filter(user=user, reason_code='LOGIN.DAILY').exists())
 
 
@@ -408,7 +408,7 @@ class OAuthExchangeCodeUnitTests(APITestCase):
 class SanitizeNextPathTests(APITestCase):
     def test_allows_internal_path(self):
         self.assertEqual(sanitize_next_path('/mypage'), '/mypage')
-        self.assertEqual(sanitize_next_path('/signup/social/terms'), '/signup/social/terms')
+        self.assertEqual(sanitize_next_path('/signup/terms'), '/signup/terms')
 
     def test_blocks_open_redirect(self):
         self.assertEqual(sanitize_next_path('https://evil.com'), '/mypage')

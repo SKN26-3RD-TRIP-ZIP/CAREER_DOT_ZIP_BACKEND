@@ -817,7 +817,7 @@ class LoginView(APIView):
                     'access_token': access_token,
                     'token_type': 'Bearer',
                     'needs_terms': needs_terms,
-                    'next_path': '/signup/social/terms' if needs_terms else None,
+                    'next_path': '/signup/terms' if needs_terms else None,
                 },
                 status=status.HTTP_200_OK,
             )

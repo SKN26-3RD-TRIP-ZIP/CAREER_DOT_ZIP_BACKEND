@@ -71,7 +71,7 @@ class MeEndpointTests(APITestCase):
 
         self.assertEqual(res.status_code, status.HTTP_200_OK)
         self.assertTrue(res.data["terms"]["required"])
-        self.assertEqual(res.data["next_path"], "/signup/social/terms")
+        self.assertEqual(res.data["next_path"], "/signup/terms")
 
     def test_me_returns_mypage_next_path_when_profile_complete(self):
         user = self._verified("profiled@example.com", "프로필")
