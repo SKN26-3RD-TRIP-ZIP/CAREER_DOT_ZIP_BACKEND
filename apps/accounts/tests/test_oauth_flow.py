@@ -164,8 +164,16 @@ class OAuthCallbackRedirectTests(APITestCase):
 
     def test_kakao_new_user_signup_without_required_terms_goes_to_mypage(self):
         self._disable_required_terms()
-        response = self._callback('kakao', profile=kakao_profile(email='kfresh@example.com'))
+        with mock.patch.object(User.objects, 'create_user', wraps=User.objects.create_user) as create_user:
+            response = self._callback('kakao', profile=kakao_profile(email='kfresh@example.com'))
         code = self._assert_redirects_with_code(response)
+        create_user.assert_called_once_with(
+            email='kfresh@example.com',
+            name='New Kakao User',
+            password=None,
+            is_verified=True,
+            status='active',
+        )
         exchange = self._exchange(code)
         self.assertEqual(exchange.status_code, status.HTTP_200_OK)
         self.assertTrue(exchange.data['created'])

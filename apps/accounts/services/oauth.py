@@ -6,7 +6,6 @@ from urllib.parse import urlencode
 
 import requests
 from django.conf import settings
-from django.contrib.auth.hashers import make_password
 from django.core import signing
 from django.core.cache import cache
 from django.db import transaction
@@ -310,10 +309,13 @@ def get_or_create_social_user(provider: str, profile: dict) -> tuple[User, Socia
             )
 
         # 신규 사용자: User + SocialAccount 생성. 비밀번호는 직접 저장하지 않는다(usable password 없음).
-        user = User.objects.create(
+        # Use the custom manager instead of QuerySet.create(). Production still
+        # has a legacy, non-null `role` column and the manager supplies its
+        # compatibility value while also creating an unusable password.
+        user = User.objects.create_user(
             email=provider_email,
             name=name[:255],
-            password=make_password(None),
+            password=None,
             is_verified=True,
             status='active',
         )
