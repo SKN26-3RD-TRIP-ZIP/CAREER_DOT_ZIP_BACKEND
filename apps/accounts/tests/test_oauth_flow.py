@@ -210,6 +210,18 @@ class OAuthCallbackRedirectTests(APITestCase):
         response = self.client.get('/api/v1/auth/oauth/kakao/callback', {'error': 'access_denied'})
         self._assert_redirects_with_error(response, 'OAUTH_PROVIDER_ERROR')
 
+    def test_unexpected_callback_error_is_logged_and_redirected(self):
+        with mock.patch(
+            'apps.accounts.views_oauth.exchange_code_for_profile',
+            side_effect=RuntimeError('unexpected provider payload'),
+        ), self.assertLogs('apps.accounts', level='ERROR') as logs:
+            response = self.client.get(
+                '/api/v1/auth/oauth/kakao/callback',
+                {'code': 'x', 'state': self._state_for('kakao')},
+            )
+        self._assert_redirects_with_error(response, 'OAUTH_PROVIDER_ERROR')
+        self.assertIn('oauth callback unexpected error provider=kakao', '\n'.join(logs.output))
+
     def test_missing_provider_email_redirects_with_email_required(self):
         response = self._callback('kakao', profile=kakao_profile(email=''))
         self._assert_redirects_with_error(response, 'OAUTH_EMAIL_REQUIRED')
@@ -227,6 +239,37 @@ class OAuthCallbackRedirectTests(APITestCase):
         location = response['Location']
         self.assertNotIn('access_token', location)
         self.assertNotIn('Bearer', location)
+
+
+@override_settings(**OAUTH_SETTINGS)
+class OAuthProviderResponseTests(APITestCase):
+    def test_invalid_token_json_is_wrapped_as_provider_error(self):
+        response = mock.Mock()
+        response.raise_for_status.return_value = None
+        response.json.side_effect = ValueError('invalid json')
+        with mock.patch('apps.accounts.services.oauth.requests.post', return_value=response):
+            with self.assertRaises(oauth_service.OAuthProviderResponseError):
+                oauth_service.exchange_code_for_profile('kakao', code='x')
+
+    def test_non_object_token_json_is_wrapped_as_provider_error(self):
+        response = mock.Mock()
+        response.raise_for_status.return_value = None
+        response.json.return_value = []
+        with mock.patch('apps.accounts.services.oauth.requests.post', return_value=response):
+            with self.assertRaises(oauth_service.OAuthProviderResponseError):
+                oauth_service.exchange_code_for_profile('kakao', code='x')
+
+    def test_non_object_profile_json_is_wrapped_as_provider_error(self):
+        token_response = mock.Mock()
+        token_response.raise_for_status.return_value = None
+        token_response.json.return_value = {'access_token': 'provider-token'}
+        profile_response = mock.Mock()
+        profile_response.raise_for_status.return_value = None
+        profile_response.json.return_value = []
+        with mock.patch('apps.accounts.services.oauth.requests.post', return_value=token_response), \
+             mock.patch('apps.accounts.services.oauth.requests.get', return_value=profile_response):
+            with self.assertRaises(oauth_service.OAuthProviderResponseError):
+                oauth_service.exchange_code_for_profile('kakao', code='x')
 
 
 class OAuthExchangeCodeUnitTests(APITestCase):

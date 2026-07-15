@@ -204,6 +204,11 @@ class OAuthCallbackView(APIView):
         except OAuthError:
             # 알 수 없는 OAuth 오류도 Provider 오류로 일반화(상세/토큰 비노출)
             return _redirect_with_error('OAUTH_PROVIDER_ERROR')
+        except Exception:  # noqa: BLE001
+            # Do not log provider tokens or response bodies. The traceback is
+            # enough to diagnose production-only failures without leaking secrets.
+            logger.exception("oauth callback unexpected error provider=%s", provider)
+            return _redirect_with_error('OAUTH_PROVIDER_ERROR')
 
         next_path = sanitize_next_path(state_payload.get('next_path'), DEFAULT_NEXT_PATH)
         needs_terms = False
