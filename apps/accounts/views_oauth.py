@@ -2,7 +2,6 @@ import logging
 from urllib.parse import urlencode
 
 from django.conf import settings
-from django.contrib.auth.models import update_last_login
 from django.http import HttpResponseRedirect
 from rest_framework import permissions, serializers, status
 from rest_framework.response import Response
@@ -34,6 +33,7 @@ from apps.accounts.services.oauth import (
     sanitize_next_path,
     validate_oauth_state,
 )
+from apps.accounts.services.login import complete_login
 from apps.accounts.services.points import apply_point_policy
 from apps.accounts.services.terms import record_social_signup_terms, required_terms_reconsent_status
 from apps.accounts.views import REFRESH_COOKIE_MAX_AGE, REFRESH_COOKIE_NAME
@@ -117,7 +117,7 @@ def _award_social_signup_rewards(user, provider):
     포인트는 idempotency_key 로 이중 적립을 방지한다(이메일 인증 보상과 동일 키 재사용).
     """
     try:
-        apply_point_policy(
+        reward = apply_point_policy(
             user=user,
             reason_code='AUTH.EMAIL_VERIFIED',
             reference_id=str(user.id),
@@ -126,6 +126,9 @@ def _award_social_signup_rewards(user, provider):
         )
     except ValueError:
         logger.info("social signup reward skipped user_id=%s provider=%s", user.id, provider)
+        return
+    if not reward.created:
+        return
     try:
         send_admin_signup_notification(user, signup_method=provider)
     except Exception as exc:  # noqa: BLE001
@@ -211,12 +214,11 @@ class OAuthCallbackView(APIView):
             return _redirect_with_error('OAUTH_PROVIDER_ERROR')
 
         next_path = sanitize_next_path(state_payload.get('next_path'), DEFAULT_NEXT_PATH)
-        needs_terms = False
-        if created:
+        needs_terms = bool(required_terms_reconsent_status(user))
+        if needs_terms:
+            next_path = SOCIAL_TERMS_PATH
+        elif created:
             _award_social_signup_rewards(user, provider)
-            if required_terms_reconsent_status(user):
-                needs_terms = True
-                next_path = SOCIAL_TERMS_PATH
 
         logger.info(
             "oauth callback ok provider=%s user_id=%s created=%s needs_terms=%s",
@@ -260,7 +262,7 @@ class OAuthExchangeView(APIView):
                 status=status.HTTP_403_FORBIDDEN,
             )
 
-        update_last_login(None, user)
+        complete_login(user, award_rewards=not bool(payload.get('needs_terms')))
         refresh = RefreshToken.for_user(user)
         response = Response(
             {
@@ -298,6 +300,10 @@ class OAuthSocialTermsView(APIView):
             marketing_agreed=bool(data.get('marketing_agreed')),
             request=request,
         )
+        complete_login(request.user)
+        social = request.user.social_accounts.order_by('created_at', 'id').first()
+        if social is not None:
+            _award_social_signup_rewards(request.user, social.provider)
         return Response(
             {'detail': '약관 동의가 완료되었습니다.', 'next_path': DEFAULT_NEXT_PATH},
             status=status.HTTP_200_OK,

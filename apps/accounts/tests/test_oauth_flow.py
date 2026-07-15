@@ -14,10 +14,11 @@ from urllib.parse import parse_qs, urlparse
 
 from django.core.cache import cache
 from django.test import override_settings
+from django.utils import timezone
 from rest_framework import status
 from rest_framework.test import APITestCase
 
-from apps.accounts.models import SocialAccount, TermsDocument, User
+from apps.accounts.models import PointHistory, SocialAccount, TermsAgreement, TermsDocument, User
 from apps.accounts.services import oauth as oauth_service
 from apps.accounts.services.oauth import (
     OAuthExchangeCodeExpired,
@@ -247,6 +248,83 @@ class OAuthCallbackRedirectTests(APITestCase):
         location = response['Location']
         self.assertNotIn('access_token', location)
         self.assertNotIn('Bearer', location)
+
+    def test_signup_reward_waits_until_required_terms_are_accepted(self):
+        self._make_required_terms()
+        response = self._callback('google', profile=google_profile(email='terms-first@example.com'))
+        code = self._assert_redirects_with_code(response)
+        user = User.objects.get(email='terms-first@example.com')
+
+        self.assertFalse(PointHistory.objects.filter(user=user, reason_code='AUTH.EMAIL_VERIFIED').exists())
+        exchange = self._exchange(code)
+        self.assertTrue(exchange.data['needs_terms'])
+        self.assertFalse(PointHistory.objects.filter(user=user, reason_code='LOGIN.DAILY').exists())
+
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {exchange.data['access_token']}")
+        with mock.patch('apps.accounts.views_oauth.send_admin_signup_notification') as notify:
+            accepted = self.client.post(
+                '/api/v1/auth/oauth/social/terms',
+                {'terms_agreed': True, 'privacy_agreed': True, 'marketing_agreed': False},
+                format='json',
+            )
+
+        self.assertEqual(accepted.status_code, status.HTTP_200_OK)
+        self.assertEqual(TermsAgreement.objects.filter(user=user, agreed=True, is_required=True).count(), 2)
+        self.assertTrue(PointHistory.objects.filter(user=user, reason_code='AUTH.EMAIL_VERIFIED').exists())
+        self.assertTrue(PointHistory.objects.filter(user=user, reason_code='LOGIN.DAILY').exists())
+        notify.assert_called_once_with(user, signup_method='google')
+
+    def test_oauth_login_reactivates_dormant_user_and_applies_shared_rewards(self):
+        self._disable_required_terms()
+        user = User.objects.create(
+            email='dormant-social@example.com',
+            name='Dormant',
+            is_verified=True,
+            status='dormant',
+            dormancy_warning_sent_at=timezone.now(),
+        )
+        SocialAccount.objects.create(
+            user=user,
+            provider='kakao',
+            provider_user_id='kakao-dormant',
+            provider_email=user.email,
+        )
+        response = self._callback(
+            'kakao',
+            profile=kakao_profile(
+                email=user.email,
+                provider_user_id='kakao-dormant',
+            ),
+        )
+        exchange = self._exchange(self._assert_redirects_with_code(response))
+
+        self.assertEqual(exchange.status_code, status.HTTP_200_OK)
+        user.refresh_from_db()
+        self.assertEqual(user.status, 'active')
+        self.assertIsNone(user.dormancy_warning_sent_at)
+        self.assertTrue(PointHistory.objects.filter(user=user, reason_code='LOGIN.DAILY').exists())
+        self.assertTrue(PointHistory.objects.filter(user=user, reason_code='DORMANT.RETURN_LOGIN').exists())
+
+    def test_password_login_also_routes_missing_required_terms_to_shared_screen(self):
+        self._make_required_terms()
+        user = User.objects.create_user(
+            email='legacy-local@example.com',
+            password='Password1!',
+            name='Legacy Local',
+            is_verified=True,
+            status='active',
+        )
+
+        response = self.client.post(
+            '/api/v1/auth/login',
+            {'email': user.email, 'password': 'Password1!'},
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertTrue(response.data['needs_terms'])
+        self.assertEqual(response.data['next_path'], '/signup/social/terms')
+        self.assertFalse(PointHistory.objects.filter(user=user, reason_code='LOGIN.DAILY').exists())
 
 
 @override_settings(**OAUTH_SETTINGS)

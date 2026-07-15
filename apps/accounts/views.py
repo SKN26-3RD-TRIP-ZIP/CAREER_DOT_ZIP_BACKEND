@@ -9,7 +9,6 @@ from rest_framework_simplejwt.exceptions import InvalidToken, TokenError
 
 from django.conf import settings
 from django.contrib.auth.hashers import make_password
-from django.contrib.auth.models import update_last_login
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.core.validators import validate_email
 from django.db import IntegrityError, transaction
@@ -18,7 +17,8 @@ from django.utils import timezone
 from .serializers import SignupSerializer, LoginSerializer, SignupResponseSerializer
 from .models import User, EmailVerificationCode, PendingRegistration
 from .services.points import apply_point_policy
-from .services.terms import record_signup_terms
+from .services.login import complete_login
+from .services.terms import record_signup_terms, required_terms_reconsent_status
 from .codes import (
     issue_code,
     issue_pending_code,
@@ -807,45 +807,18 @@ class LoginView(APIView):
 
         if serializer.is_valid():
             user = serializer.validated_data['user']
-            update_last_login(None, user)
-            was_dormant = user.status == "dormant"
-            update_fields = []
-            if was_dormant:
-                user.status = "active"
-                update_fields.append("status")
-            if user.dormancy_warning_sent_at is not None:
-                user.dormancy_warning_sent_at = None
-                update_fields.append("dormancy_warning_sent_at")
-            if update_fields:
-                update_fields.append("updated_at")
-                user.save(update_fields=update_fields)
-            today = timezone.localdate().isoformat()
-            try:
-                apply_point_policy(
-                    user=user,
-                    reason_code="LOGIN.DAILY",
-                    reference_id=today,
-                    idempotency_key=f"LOGIN.DAILY:{user.id}:{today}",
-                    description="daily first login reward",
-                )
-            except ValueError:
-                logger.info("daily login reward skipped user_id=%s", user.id)
-            if was_dormant:
-                try:
-                    apply_point_policy(
-                        user=user,
-                        reason_code="DORMANT.RETURN_LOGIN",
-                        reference_id=str(user.id),
-                        idempotency_key=f"DORMANT.RETURN_LOGIN:{user.id}",
-                        description="dormant account return reward",
-                    )
-                except ValueError:
-                    logger.info("dormant return reward skipped user_id=%s", user.id)
+            needs_terms = bool(required_terms_reconsent_status(user))
+            complete_login(user, award_rewards=not needs_terms)
             refresh = RefreshToken.for_user(user)
             access_token = str(refresh.access_token)
 
             response = Response(
-                {'access_token': access_token, 'token_type': 'Bearer'},
+                {
+                    'access_token': access_token,
+                    'token_type': 'Bearer',
+                    'needs_terms': needs_terms,
+                    'next_path': '/signup/social/terms' if needs_terms else None,
+                },
                 status=status.HTTP_200_OK,
             )
             response.set_cookie(
