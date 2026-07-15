@@ -618,11 +618,13 @@ class UserProfileCreateSerializer(serializers.ModelSerializer):
 
 class UserProfileDetailSerializer(serializers.ModelSerializer):
     profile_id = serializers.SerializerMethodField()
+    name = serializers.CharField(source='user.name', read_only=True)
 
     class Meta:
         model = UserProfile
         fields = (
             'profile_id',
+            'name',
             'career_type',
             'major_type',
             'desired_job',
