@@ -27,7 +27,7 @@ class InterviewAudioPlaybackAPITests(APITestCase):
             session=self.session,
             question=self.question,
             answer_text='충분한 길이의 음성 면접 답변입니다.',
-            audio_key=f'interview-audio/{self.user.id}/{self.session.id}/{self.question.id}/answer.webm',
+            audio_key=f'interview-audio/{self.user.id}/{self.session.id}/answer.webm',
         )
         self.url = reverse('mvp-answer-audio', kwargs={'answer_id': self.answer.id})
 
