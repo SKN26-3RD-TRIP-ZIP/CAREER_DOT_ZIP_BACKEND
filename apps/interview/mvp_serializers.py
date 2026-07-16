@@ -357,6 +357,7 @@ class MVPSTTResultUpdateSerializer(serializers.ModelSerializer):
     # STT 후처리 patch는 텍스트와 음성 분석 지표만 답변 레코드에 덧붙인다.
     stt_text = serializers.CharField(allow_blank=False, trim_whitespace=True)
     audio_url = serializers.URLField(required=False, allow_null=True, allow_blank=True)
+    audio_key = serializers.CharField(required=False, allow_null=True, allow_blank=True, max_length=512)
     speech_duration = serializers.FloatField(required=False, min_value=0)
     total_pause_duration = serializers.FloatField(required=False, min_value=0)
     long_pause_count = serializers.IntegerField(required=False, min_value=0)
@@ -366,6 +367,7 @@ class MVPSTTResultUpdateSerializer(serializers.ModelSerializer):
         fields = (
             'stt_text',
             'audio_url',
+            'audio_key',
             'speech_duration',
             'total_pause_duration',
             'long_pause_count',

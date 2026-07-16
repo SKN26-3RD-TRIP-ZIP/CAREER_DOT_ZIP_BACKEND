@@ -157,6 +157,7 @@ class InterviewAnswer(models.Model):
     answer_source = models.CharField(max_length=20, choices=ANSWER_SOURCE_CHOICES, default='text')
     stt_text = models.TextField(blank=True, null=True)
     audio_url = models.URLField(blank=True, null=True)
+    audio_key = models.CharField(max_length=512, blank=True, null=True)
     speech_duration = models.FloatField(blank=True, null=True)
     total_pause_duration = models.FloatField(default=0)
     long_pause_count = models.IntegerField(default=0)

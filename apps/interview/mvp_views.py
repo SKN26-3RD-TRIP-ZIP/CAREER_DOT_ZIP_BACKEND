@@ -37,7 +37,11 @@ from .services.question_generator import generate_interview_questions
 from .services.answer_service import AnswerService
 from .services.follow_up_generator import FollowupGenerator
 from .services.guardrails import scan_user_input
-from .services.whisper_stt_service import transcribe_uploaded_audio
+from .services.whisper_stt_service import transcribe_uploaded_audio, validate_uploaded_audio
+from .services.interview_audio_storage import (
+    create_interview_audio_presigned_url,
+    upload_interview_audio,
+)
 from .services.tts_service import synthesize_interview_question
 from .services.ai_chain_openai_engine import AIChainOpenAIError
 from .services.practice_session_service import (
@@ -406,6 +410,14 @@ class MVPSTTResultUpdateView(APIView):
             partial=True,
         )
         serializer.is_valid(raise_exception=True)
+        audio_key = serializer.validated_data.get('audio_key')
+        if audio_key:
+            expected_prefix = (
+                f'interview-audio/{request.user.id}/{answer.session_id}/'
+                f'{answer.question_id}/'
+            )
+            if not audio_key.startswith(expected_prefix):
+                raise ValidationError({'audio_key': 'Audio key does not belong to this answer.'})
         stt_text = serializer.validated_data['stt_text']
         previous_answers = (
             InterviewAnswer.objects
@@ -442,6 +454,7 @@ class MVPSTTResultUpdateView(APIView):
             {
                 'answer_id': str(answer.id),
                 'stt_text': answer.stt_text,
+                'has_audio': bool(answer.audio_key),
                 'updated_at': answer.updated_at,
             },
             status=status.HTTP_200_OK,
@@ -456,8 +469,45 @@ class MVPWhisperTranscribeView(APIView):
         # 프론트 MediaRecorder가 보낸 multipart webm 파일을 Whisper STT 서비스로 전달한다.
         audio_file = request.FILES.get('audio')
         language = request.data.get('language') or 'ko'
+        validate_uploaded_audio(audio_file)
+        session = get_object_or_404(
+            InterviewSession,
+            id=request.data.get('session_id'),
+            user=request.user,
+        )
+        question = get_object_or_404(
+            InterviewQuestion,
+            id=request.data.get('question_id'),
+            session=session,
+        )
         result = transcribe_uploaded_audio(audio_file, language=language)
+        result['audio_key'] = upload_interview_audio(
+            audio_file,
+            user_id=request.user.id,
+            session_id=session.id,
+            question_id=question.id,
+        )
         return Response(result, status=status.HTTP_200_OK)
+
+
+class MVPAnswerAudioPlaybackView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, answer_id):
+        answer = get_object_or_404(
+            InterviewAnswer,
+            id=answer_id,
+            session__user=request.user,
+        )
+        if not answer.audio_key:
+            return Response(
+                {'detail': 'Audio is not available.'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        return Response({
+            'url': create_interview_audio_presigned_url(answer.audio_key),
+            'expires_in': settings.INTERVIEW_AUDIO_PRESIGNED_TTL_SECONDS,
+        })
 
 
 class MVPWhisperDevTranscribeView(APIView):
