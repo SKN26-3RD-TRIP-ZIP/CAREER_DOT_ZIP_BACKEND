@@ -491,8 +491,6 @@ def _build_question_breakdown(evaluated_answers: list) -> tuple[list[dict], list
         qid = str(q.id)
         question_breakdown.append({
             "question_id": qid,
-            "answer_id": str(ans.id),
-            "has_audio": bool(ans.audio_key),
             "order": q.order_index,
             "question_type": q.question_type,
             "question_text": q.question_text,

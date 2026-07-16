@@ -5,7 +5,6 @@ from .mvp_views import (
     MVPQuestionListView,
     MVPPracticeSessionCreateView,
     MVPAnswerCreateView,
-    MVPAnswerAudioPlaybackView,
     MVPFollowupQuestionCreateView,
     MVPSTTResultUpdateView,
     MVPSessionCreateView,
@@ -43,7 +42,6 @@ urlpatterns = [
 
     # 답변 생성 후 STT 분석값을 같은 답변에 patch하고, 필요하면 꼬리질문을 생성한다.
     path('answers', MVPAnswerCreateView.as_view(), name='mvp-answer-create'),
-    path('answers/<uuid:answer_id>/audio', MVPAnswerAudioPlaybackView.as_view(), name='mvp-answer-audio'),
     path(
         'answers/<uuid:answer_id>/stt',
         MVPSTTResultUpdateView.as_view(),

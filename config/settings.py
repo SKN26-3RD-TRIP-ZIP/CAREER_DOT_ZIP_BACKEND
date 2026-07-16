@@ -62,12 +62,6 @@ def _env_bool(name: str, default: bool = False) -> bool:
 
 
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY', '')
-INTERVIEW_AUDIO_S3_BUCKET = os.getenv(
-    'INTERVIEW_AUDIO_S3_BUCKET',
-    'career-dot-zip-media-20260709',
-)
-AWS_S3_REGION_NAME = os.getenv('AWS_S3_REGION_NAME', 'ap-northeast-2')
-INTERVIEW_AUDIO_PRESIGNED_TTL_SECONDS = _env_int('INTERVIEW_AUDIO_PRESIGNED_TTL_SECONDS', 300)
 
 # ===== Pinecone =====
 PINECONE_API_KEY    = os.getenv('PINECONE_API_KEY', '')

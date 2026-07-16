@@ -13,7 +13,6 @@ from apps.interview.services.whisper_stt_service import (
     transcribe_uploaded_audio,
     validate_stt_answer_quality,
 )
-from apps.interview.models import InterviewQuestion, InterviewSession
 
 
 class MVPWhisperTranscribeAPITests(APITestCase):
@@ -26,20 +25,6 @@ class MVPWhisperTranscribeAPITests(APITestCase):
         )
         self.client.force_authenticate(self.user)
         self.url = reverse('mvp-stt-transcribe')
-        self.session = InterviewSession.objects.create(
-            user=self.user, interview_type='technical', persona='coach', interview_mode='voice'
-        )
-        self.question = InterviewQuestion.objects.create(
-            session=self.session, order_index=1, question_text='테스트 질문'
-        )
-
-    def payload(self, **extra):
-        return {
-            'audio': self.webm_file(),
-            'session_id': str(self.session.id),
-            'question_id': str(self.question.id),
-            **extra,
-        }
 
     def webm_file(self):
         return SimpleUploadedFile(
@@ -51,7 +36,7 @@ class MVPWhisperTranscribeAPITests(APITestCase):
     def test_authentication_is_required(self):
         self.client.force_authenticate(user=None)
 
-        response = self.client.post(self.url, self.payload(), format='multipart')
+        response = self.client.post(self.url, {'audio': self.webm_file()}, format='multipart')
 
         self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
 
@@ -69,9 +54,8 @@ class MVPWhisperTranscribeAPITests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn('audio', response.data)
 
-    @patch('apps.interview.mvp_views.upload_interview_audio', return_value='interview-audio/test.webm')
     @patch('apps.interview.mvp_views.transcribe_uploaded_audio')
-    def test_whisper_transcribe_returns_stats(self, mock_transcribe, mock_upload):
+    def test_whisper_transcribe_returns_stats(self, mock_transcribe):
         mock_transcribe.return_value = {
             'stt_text': '안녕하세요 음 저는 지원자입니다',
             'speech_duration': 3.2,
@@ -87,15 +71,13 @@ class MVPWhisperTranscribeAPITests(APITestCase):
             },
         }
 
-        response = self.client.post(self.url, self.payload(), format='multipart')
+        response = self.client.post(self.url, {'audio': self.webm_file()}, format='multipart')
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data['stt_text'], '안녕하세요 음 저는 지원자입니다')
         self.assertEqual(response.data['speech_duration'], 3.2)
         self.assertEqual(response.data['debug']['pause_count'], 1)
-        self.assertEqual(response.data['audio_key'], 'interview-audio/test.webm')
         mock_transcribe.assert_called_once()
-        mock_upload.assert_called_once()
 
 
 class WhisperSTTServiceTests(APITestCase):
