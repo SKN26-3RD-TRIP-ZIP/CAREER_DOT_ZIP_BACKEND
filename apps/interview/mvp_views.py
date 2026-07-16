@@ -412,7 +412,10 @@ class MVPSTTResultUpdateView(APIView):
         serializer.is_valid(raise_exception=True)
         audio_key = serializer.validated_data.get('audio_key')
         if audio_key:
-            expected_prefix = f'interview-audio/{request.user.id}/{answer.session_id}/'
+            expected_prefix = (
+                f'interview-audio/{request.user.id}/{answer.session_id}/'
+                f'{answer.question_id}/'
+            )
             if not audio_key.startswith(expected_prefix):
                 raise ValidationError({'audio_key': 'Audio key does not belong to this answer.'})
         stt_text = serializer.validated_data['stt_text']
@@ -472,11 +475,17 @@ class MVPWhisperTranscribeView(APIView):
             id=request.data.get('session_id'),
             user=request.user,
         )
+        question = get_object_or_404(
+            InterviewQuestion,
+            id=request.data.get('question_id'),
+            session=session,
+        )
         result = transcribe_uploaded_audio(audio_file, language=language)
         result['audio_key'] = upload_interview_audio(
             audio_file,
             user_id=request.user.id,
             session_id=session.id,
+            question_id=question.id,
         )
         return Response(result, status=status.HTTP_200_OK)
 

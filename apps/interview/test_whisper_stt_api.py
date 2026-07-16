@@ -37,6 +37,7 @@ class MVPWhisperTranscribeAPITests(APITestCase):
         return {
             'audio': self.webm_file(),
             'session_id': str(self.session.id),
+            'question_id': str(self.question.id),
             **extra,
         }
 
