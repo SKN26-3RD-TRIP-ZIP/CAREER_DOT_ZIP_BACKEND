@@ -7,6 +7,7 @@ from rest_framework import permissions, status
 
 from apps.input.models import UserProfile
 from apps.admin_api.services.member_service import withdraw_member
+from apps.accounts.services.terms import required_terms_reconsent_status
 
 CURRENT_ONBOARDING_VERSION = 1
 REFRESH_COOKIE_NAME = "refresh_token"
@@ -43,13 +44,23 @@ class MeView(APIView):
             profile.desired_job
         )
         onboarding = build_onboarding_state(u)
+        missing_terms = required_terms_reconsent_status(u)
+        terms = {
+            "required": bool(missing_terms),
+            "missing": missing_terms,
+            "next_path": "/signup/terms" if missing_terms else None,
+        }
         next_path = (
             '/admin/dashboard'
             if u.is_staff
             else (
-                onboarding["next_path"]
-                if onboarding["required"]
-                else ('/mypage' if profile_complete else '/profile')
+                terms["next_path"]
+                if terms["required"]
+                else (
+                    onboarding["next_path"]
+                    if onboarding["required"]
+                    else ('/mypage' if profile_complete else '/profile')
+                )
             )
         )
         return Response({
@@ -66,6 +77,7 @@ class MeView(APIView):
                 "profile_id": str(profile.id) if profile else None,
             },
             "onboarding": onboarding,
+            "terms": terms,
             "next_path": next_path,
         })
 

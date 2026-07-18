@@ -2,7 +2,8 @@ from django.test import override_settings
 from django.utils import timezone
 from rest_framework import status
 from rest_framework.test import APITestCase
-from apps.accounts.models import User
+from apps.accounts.models import TermsDocument, User
+from apps.accounts.services.terms import record_terms_agreement
 from apps.input.models import UserProfile
 
 PW = "QaTestPw!234"
@@ -12,10 +13,20 @@ class MeEndpointTests(APITestCase):
     login_url = "/api/v1/auth/login"
     me_url = "/api/v1/auth/me"
 
-    def _verified(self, email, name):
+    def _verified(self, email, name, *, agree_terms=True):
         u = User.objects.create_user(email=email, name=name, password=PW)
         u.is_verified = True
         u.save()
+        if agree_terms:
+            for document in TermsDocument.objects.filter(is_active=True, is_required=True):
+                record_terms_agreement(
+                    user=u,
+                    kind=document.kind,
+                    version=document.version,
+                    agreed=True,
+                    is_required=True,
+                    source='SIGNUP',
+                )
         return u
 
     def _login_token(self, email):
@@ -50,6 +61,17 @@ class MeEndpointTests(APITestCase):
         self.client.credentials()
         res = self.client.get(self.me_url)
         self.assertEqual(res.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_me_prioritizes_required_terms_before_onboarding(self):
+        self._verified("missing-terms@example.com", "약관미동의", agree_terms=False)
+        token = self._login_token("missing-terms@example.com")
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {token}")
+
+        res = self.client.get(self.me_url)
+
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        self.assertTrue(res.data["terms"]["required"])
+        self.assertEqual(res.data["next_path"], "/signup/terms")
 
     def test_me_returns_mypage_next_path_when_profile_complete(self):
         user = self._verified("profiled@example.com", "프로필")

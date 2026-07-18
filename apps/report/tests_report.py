@@ -251,3 +251,44 @@ class FinalReportIntegrationTests(APITestCase):
     self.assertEqual(summary['score_summary']['metrics']['technical_score'], 60.0)
     # practical: BEI80*.30 + CBI60*.25 + Grounding100*.30 + Speech80*.15 = 81.0
     self.assertAlmostEqual(summary['score_summary']['overall_score'], 81.0, places=1)
+
+  def test_technical_score_falls_back_to_answer_score_without_sbert(self):
+    """SBERT 유사도가 없더라도 기술 질문의 LLM answer_score를 기술 깊이에 반영한다."""
+    session = InterviewSession.objects.create(
+        user=self.user,
+        interview_type='technical',
+        persona='practical',
+        interview_mode='text',
+        status='completed',
+    )
+    question = InterviewQuestion.objects.create(
+        session=session,
+        question_text='Redis 캐시를 적용한 경험을 설명해주세요.',
+        question_category='technical',
+        order_index=1,
+    )
+    answer = InterviewAnswer.objects.create(
+        session=session,
+        question=question,
+        answer_text='Redis 캐시를 적용해 반복 조회 응답 시간을 줄였습니다.',
+    )
+    Evaluation.objects.create(
+        answer=answer,
+        answer_score=72,
+        bei_score={
+            'situation': {'score': 18},
+            'task': {'score': 18},
+            'action': {'score': 18},
+            'result': {'score': 18},
+        },
+        cbi_score={'assigned_level': 3, 'score': 72},
+        filler_words={'total': 0, 'counts': {}},
+        score_detail={
+            'speech_delivery': {'speech_score': 72},
+            'grounding': {'is_grounded': True},
+        },
+    )
+
+    summary = generate_final_report(session)
+
+    self.assertEqual(summary['score_summary']['metrics']['technical_score'], 72.0)

@@ -178,7 +178,7 @@ def _aggregate_scores(evaluated_answers: list) -> dict:
             bei_situations, bei_tasks, bei_actions, bei_results,
             structured_bei_count,
             cbi_levels, cbi_scores,
-            speech_scores, sbert_scores,
+            speech_scores, sbert_scores, technical_answer_scores,
             grounding_results, technical_answer_count,
             strength_counter, weakness_counter,
             strength_desc_map, weakness_desc_map,
@@ -194,6 +194,7 @@ def _aggregate_scores(evaluated_answers: list) -> dict:
     cbi_scores: list = []
     speech_scores: list = []
     sbert_scores: list = []
+    technical_answer_scores: list = []
     grounding_results: list = []
     technical_answer_count = 0
 
@@ -253,6 +254,9 @@ def _aggregate_scores(evaluated_answers: list) -> dict:
         q_category = resolve_question_category(ans)
         if q_category == "technical":
             technical_answer_count += 1
+            answer_score = getattr(eval_obj, "answer_score", None)
+            if isinstance(answer_score, (int, float)):
+                technical_answer_scores.append(answer_score)
             grounding_block = score_detail.get("grounding", {})
             if isinstance(grounding_block, dict) and "is_grounded" in grounding_block:
                 grounding_results.append({
@@ -270,6 +274,7 @@ def _aggregate_scores(evaluated_answers: list) -> dict:
         "cbi_scores": cbi_scores,
         "speech_scores": speech_scores,
         "sbert_scores": sbert_scores,
+        "technical_answer_scores": technical_answer_scores,
         "grounding_results": grounding_results,
         "technical_answer_count": technical_answer_count,
         "strength_counter": strength_counter,
@@ -558,11 +563,16 @@ def generate_final_report(session):
     bei_avg, cbi_avg, speech_avg, grounding_avg, detailed_stats = _compute_avg_scores(agg, n)
 
     sbert_scores          = agg["sbert_scores"]
+    technical_answer_scores = agg["technical_answer_scores"]
     technical_answer_count = agg["technical_answer_count"]
     technical_avg = (
         round((sum(sbert_scores) / len(sbert_scores)) * 100, 1)
         if sbert_scores
-        else (0.0 if technical_answer_count > 0 else None)
+        else (
+            round(sum(technical_answer_scores) / len(technical_answer_scores), 1)
+            if technical_answer_scores
+            else (0.0 if technical_answer_count > 0 else None)
+        )
     )
 
     # 5. 페르소나 가중치 적용 overall_score 재산출 (E7.10)

@@ -72,6 +72,14 @@ TAVILY_API_KEY = os.getenv('TAVILY_API_KEY', '')
 
 INTERVIEW_AI_CHAIN_ENGINE = os.getenv('INTERVIEW_AI_CHAIN_ENGINE', 'mock').strip().lower()
 INTERVIEW_AI_OPENAI_MODEL = os.getenv('INTERVIEW_AI_OPENAI_MODEL', 'gpt-4o')
+INTERVIEW_AI_OPENAI_TIMEOUT_SECONDS = _env_int(
+    'INTERVIEW_AI_OPENAI_TIMEOUT_SECONDS',
+    30,
+)
+INTERVIEW_AI_OPENAI_MAX_RETRIES = _env_int(
+    'INTERVIEW_AI_OPENAI_MAX_RETRIES',
+    1,
+)
 OPENAI_MODEL_QUESTION_GENERATION = os.getenv(
     'OPENAI_MODEL_QUESTION_GENERATION',
     INTERVIEW_AI_OPENAI_MODEL,
@@ -89,6 +97,7 @@ INTERVIEW_AI_OPENAI_ENABLE_REAL_CALL = _env_bool(
     'INTERVIEW_AI_OPENAI_ENABLE_REAL_CALL',
     False,
 )
+SBERT_ENABLED = _env_bool('SBERT_ENABLED', True)
 
 
 # Quick-start development settings - unsuitable for production
@@ -466,5 +475,6 @@ LOGGING = {
     "handlers": {"console": {"class": "logging.StreamHandler"}},
     "loggers": {
         "apps.accounts": {"handlers": ["console"], "level": "INFO", "propagate": False},
+        "feedback_ai": {"handlers": ["console"], "level": "INFO", "propagate": False},
     },
 }

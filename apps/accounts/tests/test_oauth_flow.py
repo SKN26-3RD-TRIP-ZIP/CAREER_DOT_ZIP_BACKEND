@@ -14,10 +14,11 @@ from urllib.parse import parse_qs, urlparse
 
 from django.core.cache import cache
 from django.test import override_settings
+from django.utils import timezone
 from rest_framework import status
 from rest_framework.test import APITestCase
 
-from apps.accounts.models import SocialAccount, TermsDocument, User
+from apps.accounts.models import PointHistory, SocialAccount, TermsAgreement, TermsDocument, User
 from apps.accounts.services import oauth as oauth_service
 from apps.accounts.services.oauth import (
     OAuthExchangeCodeExpired,
@@ -160,12 +161,20 @@ class OAuthCallbackRedirectTests(APITestCase):
         self.assertEqual(exchange.status_code, status.HTTP_200_OK)
         self.assertTrue(exchange.data['created'])
         self.assertTrue(exchange.data['needs_terms'])
-        self.assertEqual(exchange.data['next_path'], '/signup/social/terms')
+        self.assertEqual(exchange.data['next_path'], '/signup/terms')
 
     def test_kakao_new_user_signup_without_required_terms_goes_to_mypage(self):
         self._disable_required_terms()
-        response = self._callback('kakao', profile=kakao_profile(email='kfresh@example.com'))
+        with mock.patch.object(User.objects, 'create_user', wraps=User.objects.create_user) as create_user:
+            response = self._callback('kakao', profile=kakao_profile(email='kfresh@example.com'))
         code = self._assert_redirects_with_code(response)
+        create_user.assert_called_once_with(
+            email='kfresh@example.com',
+            name='New Kakao User',
+            password=None,
+            is_verified=True,
+            status='active',
+        )
         exchange = self._exchange(code)
         self.assertEqual(exchange.status_code, status.HTTP_200_OK)
         self.assertTrue(exchange.data['created'])
@@ -210,6 +219,18 @@ class OAuthCallbackRedirectTests(APITestCase):
         response = self.client.get('/api/v1/auth/oauth/kakao/callback', {'error': 'access_denied'})
         self._assert_redirects_with_error(response, 'OAUTH_PROVIDER_ERROR')
 
+    def test_unexpected_callback_error_is_logged_and_redirected(self):
+        with mock.patch(
+            'apps.accounts.views_oauth.exchange_code_for_profile',
+            side_effect=RuntimeError('unexpected provider payload'),
+        ), self.assertLogs('apps.accounts', level='ERROR') as logs:
+            response = self.client.get(
+                '/api/v1/auth/oauth/kakao/callback',
+                {'code': 'x', 'state': self._state_for('kakao')},
+            )
+        self._assert_redirects_with_error(response, 'OAUTH_PROVIDER_ERROR')
+        self.assertIn('oauth callback unexpected error provider=kakao', '\n'.join(logs.output))
+
     def test_missing_provider_email_redirects_with_email_required(self):
         response = self._callback('kakao', profile=kakao_profile(email=''))
         self._assert_redirects_with_error(response, 'OAUTH_EMAIL_REQUIRED')
@@ -227,6 +248,135 @@ class OAuthCallbackRedirectTests(APITestCase):
         location = response['Location']
         self.assertNotIn('access_token', location)
         self.assertNotIn('Bearer', location)
+
+    def test_signup_reward_waits_until_required_terms_are_accepted(self):
+        self._make_required_terms()
+        response = self._callback('google', profile=google_profile(email='terms-first@example.com'))
+        code = self._assert_redirects_with_code(response)
+        user = User.objects.get(email='terms-first@example.com')
+
+        self.assertFalse(PointHistory.objects.filter(user=user, reason_code='AUTH.EMAIL_VERIFIED').exists())
+        exchange = self._exchange(code)
+        self.assertTrue(exchange.data['needs_terms'])
+        self.assertFalse(PointHistory.objects.filter(user=user, reason_code='LOGIN.DAILY').exists())
+
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {exchange.data['access_token']}")
+        with mock.patch('apps.accounts.views_oauth.send_admin_signup_notification') as notify:
+            accepted = self.client.post(
+                '/api/v1/auth/terms',
+                {'terms_agreed': True, 'privacy_agreed': True, 'marketing_agreed': False},
+                format='json',
+            )
+
+        self.assertEqual(accepted.status_code, status.HTTP_200_OK)
+        self.assertEqual(TermsAgreement.objects.filter(user=user, agreed=True, is_required=True).count(), 2)
+        self.assertTrue(PointHistory.objects.filter(user=user, reason_code='AUTH.EMAIL_VERIFIED').exists())
+        self.assertTrue(PointHistory.objects.filter(user=user, reason_code='LOGIN.DAILY').exists())
+        notify.assert_called_once_with(user, signup_method='google')
+
+    def test_oauth_login_reactivates_dormant_user_and_applies_shared_rewards(self):
+        self._disable_required_terms()
+        user = User.objects.create(
+            email='dormant-social@example.com',
+            name='Dormant',
+            is_verified=True,
+            status='dormant',
+            dormancy_warning_sent_at=timezone.now(),
+        )
+        SocialAccount.objects.create(
+            user=user,
+            provider='kakao',
+            provider_user_id='kakao-dormant',
+            provider_email=user.email,
+        )
+        response = self._callback(
+            'kakao',
+            profile=kakao_profile(
+                email=user.email,
+                provider_user_id='kakao-dormant',
+            ),
+        )
+        exchange = self._exchange(self._assert_redirects_with_code(response))
+
+        self.assertEqual(exchange.status_code, status.HTTP_200_OK)
+        user.refresh_from_db()
+        self.assertEqual(user.status, 'active')
+        self.assertIsNone(user.dormancy_warning_sent_at)
+        self.assertTrue(PointHistory.objects.filter(user=user, reason_code='LOGIN.DAILY').exists())
+        self.assertTrue(PointHistory.objects.filter(user=user, reason_code='DORMANT.RETURN_LOGIN').exists())
+
+    def test_password_login_also_routes_missing_required_terms_to_shared_screen(self):
+        self._make_required_terms()
+        user = User.objects.create_user(
+            email='legacy-local@example.com',
+            password='Password1!',
+            name='Legacy Local',
+            is_verified=True,
+            status='active',
+        )
+
+        response = self.client.post(
+            '/api/v1/auth/login',
+            {'email': user.email, 'password': 'Password1!'},
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertTrue(response.data['needs_terms'])
+        self.assertEqual(response.data['next_path'], '/signup/terms')
+        self.assertFalse(PointHistory.objects.filter(user=user, reason_code='LOGIN.DAILY').exists())
+
+
+@override_settings(**OAUTH_SETTINGS)
+class OAuthProviderResponseTests(APITestCase):
+    def test_invalid_token_json_is_wrapped_as_provider_error(self):
+        response = mock.Mock()
+        response.raise_for_status.return_value = None
+        response.json.side_effect = ValueError('invalid json')
+        with mock.patch('apps.accounts.services.oauth.requests.post', return_value=response):
+            with self.assertRaises(oauth_service.OAuthProviderResponseError):
+                oauth_service.exchange_code_for_profile('kakao', code='x')
+
+    def test_non_object_token_json_is_wrapped_as_provider_error(self):
+        response = mock.Mock()
+        response.raise_for_status.return_value = None
+        response.json.return_value = []
+        with mock.patch('apps.accounts.services.oauth.requests.post', return_value=response):
+            with self.assertRaises(oauth_service.OAuthProviderResponseError):
+                oauth_service.exchange_code_for_profile('kakao', code='x')
+
+    def test_non_object_profile_json_is_wrapped_as_provider_error(self):
+        token_response = mock.Mock()
+        token_response.raise_for_status.return_value = None
+        token_response.json.return_value = {'access_token': 'provider-token'}
+        profile_response = mock.Mock()
+        profile_response.raise_for_status.return_value = None
+        profile_response.json.return_value = []
+        with mock.patch('apps.accounts.services.oauth.requests.post', return_value=token_response), \
+             mock.patch('apps.accounts.services.oauth.requests.get', return_value=profile_response):
+            with self.assertRaises(oauth_service.OAuthProviderResponseError):
+                oauth_service.exchange_code_for_profile('kakao', code='x')
+
+
+class LegacyUserManagerCompatibilityTests(APITestCase):
+    def test_legacy_insert_includes_required_onboarding_version(self):
+        cursor = mock.Mock()
+        cursor.lastrowid = 123
+        cursor_context = mock.MagicMock()
+        cursor_context.__enter__.return_value = cursor
+
+        with mock.patch.object(User.objects, '_has_legacy_role_column', return_value=True), \
+             mock.patch('apps.accounts.models.connection.cursor', return_value=cursor_context):
+            user = User.objects.create_user(
+                email='legacy-social@example.com',
+                name='Legacy Social',
+                password=None,
+            )
+
+        sql, params = cursor.execute.call_args.args
+        self.assertIn('onboarding_version', sql)
+        self.assertIn(user.onboarding_version, params)
+        self.assertEqual(user.id, 123)
 
 
 class OAuthExchangeCodeUnitTests(APITestCase):
@@ -258,7 +408,7 @@ class OAuthExchangeCodeUnitTests(APITestCase):
 class SanitizeNextPathTests(APITestCase):
     def test_allows_internal_path(self):
         self.assertEqual(sanitize_next_path('/mypage'), '/mypage')
-        self.assertEqual(sanitize_next_path('/signup/social/terms'), '/signup/social/terms')
+        self.assertEqual(sanitize_next_path('/signup/terms'), '/signup/terms')
 
     def test_blocks_open_redirect(self):
         self.assertEqual(sanitize_next_path('https://evil.com'), '/mypage')

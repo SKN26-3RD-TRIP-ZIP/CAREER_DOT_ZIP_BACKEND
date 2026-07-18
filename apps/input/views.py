@@ -557,6 +557,18 @@ class UserProfileView(APIView):
     def get_object(self):
         return UserProfile.objects.get(user=self.request.user)
 
+    def update_user_name(self, request):
+        name = request.data.get('name')
+        if not isinstance(name, str):
+            return
+
+        name = name.strip()
+        if not name or request.user.name == name:
+            return
+
+        request.user.name = name
+        request.user.save(update_fields=['name', 'updated_at'])
+
     def post(self, request):
         if UserProfile.objects.filter(user=request.user).exists():
             return Response(
@@ -566,12 +578,14 @@ class UserProfileView(APIView):
 
         serializer = UserProfileCreateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
+        self.update_user_name(request)
         profile = serializer.save(user=request.user)
         _reward_first_saved_item(user=request.user, reason_code='PROFILE.COMPLETED', reference_id=str(profile.id))
 
         return Response(
             {
                 'profile_id': str(profile.id),
+                'name': request.user.name,
                 'career_type': profile.career_type,
                 'major_type': profile.major_type,
                 'desired_job': profile.desired_job,
@@ -598,6 +612,7 @@ class UserProfileView(APIView):
 
         serializer = UserProfilePatchSerializer(profile, data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
+        self.update_user_name(request)
         profile = serializer.save()
         if serializer.validated_data.get('desired_job'):
             _reward_first_saved_item(user=request.user, reason_code='PROFILE.DESIRED_JOB_SET', reference_id=str(profile.id))
@@ -605,7 +620,11 @@ class UserProfileView(APIView):
         return Response(
             {
                 'profile_id': str(profile.id),
+                'name': request.user.name,
+                'career_type': profile.career_type,
+                'major_type': profile.major_type,
                 'desired_job': profile.desired_job,
+                'career_year': profile.career_year,
                 'github_url': profile.github_url,
                 'updated_at': profile.updated_at,
             },

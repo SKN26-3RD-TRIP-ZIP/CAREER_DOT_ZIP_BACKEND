@@ -6,7 +6,6 @@ from urllib.parse import urlencode
 
 import requests
 from django.conf import settings
-from django.contrib.auth.hashers import make_password
 from django.core import signing
 from django.core.cache import cache
 from django.db import transaction
@@ -23,8 +22,10 @@ OAUTH_STATE_MAX_AGE = 10 * 60
 OAUTH_EXCHANGE_SALT = 'accounts.oauth.exchange'
 OAUTH_EXCHANGE_CACHE_PREFIX = 'oauth:exchange:'
 
-# 회원가입 직후 필수 약관 미동의 시 이동할 프론트 경로(소셜 전용 약관 화면).
-SOCIAL_TERMS_PATH = '/signup/social/terms'
+# 회원가입 또는 로그인 후 필수 약관 미동의 시 이동할 공통 프론트 경로.
+TERMS_PATH = '/signup/terms'
+# Backward-compatible import for older callers. New code must use TERMS_PATH.
+SOCIAL_TERMS_PATH = TERMS_PATH
 DEFAULT_NEXT_PATH = '/mypage'
 
 
@@ -199,6 +200,21 @@ def validate_oauth_state(provider: str, state: str) -> dict:
     return payload
 
 
+def _response_json_object(response, *, response_name: str) -> dict:
+    """Decode a provider response without exposing its sensitive body."""
+    try:
+        payload = response.json()
+    except (TypeError, ValueError) as exc:
+        raise OAuthProviderResponseError(
+            f'OAuth provider returned an invalid {response_name} response.'
+        ) from exc
+    if not isinstance(payload, dict):
+        raise OAuthProviderResponseError(
+            f'OAuth provider returned an invalid {response_name} response.'
+        )
+    return payload
+
+
 def exchange_code_for_profile(provider: str, *, code: str) -> dict:
     config = get_provider_config(provider)
     if not config.is_configured:
@@ -217,7 +233,7 @@ def exchange_code_for_profile(provider: str, *, code: str) -> dict:
             timeout=10,
         )
         token_response.raise_for_status()
-        token_json = token_response.json()
+        token_json = _response_json_object(token_response, response_name='token')
         access_token = token_json.get('access_token')
         if not access_token:
             raise OAuthProviderResponseError('OAuth provider did not return an access token.')
@@ -228,7 +244,7 @@ def exchange_code_for_profile(provider: str, *, code: str) -> dict:
             timeout=10,
         )
         profile_response.raise_for_status()
-        raw_profile = profile_response.json()
+        raw_profile = _response_json_object(profile_response, response_name='profile')
     except requests.RequestException as exc:
         # 네트워크/HTTP 오류는 Provider 오류로 일반화한다.
         # (원문 메시지/Provider 토큰을 사용자에게 노출하지 않는다.)
@@ -295,10 +311,13 @@ def get_or_create_social_user(provider: str, profile: dict) -> tuple[User, Socia
             )
 
         # 신규 사용자: User + SocialAccount 생성. 비밀번호는 직접 저장하지 않는다(usable password 없음).
-        user = User.objects.create(
+        # Use the custom manager instead of QuerySet.create(). Production still
+        # has a legacy, non-null `role` column and the manager supplies its
+        # compatibility value while also creating an unusable password.
+        user = User.objects.create_user(
             email=provider_email,
             name=name[:255],
-            password=make_password(None),
+            password=None,
             is_verified=True,
             status='active',
         )
